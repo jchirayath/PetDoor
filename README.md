@@ -63,40 +63,54 @@ enough to leave running unattended.
 
 ## What else I tried first
 
-This was not the obvious answer. Several things looked simpler on paper.
+This was not the obvious answer. Several things looked simpler on paper, and
+they failed in two distinct ways.
 
-**Proximity sensors (PIR / ultrasonic).** The first idea. The problem is that
-one sensor only watches one side, so it needs **one inside and one outside** —
-two sensors, two runs of cable, and an outdoor unit exposed to the weather.
-Worse, it answers the wrong question: a PIR tells you *something is there*, not
-*who*. It would open just as happily for a raccoon.
+### They cannot tell *my* pet from anything else
 
-**Weight / pressure switches (mats).** Also promising, also defeated by the
-details. A mat has to be exactly where the animal steps, and the outdoor one
-sits in rain, snow, mud and leaves. Sensitivity drifts as it gets wet or frozen,
-and a mat that ignores a wet leaf still cannot tell a 6 kg dog from a 6 kg
-raccoon.
+The whole point of a door is to let one animal in and keep everything else out.
+These all detect **presence** — something is there — and none of them can say
+**who**. Every one of them opens just as willingly for a raccoon, a neighbour's
+cat, or a blowing leaf:
 
-**RFID or microchip readers** — how commercial "microchip pet doors" work. These
-genuinely solve identity, and if your pet is happy using a flap they are an
-excellent choice. But the read range is only a few centimetres, so the animal
-has to put its head *into* the doorway to trigger it. For a dog who will not
-approach the flap in the first place, that is the one thing it cannot do.
+**Proximity sensors (PIR / ultrasonic).** The first idea. A sensor only watches
+one side, so it needs **one inside and one outside** — two sensors, two cable
+runs, and an outdoor unit exposed to the weather. All that work, and it still
+answers the wrong question.
 
-**Infrared beam break.** Cheap and reliable, and triggers on absolutely
-anything that crosses it — including blowing leaves and the cat next door.
+**Weight / pressure switches (mats).** A mat has to be exactly where the animal
+steps, and the outdoor one sits in rain, snow, mud and leaves, with sensitivity
+drifting as it wets or freezes. And a mat that has been tuned to ignore a wet
+leaf still cannot tell a 6 kg dog from a 6 kg raccoon.
 
-**Camera and image recognition.** Would work, and brings its own pile of
+**Infrared beam break.** Cheap, reliable, trivial to wire — and it triggers on
+*anything* that crosses the beam. Same problem as the others, with no way
+around it: a beam cannot know what broke it.
+
+> Adding more of these sensors does not fix it. Two PIRs, a mat *and* a beam
+> still only tell you that something is in the doorway. No combination of
+> presence sensors adds up to identity.
+
+### They can identify, but not usefully at a distance
+
+**RFID and microchip readers** — how commercial "microchip pet doors" work.
+These genuinely solve identity, and **if your pet is happy using a flap they
+are an excellent choice**. But read range is only a few centimetres, so the
+animal has to put its head *into* the doorway to trigger it. For a dog who will
+not approach the flap in the first place, that is precisely the thing it cannot
+do.
+
+**Camera and image recognition.** Can identify, and brings its own pile of
 problems: power draw, night-time lighting, a camera pointed at the house, and
 real cost and complexity for a door.
 
-**GPS collar tag.** Accuracy is 3–5 m outdoors at best and unusable indoors,
-which is precisely where the door is. Battery life is measured in days.
+**GPS collar tag.** Identifies fine, but accuracy is 3–5 m outdoors at best and
+unusable indoors — which is precisely where the door is. Battery life in days.
 
-**Ultra-wideband (UWB) tags.** Technically the best answer — around 10 cm
+**Ultra-wideband (UWB) tags.** Technically the best answer: identity plus ~10 cm
 accuracy. But the tags are expensive, the ESP32 has no UWB radio so it needs
-extra hardware, and it is considerable complexity for a door that only needs to
-know "near" or "not near".
+extra hardware, and it is a lot of complexity for a door that only needs to know
+"near" or "not near".
 
 **Something on a phone.** The phone is not on the dog. And phones deliberately
 randomise their Bluetooth address every few minutes, so they cannot be tracked
@@ -108,12 +122,18 @@ animal is, which is the entire problem.
 
 ### The thing that actually decides it
 
-Almost every option above detects **presence**. Very few detect **identity**.
+Two requirements, and almost nothing satisfies both:
 
-For a door that has to exclude raccoons, neighbouring cats and the weather,
-identity is not optional — and the moment you require identity, the animal has
-to carry something. Once it is carrying something, the only remaining question
-is how far away that thing can be read:
+1. **Identity** — it must open for *my* animal and nothing else
+2. **Range** — it must open *before* he gets there, because there is no flap to
+   push through
+
+Requirement 1 eliminates every presence sensor, however many you add.
+Requirement 2 eliminates RFID, which is otherwise the right answer and is what
+the commercial products use.
+
+And the moment you require identity, the animal has to **carry** something — so
+the only remaining question is how far away that thing can be read:
 
 | | Identifies the animal? | Useful range | Survives outdoors |
 |---|---|---|---|
