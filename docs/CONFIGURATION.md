@@ -206,7 +206,7 @@ sample stream. It is rarely worth it on a mains-powered coop controller.
 | Setting | Default | Description |
 |---|---|---|
 | `SERIAL_BAUD` | `115200` | Serial console speed. |
-| `CONTROL_TICK_MS` | `250` | Control loop period. Presence and door decisions re-evaluate this often. |
+| `CONTROL_TICK_MS` | `100` | Control loop **idle** period. The loop normally wakes the moment a BLE sample arrives; this only caps how long it waits when the beacon is silent. It also sets how often the status LED is refreshed, so it bounds the shortest LED pattern that can be rendered — much above 250 ms and the blip and fault flutter visibly break. |
 | `DEVICE_TABLE_SIZE` | `40` | Max distinct devices held in the discovery table. Costs RAM and BLE-callback time. |
 | `TABLE_MIN_UPDATE_MS` | `500` | Per-device throttle on discovery-table writes, so a busy RF environment cannot flood the heap from the BLE callback. |
 | `DISCOVER_DUMP_INTERVAL_MS` | `2000` | How often discovery mode prints the table. |
