@@ -3,6 +3,12 @@
 **Read [SAFETY.md](SAFETY.md) first.** This page is about wiring; that one is
 about not hurting an animal.
 
+Everything here uses off-the-shelf parts and hand tools. There is no custom
+board to fabricate, nothing to 3D print, and no machining — the most demanding
+step is soldering four short wires onto button pads, and
+[Pattern 1](#pattern-1-tap-a-spare-remote-easiest) moves even that onto a cheap
+spare remote instead of the door.
+
 The goal is to keep your door's existing motor and controller, and replace only
 the *decision* — swapping "open at sunrise on a timer" or "open when something
 pushes the flap" for "open when **my** animal is at the door".
