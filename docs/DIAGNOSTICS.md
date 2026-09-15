@@ -655,7 +655,9 @@ interlock. Measured on real hardware:
 
 ```
 [cmd] forcing OPEN    at +  50.2 ms
-[cmd] forcing CLOSE   at +1278.7 ms      <-- 1228ms gap, vs 1200ms expected
+[cmd] forcing CLOSE   at + 528.4 ms      <-- 478ms gap, vs 450ms expected
+                                             (DIRECTION_CHANGE_GAP_MS 250
+                                              + RELAY_PULSE_MS 200)
 ```
 
 Both relays must be **released at idle**. If one sits energised, invert
