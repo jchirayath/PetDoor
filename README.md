@@ -61,6 +61,78 @@ gets there, and sealed again once he has gone.
 That is the whole idea. Everything below is what it takes to do it reliably
 enough to leave running unattended.
 
+## What else I tried first
+
+This was not the obvious answer. Several things looked simpler on paper.
+
+**Proximity sensors (PIR / ultrasonic).** The first idea. The problem is that
+one sensor only watches one side, so it needs **one inside and one outside** —
+two sensors, two runs of cable, and an outdoor unit exposed to the weather.
+Worse, it answers the wrong question: a PIR tells you *something is there*, not
+*who*. It would open just as happily for a raccoon.
+
+**Weight / pressure switches (mats).** Also promising, also defeated by the
+details. A mat has to be exactly where the animal steps, and the outdoor one
+sits in rain, snow, mud and leaves. Sensitivity drifts as it gets wet or frozen,
+and a mat that ignores a wet leaf still cannot tell a 6 kg dog from a 6 kg
+raccoon.
+
+**RFID or microchip readers** — how commercial "microchip pet doors" work. These
+genuinely solve identity, and if your pet is happy using a flap they are an
+excellent choice. But the read range is only a few centimetres, so the animal
+has to put its head *into* the doorway to trigger it. For a dog who will not
+approach the flap in the first place, that is the one thing it cannot do.
+
+**Infrared beam break.** Cheap and reliable, and triggers on absolutely
+anything that crosses it — including blowing leaves and the cat next door.
+
+**Camera and image recognition.** Would work, and brings its own pile of
+problems: power draw, night-time lighting, a camera pointed at the house, and
+real cost and complexity for a door.
+
+**GPS collar tag.** Accuracy is 3–5 m outdoors at best and unusable indoors,
+which is precisely where the door is. Battery life is measured in days.
+
+**Ultra-wideband (UWB) tags.** Technically the best answer — around 10 cm
+accuracy. But the tags are expensive, the ESP32 has no UWB radio so it needs
+extra hardware, and it is considerable complexity for a door that only needs to
+know "near" or "not near".
+
+**Something on a phone.** The phone is not on the dog. And phones deliberately
+randomise their Bluetooth address every few minutes, so they cannot be tracked
+this way even if he carried one — see [the note on
+AirTags](docs/HARDWARE.md#the-beacon), which fail for the same reason.
+
+**A timer or light sensor**, as most automatic doors use. Cannot know where the
+animal is, which is the entire problem.
+
+### The thing that actually decides it
+
+Almost every option above detects **presence**. Very few detect **identity**.
+
+For a door that has to exclude raccoons, neighbouring cats and the weather,
+identity is not optional — and the moment you require identity, the animal has
+to carry something. Once it is carrying something, the only remaining question
+is how far away that thing can be read:
+
+| | Identifies the animal? | Useful range | Survives outdoors |
+|---|---|---|---|
+| PIR / ultrasonic | No | metres | needs an enclosure |
+| Pressure mat | No | contact only | poorly |
+| IR beam | No | across the doorway | yes |
+| RFID / microchip | **Yes** | **~10 cm** | yes |
+| Camera + vision | Yes | metres | needs light |
+| UWB tag | **Yes** | metres, ~10 cm accuracy | yes |
+| **BLE beacon** | **Yes** | **metres, tunable** | **yes** |
+
+A BLE beacon is the only option that gets identity *and* useful range *and*
+outdoor durability *and* a year of battery, for about £10. The door can open
+while he is still walking toward it, which is the entire point — there is
+nothing to push through because there is nothing there by the time he arrives.
+
+The cost of that choice is that BLE signal strength is a *terrible* distance
+sensor, and most of this firmware exists to deal with that.
+
 ---
 
 ```mermaid
