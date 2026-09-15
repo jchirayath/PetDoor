@@ -90,6 +90,28 @@ address**, continuously, forever, on battery.
 If your "beacon" changes MAC, proximity will appear to work for a few minutes
 after each reflash and then silently stop. That symptom is almost always this.
 
+### Measured: why an AirTag fails twice over
+
+Both failures were confirmed on hardware, and either alone rules it out.
+
+**Address rotation.** One AirTag observed for under two hours produced **four
+distinct addresses**, none of them overlapping. Nothing to configure against.
+
+**Advertising rate.** With the AirTag **two feet** from the ESP32 — its
+best-case signal:
+
+| | shortest | typical | longest |
+|---|---|---|---|
+| AirTag at 2 ft | 965 ms | 5,140 ms | 17,865 ms |
+| Minew beacon, further away | 72 ms | 349 ms | 885 ms |
+
+The typical AirTag gap already exceeds `SAMPLE_MAX_AGE_MS` (3 s), so it reads as
+absent most of the time even at point-blank range. Its worst gap exceeds
+`EXIT_CONFIRM_MS`, so the door would close while the tag sat beside it.
+
+Use the `worst gap` figure in the `s` status output to check any candidate
+beacon the same way.
+
 ### What will work
 
 A purpose-built BLE beacon. The reference build uses a
