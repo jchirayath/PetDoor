@@ -4,8 +4,13 @@
 about not hurting an animal.
 
 The goal is to keep your door's existing motor and controller, and replace only
-the *decision* — swapping "open at sunrise on a timer" for "open when the bird
-is at the door".
+the *decision* — swapping "open at sunrise on a timer" or "open when something
+pushes the flap" for "open when **my** animal is at the door".
+
+That distinction matters for the common case this project was built for: a pet
+that will not use a flap at all. If your animal refuses to push through a
+barrier, the door has to already be open when they arrive — which means
+something has to know they are coming. A timer cannot; a beacon can.
 
 ---
 
