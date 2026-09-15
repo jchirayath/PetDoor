@@ -23,6 +23,46 @@ when it has been convincingly gone for a while it pulses a CLOSE relay. No
 WiFi, no cloud, no app, no subscription — the ESP32 and the beacon are the
 whole system.
 
+---
+
+## Why this exists
+
+**My dog refused to use the flap.**
+
+That is a more common problem than it sounds. A pet flap asks the animal to
+push its face through a stiff, noisy barrier that then drags along its back.
+Plenty of dogs and cats simply will not do it, and no amount of coaxing,
+propping or treat-smearing on the flap changes their mind.
+
+The obvious workaround is to prop the door open. That works, and it also lets
+in the cold, the rain, the wind, the rodents, and whatever else fancies a warm
+room — which is precisely what the flap was there to keep out.
+
+So the requirement was:
+
+> Let **him** come and go freely, with nothing to push through,
+> and keep everything else out the rest of the time.
+
+Neither a flap nor an open door does both. A door that **opens by itself when
+he walks up to it** does:
+
+| | Pet has to push? | Keeps weather out? | Keeps other animals out? |
+|---|---|---|---|
+| Pet flap | **Yes** — the dealbreaker | Yes | Mostly |
+| Propped open | No | **No** | **No** |
+| **PetDoor** | **No** | **Yes** | **Yes** |
+
+The beacon on his collar is what makes the difference. The door opens for the
+animal carrying it and for nothing else — not the neighbour's cat, not a
+raccoon, not a draught. There is no barrier to learn, no resistance to push
+against, and no training required: the doorway is simply open by the time he
+gets there, and sealed again once he has gone.
+
+That is the whole idea. Everything below is what it takes to do it reliably
+enough to leave running unattended.
+
+---
+
 ```mermaid
 flowchart LR
     B["Beacon<br/><i>on the collar</i>"]
@@ -46,10 +86,11 @@ idea.
 
 ## What this is actually for
 
-**Primarily: small dogs and cats wearing a collar.** A collar is the natural
-place for a beacon — it stays on the animal, it is easy to fit, and the door
-opens for *that* animal rather than for anything that pushes on it. This is the
-use case the project is designed and tuned around.
+**Primarily: small dogs and cats wearing a collar** — especially the ones who
+refuse a flap. A collar is the natural place for a beacon: it stays on the
+animal, it is easy to fit, and the door opens for *that* animal rather than for
+anything that pushes on it. This is the use case the project is designed and
+tuned around.
 
 It also drives **chicken coop doors**, which is where it started, with one
 practical caveat: a bird has to carry the beacon. A leg band works but is
