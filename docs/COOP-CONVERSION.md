@@ -11,6 +11,24 @@ is at the door".
 
 ## Which doors can be converted
 
+```mermaid
+flowchart TD
+    S{"Does your door<br/>have a motor?"}
+    S -- no --> ADD["Add a linear actuator<br/><i>with built-in end stops</i>"]
+    S -- yes --> R{"Does it have<br/>a remote control?"}
+    R -- yes --> P1["<b>Pattern 1</b><br/>Wire relays into a spare remote<br/><i>easiest · nothing on the door is modified</i>"]
+    R -- no --> B{"Are the UP/DOWN<br/>buttons reachable?"}
+    B -- yes --> P2["<b>Pattern 2</b><br/>Tap the unit's buttons"]
+    B -- no --> P3["<b>Pattern 3</b><br/>Drive the motor directly<br/><i>most work, most ways to go wrong</i>"]
+    ADD --> P3
+
+    style P1 fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style P2 fill:#E9A23B,stroke:#C8862A,color:#3b2a10
+    style P3 fill:#E76F51,stroke:#C85A3E,color:#ffffff
+```
+
+
+
 Most people start from one of three places.
 
 ### A. A commercial automatic coop door (easiest, recommended)

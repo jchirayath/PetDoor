@@ -18,6 +18,49 @@ switch a motor on.
 
 ## The pipeline
 
+```mermaid
+flowchart TD
+    A["BLE advertisement<br/><i>Bluedroid / NimBLE task</i>"] --> B{"matches a<br/>configured MAC?"}
+    B -- no --> X["discard"]
+    B -- yes --> C["push to queue<br/><i>non-blocking, depth 32</i>"]
+    C ==> D["<b>median filter</b><br/>rejects isolated spikes<br/>and deep fades"]
+    D --> E["<b>EWMA smoothing</b><br/>removes what is left"]
+    E --> F{"<b>hysteresis</b><br/>+ dwell timers"}
+    F -- "≥ enter, held<br/>ENTER_CONFIRM_MS" --> G["PRESENT<br/>→ pulse OPEN"]
+    F -- "≤ exit, held<br/>EXIT_CONFIRM_MS" --> H["ABSENT<br/>→ pulse CLOSE"]
+    F -- "in the dead band" --> I["no change"]
+
+    style A fill:#E9A23B,stroke:#C8862A,color:#3b2a10
+    style G fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style H fill:#E76F51,stroke:#C85A3E,color:#ffffff
+    style X fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+    style I fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+```
+
+The double arrow marks the task boundary: everything above it runs in the BLE
+callback and must stay cheap, everything below runs in `controlTask`.
+
+### As a state machine
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    [*] --> ABSENT
+    ABSENT --> ABSENT: in dead band<br/>(cancels pending open)
+    ABSENT --> PRESENT: filtered ≥ enter,<br/>held ENTER_CONFIRM_MS
+    PRESENT --> PRESENT: back above exit<br/>(cancels pending close)
+    PRESENT --> ABSENT: filtered ≤ exit OR no fix,<br/>held EXIT_CONFIRM_MS
+```
+
+Note the asymmetry: **no fix counts as "≤ exit" but never as "≥ enter"**, which
+is why losing the beacon can only ever close the door.
+
+<p align="center">
+  <img src="assets/hysteresis.svg" alt="Filtered RSSI crossing two thresholds with a dead band between them" width="700">
+</p>
+
+## The pipeline in detail
+
 ```
    BLE radio
        │  every advertisement, ~10/s from a typical beacon

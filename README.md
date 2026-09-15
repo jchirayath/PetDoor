@@ -1,3 +1,16 @@
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="PetDoor" width="620">
+</p>
+
+<p align="center">
+  <a href="https://github.com/jchirayath/PetDoor/actions/workflows/build.yml">
+    <img src="https://github.com/jchirayath/PetDoor/actions/workflows/build.yml/badge.svg" alt="build status">
+  </a>
+  <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT licensed">
+  <img src="https://img.shields.io/badge/ESP32-Arduino%20core%203.x-informational" alt="ESP32 Arduino core 3.x">
+  <img src="https://img.shields.io/badge/WiFi-none-lightgrey" alt="no WiFi">
+</p>
+
 # PetDoor
 
 **Open a pet door when your animal walks up to it, and close it again once
@@ -9,6 +22,27 @@ the beacon has been convincingly close for a moment it pulses an OPEN relay;
 when it has been convincingly gone for a while it pulses a CLOSE relay. No
 WiFi, no cloud, no app, no subscription — the ESP32 and the beacon are the
 whole system.
+
+```mermaid
+flowchart LR
+    B["Beacon<br/><i>on the collar</i>"]
+    E["ESP32<br/><i>scan · filter · decide</i>"]
+    R["Relay module<br/><i>momentary pulse</i>"]
+    D["Your door controller<br/><i>motor · limits · anti-pinch</i>"]
+
+    B -. "BLE advertisements" .-> E
+    E -- "GPIO 16 / 17" --> R
+    R -- "acts like a button press" --> D
+
+    style B fill:#E9A23B,stroke:#C8862A,color:#3b2a10
+    style E fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style R fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+    style D fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+```
+
+The ESP32 never drives the motor. It decides **when**; your door hardware still
+decides **how far** and when to stop. Keeping those separate is the core safety
+idea.
 
 ## What this is actually for
 
@@ -53,12 +87,22 @@ firmware is built around the fixes:
 |---|---|
 | Only ever got one signal reading per device, so proximity never updated | Scan with duplicate reporting **on** — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-duplicate-filter-trap) |
 | Signal spikes and dropouts from multipath | Median filter, then exponential smoothing |
-| Door flapping open/closed at the threshold | Two thresholds with a hysteresis band between them |
+| Door flapping open/closed at the threshold | Two thresholds with a hysteresis band between them — see below |
 | Door closing during a brief signal dropout | 15-second dwell before closing; a stale signal can never *open* the door |
 | Bluetooth stack silently wedging | Watchdog restarts the scan if the radio goes quiet |
 | Motor thrash | Actuation lockout, direction interlock, post-boot grace period |
 
 ---
+
+### The hysteresis band, visually
+
+<p align="center">
+  <img src="docs/assets/hysteresis.svg" alt="Filtered RSSI crossing two thresholds, with a dead band between them" width="700">
+</p>
+
+One threshold would make the door flap every time the signal wobbled across it.
+Two thresholds with a gap between them mean that once the door is open, the
+beacon has to get *meaningfully* further away before anything changes.
 
 ## Hardware
 
