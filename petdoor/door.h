@@ -63,8 +63,8 @@ class DoorController {
   // Dead time with the opposite relay released before this one is asserted.
   // This is the motor interlock — both relays energised at once is a short
   // across the direction contacts. A mechanical relay releases in roughly
-  // 5-15 ms, so the 1000 ms default is very conservative; the floor below
-  // still leaves an order of magnitude of margin.
+  // 5-15 ms, so the 250 ms default already leaves well over an order of
+  // magnitude of margin, and the 100 ms floor below still leaves plenty.
   static constexpr uint32_t kMinDirectionGapMs = 100;
   uint32_t directionGapMs() const { return directionGapMs_; }
   bool setDirectionGapMs(uint32_t ms) {

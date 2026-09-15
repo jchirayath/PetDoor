@@ -175,10 +175,15 @@ Do this with **no motor connected**. You are testing the relays only.
 
 5. Type `x`. One click from the CLOSE relay.
 
-6. Type `o` then `x` in quick succession. Note the ~1 s pause before the second
-   relay fires — that is `DIRECTION_CHANGE_GAP_MS`, the interlock ensuring the
-   two relays are never energised close enough together to fight each other
-   across the motor's direction contacts.
+6. Type `o` then `x` in quick succession. Note the short pause — about a
+   quarter of a second — before the second relay fires. That is
+   `DIRECTION_CHANGE_GAP_MS`, the interlock ensuring the two relays are never
+   energised close enough together to fight each other across the motor's
+   direction contacts.
+
+   If your relays are audibly slow, or you can hear one chattering as the other
+   fires, raise it: `w` then `gap 500` in the console, or set
+   `DIRECTION_CHANGE_GAP_MS` in `secrets.h`.
 
 7. Confirm with a meter that **COM–NO continuity appears on only one relay at a
    time**, never both.

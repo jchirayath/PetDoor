@@ -182,10 +182,20 @@
 #define MIN_ACTUATION_INTERVAL_MS 5000
 #endif
 
-// Extra dead time enforced when reversing direction, so the two relays can
-// never be energised close enough together to fight each other.
+// Dead time with the opposite relay released before this one is asserted, so
+// the two can never be energised close enough together to fight each other.
+// Both energised at once is a short across the motor's direction contacts.
+//
+// A mechanical relay releases in roughly 5-15 ms, so 250 ms leaves well over
+// an order of magnitude of margin. It was 1000 ms originally, which is safe but
+// needlessly slow: pulse() blocks for this long before every actuation, so it
+// is a direct, per-actuation delay on the door opening.
+//
+// Raise it if your relays are slow, if you can hear them chattering, or if the
+// motor controller needs longer to see the previous direction released. The
+// runtime `w` -> `gap N` console command enforces a 100 ms floor.
 #ifndef DIRECTION_CHANGE_GAP_MS
-#define DIRECTION_CHANGE_GAP_MS 1000
+#define DIRECTION_CHANGE_GAP_MS 250
 #endif
 
 // After boot the door state is unknown. We refuse to close for this long,
