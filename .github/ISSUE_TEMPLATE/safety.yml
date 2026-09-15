@@ -1,0 +1,53 @@
+name: Safety problem
+description: A way this firmware could injure an animal or damage hardware
+title: "[safety] "
+labels: ["safety"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting this. Safety reports matter more to this
+        project than any feature request.
+
+        If you are mid-incident, disconnect the motor first.
+
+  - type: textarea
+    id: hazard
+    attributes:
+      label: What can go wrong
+      description: What is the sequence of events, and what is the outcome?
+      placeholder: |
+        If the beacon battery dies while the door is open and the ESP32 then
+        reboots, ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: Has this actually happened, or is it a hazard you spotted in the code?
+    validations:
+      required: true
+
+  - type: textarea
+    id: docs
+    attributes:
+      label: Is it already covered in docs/SAFETY.md?
+      description: >
+        Please skim SAFETY.md first. If this is already listed but described
+        too weakly, say so — that is still a useful report.
+    validations:
+      required: true
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      placeholder: |
+        Board:          ESP32 WROOM-32
+        Beacon:         Minew MST01
+        Relay module:   2-ch active-low
+        Door mechanism: 12 V linear actuator with limit switches
+    validations:
+      required: false
