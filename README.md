@@ -61,6 +61,37 @@ gets there, and sealed again once he has gone.
 That is the whole idea. Everything below is what it takes to do it reliably
 enough to leave running unattended.
 
+### Two more constraints
+
+Those shaped the design as much as the requirement did.
+
+**It had to be cheap.** A commercial microchip pet door is $150–250. If this
+cost more than that, there would be no reason to build it — you would just buy
+one and accept the flap. That set a hard ceiling, and it is the main reason
+several otherwise-better technologies were ruled out: UWB tags are more accurate
+than Bluetooth and cost several times as much, and a camera setup costs more
+again before you have written a line of code.
+
+**It had to be off-the-shelf.** No custom PCB, no 3D printing, no machining, no
+firmware toolchain more exotic than the Arduino IDE. Three parts, all orderable
+from one site, assembled in an evening:
+
+| | |
+|---|---|
+| Automatic coop / pet door | bought, not built |
+| ESP32 with relays **on the same board** | no relay wiring to get wrong |
+| USB-to-TTL adapter | for programming |
+
+The only soldering is four short wires onto button pads — and with
+[Pattern 1](docs/COOP-CONVERSION.md#pattern-1-tap-a-spare-remote-easiest) those
+go onto a **$12 spare remote handset** rather than into the door itself, so a
+slipped iron costs you a remote instead of the door.
+
+That constraint is also why the electronics are deliberately dull. There is no
+custom board here and there does not need to be: an ESP32-with-relays module
+already does the job, and anything this project adds sits in firmware where it
+costs nothing to copy.
+
 ## What else I tried first
 
 This was not the obvious answer. Several things looked simpler on paper, and
@@ -110,7 +141,8 @@ unusable indoors — which is precisely where the door is. Battery life in days.
 **Ultra-wideband (UWB) tags.** Technically the best answer: identity plus ~10 cm
 accuracy. But the tags are expensive, the ESP32 has no UWB radio so it needs
 extra hardware, and it is a lot of complexity for a door that only needs to know
-"near" or "not near".
+"near" or "not near". This is the option the cost constraint kills outright —
+UWB would have cost more than the commercial door it was meant to replace.
 
 **Something on a phone.** The phone is not on the dog. And phones deliberately
 randomise their Bluetooth address every few minutes, so they cannot be tracked
@@ -146,7 +178,8 @@ the only remaining question is how far away that thing can be read:
 | **BLE beacon** | **Yes** | **metres, tunable** | **yes** |
 
 A BLE beacon is the only option that gets identity *and* useful range *and*
-outdoor durability *and* a year of battery, for about $12.
+outdoor durability *and* a year of battery, for about $12 — and it needs no
+hardware beyond an ESP32, which is the cheapest radio that can hear it.
 
 ### "Can I just use an AirTag?"
 
