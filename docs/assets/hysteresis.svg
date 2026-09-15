@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 330" width="720" height="330"
+     role="img" aria-label="Chart: filtered RSSI crossing two thresholds with a hysteresis dead band between them">
+  <title>Hysteresis band</title>
+  <style>
+    .lbl  { font: 13px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#7A8794; }
+    .lbl2 { font: 12px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
+    .st   { font: 600 13px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+  </style>
+
+  <!-- dead band -->
+  <rect x="70" y="120" width="600" height="80" fill="#E9A23B" opacity="0.13"/>
+  <text x="360" y="167" class="lbl2" text-anchor="middle">dead band — no state change happens in here</text>
+
+  <!-- thresholds -->
+  <line x1="70" y1="120" x2="670" y2="120" stroke="#2A9D8F" stroke-width="2" stroke-dasharray="7 5"/>
+  <line x1="70" y1="200" x2="670" y2="200" stroke="#E76F51" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="76" y="113" class="lbl" fill="#2A9D8F">RSSI_ENTER_DBM  (open above this)</text>
+  <text x="76" y="219" class="lbl" fill="#E76F51">RSSI_EXIT_DBM  (close below this)</text>
+
+  <!-- axes -->
+  <line x1="70" y1="40" x2="70" y2="280" stroke="#9AA5B1" stroke-width="1.5"/>
+  <line x1="70" y1="280" x2="670" y2="280" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="18" y="60"  class="lbl">stronger</text>
+  <text x="18" y="276" class="lbl">weaker</text>
+  <text x="360" y="308" class="lbl" text-anchor="middle">time  →  pet approaches, lingers, then leaves</text>
+
+  <!-- filtered signal: approaches, crosses enter, wanders in band, then leaves -->
+  <path d="M80 258 C130 250 165 200 200 150 C225 115 245 92 275 86
+           C310 80 330 104 355 128 C378 150 398 140 420 118
+           C445 95 470 104 495 132 C520 160 540 196 565 226
+           C595 258 630 266 662 268"
+        fill="none" stroke="#2A9D8F" stroke-width="3.5" stroke-linecap="round"/>
+
+  <!-- crossing markers -->
+  <circle cx="252" cy="88" r="5.5" fill="#2A9D8F"/>
+  <circle cx="556" cy="218" r="5.5" fill="#E76F51"/>
+
+  <text x="252" y="70" class="st" fill="#2A9D8F" text-anchor="middle">OPEN</text>
+  <text x="252" y="56" class="lbl2" text-anchor="middle">after ENTER_CONFIRM_MS</text>
+  <text x="560" y="250" class="st" fill="#E76F51" text-anchor="middle">CLOSE</text>
+  <text x="560" y="265" class="lbl2" text-anchor="middle">after EXIT_CONFIRM_MS</text>
+
+  <!-- the point of the whole thing -->
+  <text x="420" y="104" class="lbl2" text-anchor="middle">wanders back into the band —</text>
+  <text x="420" y="118" class="lbl2" text-anchor="middle">stays OPEN, no flapping</text>
+</svg>

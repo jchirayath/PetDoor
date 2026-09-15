@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"
+     role="img" aria-label="PetDoor logo: a pet door with a beacon signal passing through it">
+  <title>PetDoor</title>
+
+  <!-- Palette chosen to read on both light (#fff) and dark (#0d1117) GitHub
+       backgrounds: mid-saturation teal and amber, no pure black or white. -->
+  <defs>
+    <linearGradient id="frame" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2A9D8F"/>
+      <stop offset="1" stop-color="#21867A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- door frame -->
+  <rect x="38" y="26" width="180" height="204" rx="18"
+        fill="none" stroke="url(#frame)" stroke-width="14"/>
+
+  <!-- the opening -->
+  <rect x="64" y="52" width="128" height="152" rx="8" fill="#2A9D8F" opacity="0.10"/>
+
+  <!-- hinge line -->
+  <line x1="64" y1="52" x2="64" y2="204" stroke="#2A9D8F" stroke-width="7"
+        stroke-linecap="round" opacity="0.55"/>
+
+  <!-- the flap, swung open -->
+  <path d="M64 52 L150 74 L150 182 L64 204 Z"
+        fill="#2A9D8F" opacity="0.28"/>
+  <path d="M64 52 L150 74 L150 182 L64 204"
+        fill="none" stroke="#2A9D8F" stroke-width="7"
+        stroke-linejoin="round" stroke-linecap="round"/>
+
+  <!-- beacon, bottom-left, with signal arcs travelling to the door -->
+  <circle cx="30" cy="196" r="12" fill="#E9A23B"/>
+  <g fill="none" stroke="#E9A23B" stroke-width="7" stroke-linecap="round">
+    <path d="M52 172 a34 34 0 0 1 0 48" opacity="0.95"/>
+    <path d="M70 156 a58 58 0 0 1 0 80" opacity="0.62"/>
+    <path d="M88 140 a82 82 0 0 1 0 112" opacity="0.32"/>
+  </g>
+</svg>
