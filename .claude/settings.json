@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli compile:*)",
+      "Bash(/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli board list:*)",
+      "Bash(/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli core list:*)",
+      "Bash(arduino-cli compile:*)",
+      "Bash(arduino-cli board list:*)",
+      "Bash(arduino-cli core list:*)",
+      "Bash(pio run:*)",
+      "Bash(pio check:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git branch:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Bash(find:*)"
+    ],
+    "deny": [
+      "Read(./petdoor/secrets.h)"
+    ]
+  }
+}

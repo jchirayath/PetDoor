@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Tuning help
+    url: https://github.com/jchirayath/PetDoor/blob/main/docs/TUNING.md
+    about: The door opens too early, too late, or flaps — start here.
+  - name: Troubleshooting
+    url: https://github.com/jchirayath/PetDoor/blob/main/docs/TROUBLESHOOTING.md
+    about: Door runs backwards, beacon never found, sample count stuck at 1.
+  - name: Safety
+    url: https://github.com/jchirayath/PetDoor/blob/main/docs/SAFETY.md
+    about: Read before connecting this to a motor.

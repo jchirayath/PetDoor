@@ -1,0 +1,122 @@
+name: build
+
+# Verification for this project means "it compiles for the target" — there is
+# no test suite. Two things are checked:
+#
+#   1. It builds unconfigured (discovery mode), which is how a new user first
+#      flashes it.
+#   2. It builds for both BLE stacks — Bluedroid on the classic ESP32, NimBLE
+#      on the S3/C3. Keeping both alive is a project invariant, and it is easy
+#      to break without noticing on one board.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fqbn: esp32:esp32:esp32
+            name: ESP32 (Bluedroid)
+          - fqbn: esp32:esp32:esp32s3
+            name: ESP32-S3 (NimBLE)
+          - fqbn: esp32:esp32:esp32c3
+            name: ESP32-C3 (NimBLE)
+
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core 3.x
+        run: |
+          arduino-cli core update-index \
+            --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32 \
+            --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core list
+
+      # How a new user first flashes it: no secrets.h, no beacon, discovery
+      # mode, and the door is never touched.
+      - name: Compile unconfigured
+        run: arduino-cli compile --fqbn ${{ matrix.fqbn }} --warnings default petdoor
+
+      # Exercises the configured path, and the secrets.h include in config.h.
+      # secrets.h is git-ignored, so CI has to create one.
+      - name: Compile with a beacon configured
+        run: |
+          cat > petdoor/secrets.h <<'EOF'
+          #pragma once
+          #define BEACON_MAC       "aa:bb:cc:dd:ee:ff"
+          #define RSSI_ENTER_DBM   -60
+          #define RSSI_EXIT_DBM    -72
+          #define RELAY_ACTIVE_LOW 1
+          EOF
+          arduino-cli compile --fqbn ${{ matrix.fqbn }} --warnings default petdoor
+          rm petdoor/secrets.h
+
+      # The static_asserts are load-bearing safety guardrails. Confirm they
+      # actually fire, so a refactor cannot quietly disarm them.
+      - name: Verify safety static_asserts fire
+        run: |
+          set +e
+          fail=0
+
+          check() {
+            local label="$1"
+            cat > petdoor/secrets.h
+            if arduino-cli compile --fqbn ${{ matrix.fqbn }} petdoor >/dev/null 2>&1; then
+              echo "::error::$label — expected the build to FAIL, but it succeeded"
+              fail=1
+            else
+              echo "ok: $label correctly refused to compile"
+            fi
+            rm -f petdoor/secrets.h
+          }
+
+          # Invariant 1: no hysteresis band — the door would flap.
+          check "inverted RSSI thresholds" <<'EOF'
+          #pragma once
+          #define BEACON_MAC     "aa:bb:cc:dd:ee:ff"
+          #define RSSI_ENTER_DBM -80
+          #define RSSI_EXIT_DBM  -60
+          EOF
+
+          # Invariant 2: the actuation lockout would delay closing.
+          check "lockout longer than exit dwell" <<'EOF'
+          #pragma once
+          #define BEACON_MAC                "aa:bb:cc:dd:ee:ff"
+          #define MIN_ACTUATION_INTERVAL_MS 20000
+          #define EXIT_CONFIRM_MS           15000
+          EOF
+
+          # An even median window has no single middle element.
+          check "even median window" <<'EOF'
+          #pragma once
+          #define BEACON_MAC         "aa:bb:cc:dd:ee:ff"
+          #define RSSI_MEDIAN_WINDOW 8
+          EOF
+
+          # Both relays on one pin defeats the interlock entirely.
+          check "open and close on the same pin" <<'EOF'
+          #pragma once
+          #define BEACON_MAC       "aa:bb:cc:dd:ee:ff"
+          #define PIN_RELAY_OPEN   16
+          #define PIN_RELAY_CLOSE  16
+          EOF
+
+          exit $fail
+
+      - name: Report size
+        if: always()
+        run: |
+          arduino-cli compile --fqbn ${{ matrix.fqbn }} petdoor 2>&1 | tail -3

@@ -1,0 +1,62 @@
+name: Field report
+description: You have this running on a real coop — tell us how it went
+title: "[field] "
+labels: ["field-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most valuable thing this project receives. There is one
+        reference build; every other build teaches it something.
+
+        Nothing has to be broken for this to be worth posting.
+
+  - type: textarea
+    id: build
+    attributes:
+      label: What you built
+      placeholder: |
+        Board:          ESP32 WROOM-32
+        Beacon:         Minew MST01 on a leg band
+        Relay module:   2-ch active-low
+        Door mechanism: counterweighted pop door, 12 V actuator
+        Coop:           timber, 2 m from the ESP32, metal roof
+    validations:
+      required: true
+
+  - type: textarea
+    id: settings
+    attributes:
+      label: The settings you ended up with
+      description: Your secrets.h, MAC redacted. Particularly the thresholds and dwell times.
+      render: c
+    validations:
+      required: true
+
+  - type: textarea
+    id: tuning
+    attributes:
+      label: How the tuning went
+      description: >
+        What filtered RSSI did you measure at the door, and where did you set
+        the thresholds? Did the procedure in TUNING.md match what you saw?
+    validations:
+      required: false
+
+  - type: textarea
+    id: surprises
+    attributes:
+      label: What surprised you, or went wrong
+      description: >
+        Anything the docs did not prepare you for. Wrong defaults, a confusing
+        step, a failure mode not listed. This is the part that improves the
+        project.
+    validations:
+      required: false
+
+  - type: textarea
+    id: duration
+    attributes:
+      label: How long has it been running, and how reliable has it been?
+    validations:
+      required: false

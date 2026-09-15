@@ -1,0 +1,27 @@
+# Local beacon identity and tuning overrides — never commit these.
+# secrets.h holds your beacon's MAC address, which identifies a device in your
+# home. It is deliberately git-ignored so it cannot reach a public repo.
+petdoor/secrets.h
+**/secrets.h
+
+# Session history / assistant scratch. May contain captured BLE scans, which
+# include the addresses of neighbouring devices.
+.remember/
+
+# Build output
+build/
+.pio/
+.pioenvs/
+.piolibdeps/
+*.bin
+*.elf
+*.map
+*.hex
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Claude Code local settings (shared settings.json IS committed)
+.claude/settings.local.json

@@ -1,0 +1,62 @@
+name: Bug report
+description: Something does not work the way the docs say it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check [docs/TROUBLESHOOTING.md](../blob/main/docs/TROUBLESHOOTING.md)
+        first — it covers the common failures, including the door running
+        backwards (`RELAY_ACTIVE_LOW`) and a sample count stuck at 1.
+
+        **If this is a way the firmware could injure an animal, use the
+        Safety problem template instead.**
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected versus what happened
+    validations:
+      required: true
+
+  - type: textarea
+    id: boot
+    attributes:
+      label: Full serial output from boot
+      description: Include the banner. It shows the target, the pins and the thresholds actually compiled in.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Output of the `s` command
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: secrets
+    attributes:
+      label: Your secrets.h
+      description: "**Redact the MAC.**"
+      render: c
+    validations:
+      required: true
+
+  - type: input
+    id: board
+    attributes:
+      label: Board and core version
+      placeholder: ESP32 WROOM-32, ESP32 Arduino core 3.3.5
+    validations:
+      required: true
+
+  - type: input
+    id: hardware
+    attributes:
+      label: Beacon and relay module
+      placeholder: Minew MST01, 2-channel active-low relay board
+    validations:
+      required: false
