@@ -174,7 +174,7 @@ anything here.**
 | `PIN_STATUS_LED` | `23` | Status LED, active high. |
 | `RELAY_ACTIVE_LOW` | `0` | `1` for the common blue relay boards, whose coil energises when the input is pulled to GND. `0` for active-high boards and MOSFET drivers. **Getting this wrong means the door runs backwards or runs constantly.** |
 | `RELAY_PULSE_MS` | `200` | Momentary pulse length. Raise only if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
-| `MIN_ACTUATION_INTERVAL_MS` | `5000` | Minimum gap between any two actuations. Protects the motor from thrash. |
+| `MIN_ACTUATION_INTERVAL_MS` | `5000` | Minimum gap before the door may **close** again. Protects the motor from thrash. **Opening is never rate-limited** — delaying an open is the one direction that can strand an animal outside a door it just watched close. |
 | `DIRECTION_CHANGE_GAP_MS` | `250` | Dead time before asserting a relay, with the opposite one released. Both relays energised at once is a short across the motor's direction contacts. |
 | `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. |
 
