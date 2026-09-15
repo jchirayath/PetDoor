@@ -146,7 +146,73 @@ the only remaining question is how far away that thing can be read:
 | **BLE beacon** | **Yes** | **metres, tunable** | **yes** |
 
 A BLE beacon is the only option that gets identity *and* useful range *and*
-outdoor durability *and* a year of battery, for about $12. The door can open
+outdoor durability *and* a year of battery, for about $12.
+
+### "Can I just use an AirTag?"
+
+**No — and not a Tile, a SmartTag, or a phone either.** This is the most common
+question, and it has two *independent* answers, either of which is fatal on its
+own. Both were measured on real hardware during this build.
+
+#### 1. AirTags deliberately change their Bluetooth address
+
+The firmware finds your beacon by its address. An AirTag rotates that address
+on a timer, precisely so that nobody can do what this project does.
+
+Watching one AirTag on the bench for **under two hours** produced **four
+completely different addresses**, with no overlap between them. The one seen at
+the start had vanished by the end.
+
+That is not a bug or a setting — it is Apple's anti-stalking design, working
+exactly as intended. Tiles, Samsung SmartTags, phones and most fitness bands do
+the same thing. You cannot switch it off.
+
+The symptom is distinctive and misleading: **it works for a few minutes after
+you configure it, then silently stops**, and the door stays shut forever after.
+Worse, because the firmware *did* hear the beacon once, it will happily close
+the door and then never see a reason to open it again.
+
+#### 2. Even ignoring that, they advertise far too slowly
+
+The second reason is the more interesting one. Sitting an AirTag **two feet
+from the ESP32** — the strongest signal it will ever produce — and measuring the
+gaps between advertisements:
+
+| | shortest gap | typical gap | longest gap |
+|---|---|---|---|
+| **AirTag**, at 2 feet | 965 ms | **5,140 ms** | **17,865 ms** |
+| **Minew beacon**, further away | 72 ms | **349 ms** | 885 ms |
+
+The Minew is roughly **15× faster**, from further away.
+
+Why that matters: the firmware treats a reading older than `SAMPLE_MAX_AGE_MS`
+(3 s) as stale, and stale counts as *gone*. The AirTag's **typical** gap already
+exceeds that, so more than half the time it would register as absent while
+sitting right next to the door. And its longest gap — nearly 18 seconds —
+exceeds `EXIT_CONFIRM_MS`, meaning **the door would close with the AirTag two
+feet away.**
+
+No amount of retuning rescues it. Tolerating an 18-second gap would mean a
+20-second staleness window, ~15 seconds just to acquire a fix, and ~35 seconds
+to fill the median filter. With samples that far apart there is nothing left to
+filter, and you would be switching a motor on sparse raw RSSI — exactly the
+failure this project was built to fix.
+
+#### What about "open for *any* AirTag"?
+
+Technically possible — AirTags are identifiable as a *class* by their Find My
+payload, and the firmware already labels them in the discovery table. But it
+fails on all three counts: the rate problem above is unchanged, every visitor's
+AirTag would open your door, and Apple's unwanted-tracking alerts will start
+notifying nearby iPhones about a tag that is "travelling with" someone.
+
+#### So what do you need?
+
+A **purpose-built BLE beacon with a fixed public address**, advertising
+continuously. That is what a Minew tag is, and it costs about $12. See
+[HARDWARE.md](docs/HARDWARE.md#the-beacon) for what to look for, and
+[DIAGNOSTICS.md](docs/DIAGNOSTICS.md#can-i-use-this-device-as-a-beacon) for how
+to tell from the address alone whether a device you already own will work. The door can open
 while he is still walking toward it, which is the entire point — there is
 nothing to push through because there is nothing there by the time he arrives.
 
