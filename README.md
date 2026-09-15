@@ -14,8 +14,8 @@
 # PetDoor
 
 **Open a pet door when your animal walks up to it, and close it again once
-they have gone.** Open source, MIT licensed, about $40 of parts on top of a
-door you already own.
+they have gone.** Open source, MIT licensed, and about **$80 all in** —
+door, board and cable.
 
 An ESP32 listens continuously for a Bluetooth beacon on your pet's collar. When
 the beacon has been convincingly close for a moment it pulses an OPEN relay;
@@ -126,7 +126,7 @@ is how far away that thing can be read:
 | **BLE beacon** | **Yes** | **metres, tunable** | **yes** |
 
 A BLE beacon is the only option that gets identity *and* useful range *and*
-outdoor durability *and* a year of battery, for about £10. The door can open
+outdoor durability *and* a year of battery, for about $12. The door can open
 while he is still walking toward it, which is the entire point — there is
 nothing to push through because there is nothing there by the time he arrives.
 
@@ -216,6 +216,89 @@ firmware is built around the fixes:
 One threshold would make the door flap every time the signal wobbled across it.
 Two thresholds with a gap between them mean that once the door is open, the
 beacon has to get *meaningfully* further away before anything changes.
+
+## Parts list
+
+Prices are typical US street prices as of 2026 and will drift.
+
+**The whole build is about $80.** That is the real figure from this project,
+not a best-case sum.
+
+| # | Part | Cost | Notes |
+|---|---|---|---|
+| 1 | **Automatic coop / pet door** | **$40–50** | The basic aluminium auto-door kits |
+| 2 | **ESP32 board with 2 relays on-board** | **$15–20** | Search "ESP32 relay 2 channel". One board, no relay wiring |
+| 3 | **USB-to-TTL adapter (CP2102)** | **$8–10** | Required — these boards have no USB port |
+| | **Total** | **~$80** | |
+
+Then whatever you do not already have:
+
+| Part | Cost | Notes |
+|---|---|---|
+| BLE beacon | $10–15 | Must have a *fixed* MAC. See [HARDWARE.md](docs/HARDWARE.md#the-beacon) |
+| Power supply | $8–12 | Check the board's input range — many want 7–30 V DC, not 5 V |
+| Weatherproof enclosure | $10–15 | Not optional outdoors |
+| *Optional:* spare remote for the door | $10–15 | Enables the easiest wiring — [Pattern 1](docs/COOP-CONVERSION.md#pattern-1-tap-a-spare-remote-easiest) |
+
+For comparison, a commercial microchip-reading pet door is **$150–250** — and
+still requires the animal to push through a flap, which is the thing this was
+built to avoid.
+
+### Spending more on the door is the upgrade worth making
+
+The $40–50 doors work, and it is where this build started. If you are going to
+spend more anywhere, spend it on the door rather than the electronics:
+**$80–180 buys anti-pinch** (obstruction detection), which is the one safety
+feature this firmware structurally cannot provide. Some also add a remote
+control, which unlocks the easiest possible wiring.
+
+See [SAFETY.md](docs/SAFETY.md) — the door mechanism is the most important
+decision in the build, and it is not a software one.
+
+### Why the integrated ESP32 + relay board
+
+Buying an ESP32 board with the relays **already on it** removes the single
+most error-prone part of the build: wiring a separate relay module, getting the
+common ground right, and picking the correct `RELAY_ACTIVE_LOW` polarity. On an
+integrated board the manufacturer has already done that, and the relay contacts
+come out on screw terminals.
+
+Three things to check on whichever board you buy:
+
+1. **Which GPIO pins drive the relays.** They are fixed by the PCB and vary by
+   manufacturer — GPIO 16/17, 32/33 and 25/26 are all common. Set
+   `PIN_RELAY_OPEN` and `PIN_RELAY_CLOSE` to match; the firmware defaults to
+   **16 and 17**.
+2. **The input voltage.** Many of these boards take 7–30 V DC rather than 5 V,
+   because they are designed for industrial panels. Feeding 5 V to a board
+   expecting 12 V simply will not boot; feeding 12 V to a 5 V board destroys it.
+3. **Whether there is a USB socket.** Most have none — you program them through
+   a TTL header, which is why item 3 is not optional.
+
+### The USB-to-TTL adapter
+
+You need this to get the firmware onto the board and to reach the serial
+console. A **CP2102** module is the common choice. Wire four pins:
+
+```
+   adapter GND  ->  board GND
+   adapter TX   ->  board RX     (crossed)
+   adapter RX   ->  board TX     (crossed)
+   adapter 5V   ->  board 5V     only if the board is not otherwise powered
+```
+
+**TX and RX cross over.** This is the classic mistake: TX-to-TX gives you a
+silent port and no error message.
+
+> **Strongly recommended:** also wire `DTR -> IO0` and `RTS -> EN`. Without
+> them, every single firmware upload needs a manual button sequence — hold IO0,
+> tap EN, release IO0 — which gets old fast. Two extra wires buy you hands-free
+> flashing forever. See
+> [DIAGNOSTICS.md](docs/DIAGNOSTICS.md#which-chips-can-skip-the-buttons).
+
+Once the firmware is on, all configuration happens over this same serial link
+and is stored on the device — you do not reflash to change the beacon or the
+thresholds.
 
 ## Hardware
 

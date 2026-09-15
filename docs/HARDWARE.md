@@ -6,17 +6,23 @@ What to buy, and why.
 
 ## Bill of materials
 
-| Part | Notes |
-|---|---|
-| ESP32 dev board | Classic ESP32 (WROOM-32). Newer S3/C3/C6 also build. |
-| BLE beacon | Must advertise a **fixed** address. See below. |
-| 2-channel relay module | Or two logic-level MOSFET drivers. Rated for your door motor. |
+| Part | Cost | Notes |
+|---|---|---|
+| ESP32 board with 2 relays on-board | $15–20 | **Simplest option.** Relays and ESP32 on one PCB, no inter-wiring, polarity already correct. Usually has no USB socket |
+| *or* separate ESP32 + relay module | $8 + $6 | More flexible, more ways to get the ground and polarity wrong |
+| USB-to-TTL adapter (CP2102) | $8–10 | Needed for any board without a USB socket |
+| BLE beacon | $10–15 | Must advertise a **fixed** address. See below |
 | Door motor + controller | Whatever your coop door already uses. |
 | 5 V supply | Sized for the ESP32 *and* both relay coils. 1 A minimum. |
 | LED + 220 Ω–1 kΩ resistor | Optional; many dev boards have one you can reuse. |
 | Weatherproof enclosure | Not optional in a coop. |
 
-Total, excluding the door mechanism, is usually £20–35 / $25–45.
+**About $80 for a complete build** including a basic automatic door. The
+electronics alone — ESP32-with-relays board plus a USB-to-TTL adapter — come to
+roughly **$25–30**; the door is the rest.
+
+Spending more is worth it on the door, not the electronics: $80–180 buys
+anti-pinch, which is the only obstruction protection in the system.
 
 ---
 

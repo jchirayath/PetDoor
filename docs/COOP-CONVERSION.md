@@ -56,7 +56,7 @@ senses resistance and stops or reverses instead of continuing to pull. This
 firmware is open-loop and **cannot** detect an animal in the doorway — so that
 protection has to come from the door. Kits advertising *anti-pinch alert*,
 *solar powered*, *light sensor* and *remote control* are common and typically
-in the £70–150 / $80–180 range.
+in the $80–180 range.
 
 Feature checklist, most to least important:
 
@@ -105,7 +105,7 @@ with.
 
 - **Nothing on the door is modified.** No soldering into the controller, no
   warranty concerns, no weatherproofing to restore. If it goes wrong you throw
-  away a £10 remote, not a £120 door.
+  away a $12 remote, not a $120 door.
 - **Complete electrical isolation.** The remote is battery powered and
   physically separate; there is no shared ground to get wrong.
 - **The door keeps every safety feature** — anti-pinch, limits, timer — because
@@ -305,16 +305,21 @@ If your door works this way:
 
 ## A realistic parts list for Pattern 1
 
-| Part | Notes |
-|---|---|
-| ESP32 dev board | See [ESP32-PRIMER.md](ESP32-PRIMER.md) |
-| 2-channel relay module | 5 V, opto-isolated. Contact rating is irrelevant here — you are switching a button, not a motor |
-| BLE beacon | Fixed MAC. See [HARDWARE.md](HARDWARE.md#the-beacon) |
-| 5 V USB supply + cable | 1 A |
-| Hookup wire | 4 short lengths to the button pads |
-| Weatherproof enclosure | Not optional in a coop |
+| Part | Cost | Notes |
+|---|---|---|
+| ESP32 board with 2 relays on-board | $15–20 | Simplest option — no relay wiring. See [ESP32-PRIMER.md](ESP32-PRIMER.md) |
+| USB-to-TTL adapter (CP2102) | $8–10 | Required if the board has no USB socket, which most do not |
+| BLE beacon | $10–15 | Fixed MAC. See [HARDWARE.md](HARDWARE.md#the-beacon) |
+| Power supply | $8–12 | Match your board's input range — often 7–30 V DC, not 5 V |
+| Spare remote handset | $10–15 | For Pattern 1 |
+| Hookup wire | $5 | 4 short lengths to the button pads |
+| Weatherproof enclosure | $10–15 | Not optional outdoors |
 
-Total is usually **£25–40 / $30–50** on top of the door you already own.
+**About $80 for the whole build** — a basic auto door ($40–50), an ESP32 board
+with relays on it ($15–20) and a USB-to-TTL adapter ($8–10) — plus a beacon and
+an enclosure if you do not already have them.
+
+If you already own the door, the electronics are roughly **$35**.
 
 ---
 

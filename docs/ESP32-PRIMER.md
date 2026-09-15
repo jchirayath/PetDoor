@@ -10,7 +10,7 @@ If you have used an ESP32 before, skip to [WIRING.md](WIRING.md).
 
 ## What it is
 
-An ESP32 is a **£4–8 / $5–10 computer the size of a stick of gum**. It has:
+An ESP32 is a **$5–10 computer the size of a stick of gum**. It has:
 
 | | |
 |---|---|
