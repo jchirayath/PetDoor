@@ -42,6 +42,7 @@
 #include "ble_scanner.h"
 #include "config.h"
 #include "door.h"
+#include "eventlog.h"
 #include "proximity.h"
 
 namespace {
@@ -184,6 +185,7 @@ void printHelp() {
   Serial.println(F("  d  toggle discovery mode (list every BLE device in range)"));
   Serial.println(F("  c  toggle calibration stream (live RSSI + distance)"));
   Serial.println(F("  r  reset the proximity filter"));
+  Serial.println(F("  l  show the event log (what the door actually did)"));
   Serial.println(F("  m  edit the beacon MAC list (saved on the device)"));
   Serial.println(F("  t  edit the open/close thresholds (saved on the device)"));
   Serial.println(F("  w  edit the dwell times / how fast it reacts"));
@@ -839,6 +841,12 @@ void handleSerial(uint32_t nowMs) {
         Serial.println(F("[cmd] back, then press 's' to see weakest RSSI and"));
         Serial.println(F("[cmd] worst sample gap."));
         break;
+      case 'l':
+        EventLog::dump(Serial);
+        break;
+      case 'L':
+        EventLog::dumpCsv(Serial);
+        break;
       case 'm':
         g_entry = ENTRY_MAC;
         g_macLineLen = 0;
@@ -948,10 +956,16 @@ void driveDoor(uint32_t nowMs) {
   // The resulting state change is announced by reportTransitions(), which also
   // covers the manual `o` / `x` pulses. Reporting in one place keeps a single
   // line per change rather than one here and another there.
-  if (g_tracker.isPresent()) {
-    g_door.requestOpen(nowMs);
-  } else {
-    g_door.requestClose(nowMs);
+  const ActuationResult r = g_tracker.isPresent() ? g_door.requestOpen(nowMs)
+                                                 : g_door.requestClose(nowMs);
+  // ACT_ALREADY is the normal steady state and would swamp the log; the other
+  // refusals are the ones that explain a door that did not move.
+  if (r == ACT_LOCKED_OUT || r == ACT_BOOT_GRACE) {
+    static ActuationResult lastLogged = ACT_DONE;
+    if (r != lastLogged) {
+      lastLogged = r;
+      EventLog::record(LOG_REFUSED, static_cast<uint8_t>(r), g_tracker.filteredRssi());
+    }
   }
 }
 
@@ -963,6 +977,7 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
   const bool fix = g_tracker.hasFix(nowMs);
   if (fix != g_lastReportedFix) {
     g_lastReportedFix = fix;
+    EventLog::record(fix ? LOG_FIX_GOT : LOG_FIX_LOST, 0, g_tracker.filteredRssi());
     if (fix) {
       Serial.printf("[fix] acquired  (rssi %d dBm, ~%s m, %lu samples)\r\n",
                     g_tracker.filteredRssi(), fmt1(g_tracker.distanceM()).c_str(),
@@ -986,6 +1001,8 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
     Serial.printf("[door] %s  (rssi %d dBm, ~%s m)\r\n",
                   DoorController::stateName(g_door.state()), g_tracker.filteredRssi(),
                   fmt1(g_tracker.distanceM()).c_str());
+    EventLog::record(g_door.state() == DOOR_OPEN ? LOG_OPEN : LOG_CLOSE, 0,
+                     g_tracker.filteredRssi());
   }
 
   if (scanHealthy != g_lastReportedScanHealthy) {
@@ -1069,6 +1086,8 @@ void setup() {
   g_door.begin();
   g_tracker.begin();
   recordBoot();
+  EventLog::begin(static_cast<uint16_t>(g_bootCount));
+  EventLog::record(LOG_BOOT, static_cast<uint8_t>(esp_reset_reason()), 0);
 
   {
     int e = 0, x = 0;
