@@ -249,6 +249,52 @@
 #endif
 
 // ===========================================================================
+// 4b. WIFI LOG UPLOAD  — optional, off unless WIFI_SSID is set
+// ===========================================================================
+// Leave WIFI_SSID empty and the radio is never brought up: no WiFi, no cloud,
+// exactly as before. Put credentials in secrets.h, not here.
+//
+// !! The ESP32 shares one antenna between WiFi and BLE. Bringing WiFi up
+// !! starves BLE sampling for the 2-6 seconds an association takes, so uploads
+// !! are deferred until the beacon is absent and the door is closed. Do not
+// !! change that to upload on every event — see wifi_logger.h.
+
+#ifndef WIFI_SSID
+#define WIFI_SSID ""
+#endif
+
+#ifndef WIFI_PASSWORD
+#define WIFI_PASSWORD ""
+#endif
+
+// Where the CSV batch is POSTed. Plain HTTP by default: HTTPS adds a TLS
+// handshake to every burst, which is more radio time away from BLE.
+#ifndef LOG_ENDPOINT_URL
+#define LOG_ENDPOINT_URL ""
+#endif
+
+// Everything must have been quiet this long before an upload is allowed.
+#ifndef WIFI_IDLE_SETTLE_MS
+#define WIFI_IDLE_SETTLE_MS 60000
+#endif
+
+// Do not upload more often than this even if events keep arriving.
+#ifndef WIFI_MIN_UPLOAD_INTERVAL_MS
+#define WIFI_MIN_UPLOAD_INTERVAL_MS 300000
+#endif
+
+// Give up on an association after this long and go back to sleep, so a missing
+// access point cannot hold the radio indefinitely.
+#ifndef WIFI_CONNECT_TIMEOUT_MS
+#define WIFI_CONNECT_TIMEOUT_MS 15000
+#endif
+
+// NTP server used to set the clock, so log entries carry real timestamps.
+#ifndef NTP_SERVER
+#define NTP_SERVER "pool.ntp.org"
+#endif
+
+// ===========================================================================
 // 5. DIAGNOSTICS
 // ===========================================================================
 
