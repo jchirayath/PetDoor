@@ -44,6 +44,7 @@
 #include "door.h"
 #include "eventlog.h"
 #include "proximity.h"
+#include "wifi_logger.h"
 
 namespace {
 
@@ -186,6 +187,7 @@ void printHelp() {
   Serial.println(F("  c  toggle calibration stream (live RSSI + distance)"));
   Serial.println(F("  r  reset the proximity filter"));
   Serial.println(F("  l  show the event log (what the door actually did)"));
+  Serial.println(F("  u  upload the log now over WiFi (if configured)"));
   Serial.println(F("  m  edit the beacon MAC list (saved on the device)"));
   Serial.println(F("  t  edit the open/close thresholds (saved on the device)"));
   Serial.println(F("  w  edit the dwell times / how fast it reacts"));
@@ -283,6 +285,7 @@ void printStatus(uint32_t nowMs) {
   Serial.printf("  scan restarts: %lu\r\n", static_cast<unsigned long>(BleScanner::scanRestarts()));
   Serial.printf("  boot         : #%lu, last reset: %s\r\n",
                 static_cast<unsigned long>(g_bootCount), resetReasonName());
+  WifiLogger::printStatus(Serial);
   Serial.printf("  free heap    : %lu bytes (low-water %lu)\r\n",
                 static_cast<unsigned long>(ESP.getFreeHeap()),
                 static_cast<unsigned long>(ESP.getMinFreeHeap()));
@@ -844,6 +847,9 @@ void handleSerial(uint32_t nowMs) {
       case 'l':
         EventLog::dump(Serial);
         break;
+      case 'u':
+        WifiLogger::requestFlushNow();
+        break;
       case 'L':
         EventLog::dumpCsv(Serial);
         break;
@@ -1047,6 +1053,13 @@ void controlTask(void *) {
     updateLed(now, scanHealthy);
     if (g_entry == ENTRY_NONE) reportTransitions(now, scanHealthy);
 
+    // 4b. Offer the uploader a window. "Idle" means the animal is not around
+    //     and the door is shut, so sharing the antenna cannot cost us a
+    //     detection that matters. See wifi_logger.h.
+    const bool idle = !g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
+                      g_entry == ENTRY_NONE;
+    WifiLogger::tick(now, idle);
+
     // 5. Diagnostics.
     handleSerial(now);
 
@@ -1121,6 +1134,7 @@ void setup() {
 
   printBanner();
 
+  WifiLogger::begin();
   xTaskCreatePinnedToCore(controlTask, "petdoor", 8192, nullptr, 1, nullptr, 1);
   Serial.println(F("[system] running"));
 }

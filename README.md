@@ -20,8 +20,13 @@ door, board and cable.
 An ESP32 listens continuously for a Bluetooth beacon on your pet's collar. When
 the beacon has been convincingly close for a moment it pulses an OPEN relay;
 when it has been convincingly gone for a while it pulses a CLOSE relay. No
-WiFi, no cloud, no app, no subscription — the ESP32 and the beacon are the
-whole system.
+cloud, no app, no subscription — the ESP32 and the beacon are the whole system.
+
+**WiFi is optional and off by default.** Set a network in `secrets.h` and the
+firmware will upload its event log to an endpoint you run; leave it unset and
+the radio is never brought up. Even when enabled it stays off almost all the
+time, because the ESP32 shares one antenna between WiFi and BLE — see
+[the note on deferred uploads](docs/CONFIGURATION.md#why-uploads-are-deferred-rather-than-immediate).
 
 ---
 

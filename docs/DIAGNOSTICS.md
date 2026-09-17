@@ -212,6 +212,7 @@ Type a single character. No Enter needed; newlines are ignored.
 | `x` | Pulse the CLOSE relay now — **bypasses the proximity logic** |
 | `l` | Show the persistent event log — what the door actually did |
 | `L` | Same log as CSV, for capture and analysis |
+| `u` | Upload the event log over WiFi now, if configured |
 | `m` | Edit the beacon MAC list, saved on the device |
 | `t` | Edit the open/close thresholds, saved on the device |
 | `w` | Edit dwell times and the actuation lockout, saved on the device |
@@ -337,6 +338,31 @@ firmware the date. Until then the `when` column reads `(no clock)` and you work
 from `boot` plus `uptime`. The boot counter is what makes that usable — a run
 of `BOOT` entries with short uptimes between them is a power problem, and the
 reset reason says which.
+
+## `u` — upload the log
+
+Only does anything when `WIFI_SSID` is set — see
+[CONFIGURATION.md](CONFIGURATION.md#4b-wifi-log-upload-optional-off-by-default).
+
+Normally uploads happen on their own, once the beacon has been absent and the
+door closed for a settled period. `u` forces one immediately, which is useful
+for checking your endpoint works without waiting.
+
+```
+[wifi] flush requested
+[wifi] radio up — BLE sampling is degraded until this finishes
+[wifi] uploaded 14 events, clock synced
+[wifi] radio down
+```
+
+`s` shows the state:
+
+```
+  wifi         : idle (radio off), 3 uploads, 0 failures, clock synced
+```
+
+> **Forcing a flush deliberately starves BLE for a few seconds.** That is fine
+> at a keyboard; it is why automatic uploads wait for an idle window instead.
 
 ## `w` — dwell and timing
 

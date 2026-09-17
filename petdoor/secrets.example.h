@@ -25,6 +25,20 @@
 // #define BEACON_MINOR 1      // -1 for "any"
 
 // ---------------------------------------------------------------------------
+// Optional: upload the event log over WiFi.
+//
+// Leave these unset and the radio is NEVER brought up — no WiFi, no cloud,
+// which is the default behaviour.
+//
+// The ESP32 shares one antenna between WiFi and BLE, so uploads are deferred
+// until the beacon is absent and the door is closed. Expect the log to reach
+// your endpoint a minute or two after your pet leaves, not instantly.
+// ---------------------------------------------------------------------------
+// #define WIFI_SSID        "your-network"
+// #define WIFI_PASSWORD    "your-password"
+// #define LOG_ENDPOINT_URL "http://192.168.1.50:8080/petdoor"
+
+// ---------------------------------------------------------------------------
 // Anything else from config.h can be overridden here too, e.g.:
 // ---------------------------------------------------------------------------
 // #define RSSI_ENTER_DBM   -60

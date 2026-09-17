@@ -201,6 +201,47 @@ sample stream. It is rarely worth it on a mains-powered coop controller.
 
 ---
 
+## 4b. WiFi log upload (optional, off by default)
+
+**Leave `WIFI_SSID` empty and the radio is never brought up** — no WiFi, no
+cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
+
+| Setting | Default | Description |
+|---|---|---|
+| `WIFI_SSID` | `""` | Network name. Empty disables everything below. |
+| `WIFI_PASSWORD` | `""` | Network password. |
+| `LOG_ENDPOINT_URL` | `""` | Where the CSV batch is POSTed. Plain HTTP by default — HTTPS adds a TLS handshake to every burst, which is more radio time away from BLE. |
+| `WIFI_IDLE_SETTLE_MS` | `60000` | Everything must have been quiet this long before an upload is allowed. |
+| `WIFI_MIN_UPLOAD_INTERVAL_MS` | `300000` | Never upload more often than this, however many events arrive. |
+| `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Give up associating after this long, so a missing access point cannot hold the radio. |
+| `NTP_SERVER` | `"pool.ntp.org"` | Used to set the clock, so log entries carry real timestamps. |
+
+### Why uploads are deferred rather than immediate
+
+**The ESP32 has one 2.4 GHz radio, shared between WiFi and BLE.** Associating
+with an access point takes 2–6 seconds of radio-intensive work — the POST itself
+is trivial — and during that window BLE sampling is starved.
+
+Uploading on each event would be the worst possible schedule, because events
+happen when the animal is **at the door**. It would blind the radio exactly when
+detection matters. Worse, `FIX_LOST` is itself an event, so a burst that starves
+BLE can trigger another burst.
+
+So events are written to NVS the instant they happen (no radio involved), and
+the upload waits until the beacon is absent, the door is closed, and both have
+been settled for `WIFI_IDLE_SETTLE_MS`. In practice the log reaches your
+endpoint a minute or two after your pet leaves.
+
+The upload runs in its own task, so a slow association cannot stall door
+decisions, and it **aborts if the animal returns mid-flush**.
+
+> Do not change this to upload on every event. The deferral is the entire
+> reason WiFi can coexist with the beacon at all.
+
+Enabling WiFi costs about **540 KB of flash**, and the library is linked in
+whether or not you set `WIFI_SSID`. That is why the project builds with the
+`no_ota` partition scheme — see [ESP32-PRIMER.md](ESP32-PRIMER.md).
+
 ## 5. Diagnostics
 
 | Setting | Default | Description |
