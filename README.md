@@ -290,8 +290,19 @@ list takes several) or a beacon on whichever bird is last in. Many coop users
 run it the other way round: the coop door stays on its own dusk timer, and this
 handles the *daytime* pop-door.
 
-It will not work for an animal that cannot wear a beacon, and it is not a
-substitute for a lock — anyone carrying the beacon opens the door.
+It will not work for an animal that cannot wear a beacon.
+
+**It is not a lock, and it is weaker than it looks.** BLE advertisements are
+unauthenticated plaintext, so the door opens for anything broadcasting your
+beacon's address — not only for the beacon itself. Anyone who has been within
+radio range with a scanner can read that address and rebroadcast it from a $10
+board. This is a property of BLE advertising, not something this firmware can
+fix: there is no shared secret to verify against.
+
+In practice that is fine for keeping out weather, rodents and the neighbour's
+cat, which is what it was built for. It is not fine as your only barrier
+against a person. Keep a real lock on anything that matters, and treat the
+beacon as a convenience rather than a credential.
 
 > ⚠️ **This drives a motor attached to a door an animal walks through.**
 > Read [docs/SAFETY.md](docs/SAFETY.md) before connecting anything to a real
