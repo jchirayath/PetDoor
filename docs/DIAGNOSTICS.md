@@ -210,6 +210,8 @@ Type a single character. No Enter needed; newlines are ignored.
 | `r` | Reset the proximity filter |
 | `o` | Pulse the OPEN relay now — **bypasses the proximity logic** |
 | `x` | Pulse the CLOSE relay now — **bypasses the proximity logic** |
+| `l` | Show the persistent event log — what the door actually did |
+| `L` | Same log as CSV, for capture and analysis |
 | `m` | Edit the beacon MAC list, saved on the device |
 | `t` | Edit the open/close thresholds, saved on the device |
 | `w` | Edit dwell times and the actuation lockout, saved on the device |
@@ -293,6 +295,48 @@ see the state machine working:
 > carry. Eddystone and most sensor tags show `?`. No decision uses it.
 
 ---
+
+## `l` — the event log
+
+Serial output vanishes the moment nothing is attached, which is most of the
+time. The firmware keeps the last `EVENT_LOG_CAPACITY` (128) events in NVS, so
+they survive a power cut and answer "what happened overnight".
+
+```
+---- event log (14/128) ----
+  when                  boot  uptime    event     detail
+  2026-09-17 06:42:11Z  #12     3421s  OPEN      rssi=-47
+  2026-09-17 06:58:03Z  #12     4373s  CLOSE     rssi=-71
+  2026-09-17 07:02:55Z  #13        0s  BOOT      reset=1
+  2026-09-17 07:03:25Z  #13       30s  REFUSED   reason=3 rssi=-52
+```
+
+What gets logged — deliberately only rare events, so the ring covers weeks:
+
+| Event | Meaning |
+|---|---|
+| `BOOT` | `detail` is the reset reason. **`reset=9` is a brownout** |
+| `OPEN` / `CLOSE` | A relay actually pulsed |
+| `REFUSED` | An actuation was refused. `reason=2` lockout, `reason=3` boot grace |
+| `FIX_GOT` / `FIX_LOST` | Beacon acquired or went stale — what precedes a close |
+
+`REFUSED` is the one worth knowing about: it is what explains a door that did
+not move when you expected it to. Repeats are collapsed, so a boot-grace window
+logs once rather than sixteen times.
+
+`L` prints the same data as CSV for capture:
+
+```bash
+screen -L -Logfile petdoor.csv /dev/cu.usbserial-0001 115200
+```
+
+### Timestamps
+
+Entries carry uptime always, and wall clock only once something has told the
+firmware the date. Until then the `when` column reads `(no clock)` and you work
+from `boot` plus `uptime`. The boot counter is what makes that usable — a run
+of `BOOT` entries with short uptimes between them is a power problem, and the
+reset reason says which.
 
 ## `w` — dwell and timing
 
