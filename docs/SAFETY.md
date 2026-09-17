@@ -50,6 +50,11 @@ your mechanism.
   This is the safe failure, but it is a failure.
 - **A beacon carried by a predator-sized animal.** Anything holding the beacon
   opens the door. Proximity is the whole authentication model.
+- **Anything broadcasting your beacon's address.** BLE advertisements are
+  unauthenticated, so the firmware cannot distinguish your beacon from a device
+  imitating it. Reading the address takes a free phone app; rebroadcasting it
+  takes a $10 board. There is no fix within BLE advertising — treat the door as
+  a convenience, not a security barrier.
 
 ---
 
