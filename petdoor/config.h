@@ -241,6 +241,13 @@
 #define SCAN_WATCHDOG_MS 15000
 #endif
 
+// Events kept in the persistent log. Each entry is 16 bytes, held in NVS and
+// rewritten on every event, so keep it modest: 128 entries is 2 KB and covers
+// weeks of a door that cycles a few times a day.
+#ifndef EVENT_LOG_CAPACITY
+#define EVENT_LOG_CAPACITY 128
+#endif
+
 // ===========================================================================
 // 5. DIAGNOSTICS
 // ===========================================================================
