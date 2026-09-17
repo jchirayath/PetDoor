@@ -98,7 +98,12 @@ These are not incidental. Each protects an animal or a motor:
 9. **Opening is never rate-limited.** The actuation lockout applies to closing
    only. Reintroducing it on `requestOpen()` would delay reopening a door that
    just closed on an animal.
-10. **Never subtract a cross-task timestamp raw.** Use `advAgeMs()` /
+10. **Age helpers use a signed delta, not `a > b`.** `sampleAgeMs()` and
+    `advAgeMs()` compute `(int32_t)(now - then)` and clamp negatives to zero.
+    Writing `(now > then) ? now - then : 0` looks equivalent and is not: at the
+    `millis()` wrap it reports a sample from before the wrap as brand new, which
+    would let a long-dead beacon read as present and open the door.
+11. **Never subtract a cross-task timestamp raw.** Use `advAgeMs()` /
    `sampleAgeMs()`. A timestamp written by the BLE task can sit a few ms ahead
    of the control task's `nowMs`, and `now - then` underflows to ~2^32. See
    [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#timestamps-cross-a-task-boundary-never-subtract-them-raw).

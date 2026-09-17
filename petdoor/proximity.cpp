@@ -1,5 +1,7 @@
 #include "proximity.h"
 
+#include <math.h>
+
 #include "beacon.h"
 
 static_assert(RSSI_ENTER_DBM > RSSI_EXIT_DBM,
@@ -16,7 +18,9 @@ void ProximityTracker::begin() { reset(); }
 bool ProximityTracker::setFilter(uint8_t windowSize, float alpha) {
   if (windowSize < 1 || windowSize > kMaxMedianWindow) return false;
   if (windowSize % 2 == 0) return false;  // needs a single middle element
-  if (alpha <= 0.0f || alpha > 1.0f) return false;
+  // NaN compares false against everything, so both bounds checks would pass it
+  // and the EWMA would be poisoned permanently. Reject non-finite explicitly.
+  if (!isfinite(alpha) || alpha <= 0.0f || alpha > 1.0f) return false;
   windowSize_ = windowSize;
   alpha_ = alpha;
   reset();  // the old window contents were sized for the old shape

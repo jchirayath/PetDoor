@@ -19,7 +19,9 @@
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <errno.h>
 #include <esp_system.h>
+#include <stdlib.h>
 
 #if defined(__has_include)
 #if __has_include(<soc/rtc_cntl_reg.h>)
@@ -225,8 +227,19 @@ void printStatus(uint32_t nowMs) {
 
   const uint32_t enterFor = g_tracker.pendingEnterMs(nowMs);
   const uint32_t exitFor = g_tracker.pendingExitMs(nowMs);
-  if (enterFor) Serial.printf("  opening in   : %lu ms\r\n", static_cast<unsigned long>(ENTER_CONFIRM_MS - enterFor));
-  if (exitFor) Serial.printf("  closing in   : %lu ms\r\n", static_cast<unsigned long>(EXIT_CONFIRM_MS - exitFor));
+  // Runtime dwell, not the compile-time macro: after a `w` command that
+  // lengthens a dwell, the macro is smaller than the elapsed time and the
+  // subtraction underflows to ~4.29e9.
+  if (enterFor) {
+    const uint32_t total = g_tracker.enterConfirmMs();
+    Serial.printf("  opening in   : %lu ms\r\n",
+                  static_cast<unsigned long>(total > enterFor ? total - enterFor : 0));
+  }
+  if (exitFor) {
+    const uint32_t total = g_tracker.exitConfirmMs();
+    Serial.printf("  closing in   : %lu ms\r\n",
+                  static_cast<unsigned long>(total > exitFor ? total - exitFor : 0));
+  }
 
   Serial.printf("  radio        : %lu adverts, last %lu ms ago, %lu samples dropped\r\n",
                 static_cast<unsigned long>(BleScanner::advCount()),
@@ -506,6 +519,20 @@ void processThresholdLine(char *line) {
   applyThresholds(atoi(line), atoi(comma + 1));
 }
 
+// Console numbers must be parsed defensively: atol("-1") cast to uint32_t is
+// 4294967295, which passes any "greater than zero" check and would then be
+// written to NVS and reloaded on every boot.
+bool parseBoundedMs(const char *text, uint32_t minMs, uint32_t maxMs, uint32_t &out) {
+  if (text == nullptr) return false;
+  char *end = nullptr;
+  errno = 0;
+  const long long v = strtoll(text, &end, 10);
+  if (end == text || errno == ERANGE) return false;
+  if (v < static_cast<long long>(minMs) || v > static_cast<long long>(maxMs)) return false;
+  out = static_cast<uint32_t>(v);
+  return true;
+}
+
 void printTimingMenu() {
   Serial.println();
   Serial.println(F("---- dwell / timing ----"));
@@ -591,10 +618,13 @@ void processTimingLine(char *line) {
     return;
   }
   if (strncmp(line, "gap ", 4) == 0) {
-    const uint32_t ms = static_cast<uint32_t>(atol(line + 4));
-    if (!g_door.setDirectionGapMs(ms)) {
-      Serial.printf("\r\n[dwell] rejected: interlock gap must be >= %lu ms.\r\n",
-                    static_cast<unsigned long>(DoorController::kMinDirectionGapMs));
+    uint32_t ms = 0;
+    if (!parseBoundedMs(line + 4, DoorController::kMinDirectionGapMs,
+                        DoorController::kMaxDirectionGapMs, ms) ||
+        !g_door.setDirectionGapMs(ms)) {
+      Serial.printf("\r\n[dwell] rejected: interlock gap must be %lu-%lu ms.\r\n",
+                    static_cast<unsigned long>(DoorController::kMinDirectionGapMs),
+                    static_cast<unsigned long>(DoorController::kMaxDirectionGapMs));
       Serial.println(F("[dwell] both relays energised at once shorts the motor."));
       printTimingMenu();
       return;
@@ -629,8 +659,19 @@ void processTimingLine(char *line) {
     printTimingMenu();
     return;
   }
-  applyTiming(static_cast<uint32_t>(atol(line)), static_cast<uint32_t>(atol(c1 + 1)),
-              static_cast<uint32_t>(atol(c2 + 1)));
+  // One hour is far beyond anything sensible and still leaves no room for a
+  // sign-flipped value to become a ~49-day dwell.
+  constexpr uint32_t kMaxDwellMs = 3600000;
+  uint32_t en = 0, ex = 0, lk = 0;
+  if (!parseBoundedMs(line, 1, kMaxDwellMs, en) ||
+      !parseBoundedMs(c1 + 1, 1, kMaxDwellMs, ex) ||
+      !parseBoundedMs(c2 + 1, 1, kMaxDwellMs, lk)) {
+    Serial.printf("\r\n[dwell] rejected: each value must be 1-%lu ms.\r\n",
+                  static_cast<unsigned long>(kMaxDwellMs));
+    printTimingMenu();
+    return;
+  }
+  applyTiming(en, ex, lk);
 }
 
 void printFilterMenu() {
@@ -658,7 +699,12 @@ void printFilterMenu() {
 }
 
 void applyFilter(int win, float alpha) {
-  if (!g_tracker.setFilter(static_cast<uint8_t>(win), alpha)) {
+  // Check the int before narrowing: 257 truncates to 1, which setFilter would
+  // accept as a valid odd window — silently disabling the filter while the
+  // "near-unfiltered" warning below tested the untruncated value and stayed
+  // quiet.
+  if (win < 1 || win > kMaxMedianWindow ||
+      !g_tracker.setFilter(static_cast<uint8_t>(win), alpha)) {
     Serial.printf("\r\n[filt] rejected: window must be ODD and 1..%u, alpha 0<a<=1\r\n",
                   kMaxMedianWindow);
     printFilterMenu();
@@ -666,8 +712,10 @@ void applyFilter(int win, float alpha) {
   }
   BleScanner::storeFilter(static_cast<uint8_t>(win), alpha);
   g_filterStored = true;
-  Serial.printf("\r\n[filt] saved: window %d, alpha %s\r\n", win, String(alpha, 2).c_str());
-  if (win <= 1 || alpha >= 0.99f) {
+  // Report what is actually in force, not what was typed.
+  Serial.printf("\r\n[filt] saved: window %u, alpha %s\r\n", g_tracker.windowSize(),
+                String(g_tracker.alpha(), 2).c_str());
+  if (g_tracker.windowSize() <= 1 || g_tracker.alpha() >= 0.99f) {
     Serial.println(F("[filt] !! near-unfiltered. A single RSSI spike can now move"));
     Serial.println(F("[filt]    the door. This is the failure the project fixes."));
   }
