@@ -66,9 +66,14 @@ class DoorController {
   // 5-15 ms, so the 250 ms default already leaves well over an order of
   // magnitude of margin, and the 100 ms floor below still leaves plenty.
   static constexpr uint32_t kMinDirectionGapMs = 100;
+  // Ceiling as well as a floor. pulse() sits in delay() for this long with the
+  // control task blocked, so an absurd value (a negative console entry cast to
+  // unsigned, say) would wedge the door and the console together — and it is
+  // persisted, so a power cycle would not recover it.
+  static constexpr uint32_t kMaxDirectionGapMs = 5000;
   uint32_t directionGapMs() const { return directionGapMs_; }
   bool setDirectionGapMs(uint32_t ms) {
-    if (ms < kMinDirectionGapMs) return false;
+    if (ms < kMinDirectionGapMs || ms > kMaxDirectionGapMs) return false;
     directionGapMs_ = ms;
     return true;
   }

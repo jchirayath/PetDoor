@@ -97,7 +97,15 @@ class ProximityTracker {
   // bare subtraction then underflows to ~2^32 and a brand-new sample reads as
   // ancient.
   uint32_t sampleAgeMs(uint32_t nowMs) const {
-    return (nowMs > lastSeenMs_) ? (nowMs - lastSeenMs_) : 0;
+    // Unsigned subtraction is already correct across the millis() wrap; the
+    // ONLY thing needing special handling is the few milliseconds of task skew
+    // where a sample is stamped just ahead of nowMs.
+    //
+    // Do NOT write `(nowMs > lastSeenMs_) ? ... : 0` — that looks equivalent
+    // but silently reports a sample from before a wrap as brand new, which
+    // would let a long-dead beacon read as present and open the door.
+    const int32_t delta = static_cast<int32_t>(nowMs - lastSeenMs_);
+    return (delta > 0) ? static_cast<uint32_t>(delta) : 0;
   }
   uint32_t totalSamples() const { return totalSamples_; }
 

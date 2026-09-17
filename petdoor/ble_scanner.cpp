@@ -5,6 +5,7 @@
 #include <BLEScan.h>
 #include <Preferences.h>
 #include <ctype.h>
+#include <math.h>
 #include <string.h>
 
 #include <freertos/FreeRTOS.h>
@@ -104,7 +105,7 @@ void parseMacList(const char *list) {
     const bool sep = (*c == ',' || *c == ';' || *c == ' ' || *c == '\t');
 
     if (*c != '\0' && !sep) {
-      if (len < sizeof(buf) - 1) buf[len++] = static_cast<char>(tolower(*c));
+      if (len < sizeof(buf) - 1) buf[len++] = static_cast<char>(tolower(static_cast<unsigned char>(*c)));
       continue;
     }
 
@@ -192,7 +193,18 @@ void updateTable(const String &macLower, BLEAdvertisedDevice &device, const Stri
   SeenDevice &e = g_table[slot];
   strncpy(e.mac, macLower.c_str(), sizeof(e.mac) - 1);
   e.mac[sizeof(e.mac) - 1] = '\0';
-  e.name = device.haveName() ? device.getName() : String();
+  // The advertised name is attacker-controlled and gets printed straight to the
+  // operator's terminal by dumpTable(). Strip anything outside printable ASCII
+  // so a crafted name cannot inject terminal escape sequences and repaint the
+  // discovery table.
+  e.name = String();
+  if (device.haveName()) {
+    const String raw = device.getName();
+    for (size_t i = 0; i < raw.length(); i++) {
+      const char c = raw[i];
+      e.name += (c >= 0x20 && c < 0x7F) ? c : '.';
+    }
+  }
 
   e.mfgHex = mfg.length()
                  ? bytesToHex(reinterpret_cast<const uint8_t *>(mfg.c_str()), mfg.length())
@@ -240,7 +252,11 @@ class ScanCallbacks : public BLEAdvertisedDeviceCallbacks {
       // Eddystone beacons interleave TLM frames with their UID/URL frames, so
       // this lands only on some advertisements. Cheap: a length check and a
       // handful of byte reads, safe for the BLE callback.
-      if (device.haveServiceData()) {
+      // Gate on the Eddystone UUID: getServiceData() returns whichever service
+      // data came first, so without this any payload whose first byte happens
+      // to be 0x20 would be accepted as battery telemetry.
+      if (device.haveServiceData() &&
+          device.getServiceDataUUID().equals(BLEUUID(static_cast<uint16_t>(0xFEAA)))) {
         const String sd = device.getServiceData();
         EddystoneTlm tlm;
         if (sd.length() && parseEddystoneTlm(sd, tlm)) {
@@ -397,7 +413,7 @@ bool storeTargetMacs(const char *csv, String &error) {
   for (const char *c = csv;; c++) {
     const bool sep = (*c == ',' || *c == ';' || *c == ' ' || *c == '\t');
     if (*c != '\0' && !sep) {
-      if (len < sizeof(buf) - 1) buf[len++] = static_cast<char>(tolower(*c));
+      if (len < sizeof(buf) - 1) buf[len++] = static_cast<char>(tolower(static_cast<unsigned char>(*c)));
       continue;
     }
     if (len > 0) {
@@ -526,7 +542,10 @@ bool loadStoredFilter(uint8_t &windowSize, float &alpha) {
   const uint32_t w = prefs.getUInt("filtWin", 0);
   const float a = prefs.getFloat("filtAlpha", 0.0f);
   prefs.end();
-  if (w == 0 || a <= 0.0f) return false;
+  // NaN fails every comparison, so test for it explicitly or a poisoned NVS
+  // value would be reloaded on every boot.
+  if (w == 0 || !isfinite(a) || a <= 0.0f || a > 1.0f) return false;
+  if (w > 15) return false;
   windowSize = static_cast<uint8_t>(w);
   alpha = a;
   return true;
@@ -598,7 +617,10 @@ uint32_t lastAdvMs() { return g_lastAdvMs; }
 uint32_t advAgeMs(uint32_t nowMs) {
   // Read the volatile exactly once: the BLE task can move it between reads.
   const uint32_t last = g_lastAdvMs;
-  return (nowMs > last) ? (nowMs - last) : 0;
+  // Signed delta: wrap-correct, and still clamps the small task skew to 0.
+  // See ProximityTracker::sampleAgeMs for why the naive comparison is wrong.
+  const int32_t delta = static_cast<int32_t>(nowMs - last);
+  return (delta > 0) ? static_cast<uint32_t>(delta) : 0;
 }
 uint32_t advCount() { return g_advCount; }
 uint32_t droppedSamples() { return g_droppedSamples; }
