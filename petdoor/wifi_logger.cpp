@@ -12,6 +12,9 @@
 #include "eventlog.h"
 
 namespace WifiLogger {
+
+uint32_t g_bootCount = 0;
+
 namespace {
 
 volatile bool g_otaRequested = false;
@@ -176,6 +179,12 @@ bool post(const String &body) {
   http.setTimeout(8000);
   http.addHeader("Content-Type", "text/csv");
   http.addHeader("X-PetDoor-Id", LOG_DEVICE_ID);
+  // Reported so a server collecting from several doors can tell which build
+  // and which boot an upload came from — the first thing you want after an
+  // update, and the thing that makes a reboot loop visible from the server.
+  http.addHeader("X-PetDoor-Version", PETDOOR_VERSION);
+  http.addHeader("X-PetDoor-Build", PETDOOR_BUILD);
+  http.addHeader("X-PetDoor-Boot", String(g_bootCount));
 
   const String ts = String(static_cast<unsigned long>(time(nullptr)));
   http.addHeader("X-PetDoor-Timestamp", ts);
@@ -308,6 +317,8 @@ void uploaderTask(void *) {
 }  // namespace
 
 bool isEnabled() { return configured(); }
+
+void setBootCount(uint32_t n) { g_bootCount = n; }
 
 void begin() {
   if (!configured()) return;

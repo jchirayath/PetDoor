@@ -174,7 +174,13 @@ flowchart LR
 
 The dashboard shows daily rhythm, how long your pet stays out, trips per day,
 time of day, and a beacon-signal trend that warns of a flat battery before it
-starts missing. It refreshes itself once a minute, which is plenty — the door
+starts missing.
+
+Across the top it also lists each door with **the firmware it is running, how
+many times it has rebooted, and when it last called in**. That row is the
+health check: a reboot count climbing between uploads is a power problem, and a
+door that has not been heard from in hours is off, off the network, or failing
+to upload. It says so rather than leaving you to notice. It refreshes itself once a minute, which is plenty — the door
 uploads in bursts, not continuously.
 
 ---

@@ -38,6 +38,9 @@ bool isEnabled();
 // Starts the uploader task. Does NOT bring the radio up.
 void begin();
 
+// Reported to the server with each upload, so reboots are visible remotely.
+void setBootCount(uint32_t n);
+
 // Called from the control loop with the current idle state. Arms an upload
 // once the conditions have held for WIFI_IDLE_SETTLE_MS.
 void tick(uint32_t nowMs, bool idle);
