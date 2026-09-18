@@ -18,6 +18,7 @@ volatile bool g_otaRequested = false;
 volatile bool g_otaOpen = false;
 uint32_t g_otaOpenedMs = 0;
 bool g_otaBegun = false;
+TaskHandle_t g_taskHandle = nullptr;
 
 volatile bool g_flushRequested = false;
 volatile bool g_busy = false;
@@ -311,7 +312,8 @@ bool isEnabled() { return configured(); }
 void begin() {
   if (!configured()) return;
   WiFi.mode(WIFI_OFF);  // explicit: nothing is radiating until we ask
-  xTaskCreatePinnedToCore(uploaderTask, "petdoor-wifi", 6144, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(uploaderTask, "petdoor-wifi", WIFI_TASK_STACK, nullptr, 1,
+                          &g_taskHandle, 0);
 }
 
 void tick(uint32_t nowMs, bool idle) {
@@ -347,6 +349,11 @@ void requestFlushNow() {
 }
 
 bool busy() { return g_busy || g_otaOpen; }
+
+uint32_t stackFreeBytes() {
+  if (!g_taskHandle) return 0;
+  return uxTaskGetStackHighWaterMark(g_taskHandle) * sizeof(StackType_t);
+}
 
 bool otaWindowOpen() { return g_otaOpen; }
 
