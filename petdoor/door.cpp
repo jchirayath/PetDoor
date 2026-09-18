@@ -64,6 +64,7 @@ ActuationResult DoorController::requestOpen(uint32_t nowMs) {
 
   pulse(PIN_RELAY_OPEN);
   openCount_++;
+  lastSource_ = SRC_BEACON;
   state_ = DOOR_OPEN;
   lastActuationMs_ = millis();
   hasActuated_ = true;
@@ -88,6 +89,7 @@ ActuationResult DoorController::requestClose(uint32_t nowMs) {
 
   pulse(PIN_RELAY_CLOSE);
   closeCount_++;
+  lastSource_ = SRC_BEACON;
   state_ = DOOR_CLOSED;
   lastActuationMs_ = millis();
   hasActuated_ = true;
@@ -97,6 +99,7 @@ ActuationResult DoorController::requestClose(uint32_t nowMs) {
 void DoorController::forcePulseOpen() {
   pulse(PIN_RELAY_OPEN);
   openCount_++;
+  lastSource_ = SRC_MANUAL;
   state_ = DOOR_OPEN;
   lastActuationMs_ = millis();
   hasActuated_ = true;
@@ -105,6 +108,7 @@ void DoorController::forcePulseOpen() {
 void DoorController::forcePulseClose() {
   pulse(PIN_RELAY_CLOSE);
   closeCount_++;
+  lastSource_ = SRC_MANUAL;
   state_ = DOOR_CLOSED;
   lastActuationMs_ = millis();
   hasActuated_ = true;

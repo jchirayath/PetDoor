@@ -2,6 +2,9 @@
 
 #include <ArduinoOTA.h>
 #include <HTTPClient.h>
+#if LOG_ALLOW_TLS
+#include <WiFiClientSecure.h>
+#endif
 #include <WiFi.h>
 #include <mbedtls/md.h>
 #include <time.h>
@@ -129,8 +132,43 @@ int g_lastHttpCode = 0;
 
 bool post(const String &body) {
   if (LOG_ENDPOINT_URL[0] == '\0') return false;
+
+  // Plain HTTP where we can, TLS where the endpoint demands it.
+  //
+  // HTTP is preferred and is what a LAN endpoint should use: the upload is
+  // already authenticated by HMAC, and a TLS handshake costs 1-3 s of radio and
+  // ~40 KB of heap. But an endpoint on the public internet is usually
+  // HTTPS-only — it will answer plain HTTP with a redirect the door cannot
+  // usefully follow — and there the events would otherwise cross the internet
+  // in clear. Encryption is worth the handshake in that case, because uploads
+  // only happen while the animal is away.
+  //
+  // Certificates are not verified. The door sends and never acts on a reply, so
+  // an impostor server gains nothing it could not get by listening; validating
+  // would mean shipping and rotating a CA bundle on a device with no clock at
+  // boot. This protects against interception, not impersonation.
+  const bool wantsTls = String(LOG_ENDPOINT_URL).startsWith("https:");
+
+  WiFiClient plain;
   HTTPClient http;
-  if (!http.begin(LOG_ENDPOINT_URL)) {
+  bool began;
+#if LOG_ALLOW_TLS
+  WiFiClientSecure secure;
+  if (wantsTls) secure.setInsecure();
+  began = wantsTls ? http.begin(secure, LOG_ENDPOINT_URL)
+                   : http.begin(plain, LOG_ENDPOINT_URL);
+#else
+  if (wantsTls) {
+    // Fail loudly rather than silently posting nothing: an https endpoint with
+    // TLS compiled out can never work, and the reason is not obvious.
+    Serial.println(F("[wifi] LOG_ENDPOINT_URL is https but LOG_ALLOW_TLS is 0."));
+    Serial.println(F("[wifi] Use an http:// endpoint, or read the note in config.h."));
+    g_lastHttpCode = -2;
+    return false;
+  }
+  began = http.begin(plain, LOG_ENDPOINT_URL);
+#endif
+  if (!began) {
     g_lastHttpCode = -1;
     return false;
   }
@@ -345,8 +383,9 @@ void printStatus(Stream &out) {
     out.println(F("  wifi         : configured, but no log endpoint — local only"));
     return;
   }
-  out.printf("  log endpoint : %s%s\r\n", LOG_ENDPOINT_URL,
-             LOG_SHARED_KEY[0] ? "  (signed)" : "  (unsigned)");
+  out.printf("  log endpoint : %s%s%s\r\n", LOG_ENDPOINT_URL,
+             LOG_SHARED_KEY[0] ? "  (signed)" : "  (unsigned)",
+             String(LOG_ENDPOINT_URL).startsWith("https:") ? " (TLS)" : "");
   if (g_lastHttpCode) out.printf("  last response: HTTP %d\r\n", g_lastHttpCode);
   out.printf("  wifi         : %s, %lu uploads, %lu failures%s\r\n",
              g_busy ? "RADIO UP" : "idle (radio off)",

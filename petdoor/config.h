@@ -294,6 +294,23 @@
 #define LOG_SHARED_KEY ""
 #endif
 
+// Compile in TLS support for the log upload.
+//
+// OFF by default because it does not fit on a classic ESP32. Measured on real
+// hardware: with WiFi, BLE and this firmware resident, free heap is ~80 KB, and
+// a TLS handshake drove the low-water mark to 18 KB and then failed to connect.
+// It also costs ~170 KB of flash whether or not the endpoint uses it.
+//
+// Uploads do not need it: each one is signed with HMAC-SHA256 so it cannot be
+// forged or replayed, and the key never crosses the wire. TLS would add
+// confidentiality, not integrity.
+//
+// Turn it on only if you have the headroom — an S3 or C6 with PSRAM — and your
+// endpoint is HTTPS-only. Then set LOG_ENDPOINT_URL to an https:// address.
+#ifndef LOG_ALLOW_TLS
+#define LOG_ALLOW_TLS 0
+#endif
+
 // Identifies this door to the server, so one endpoint can collect from several.
 #ifndef LOG_DEVICE_ID
 #define LOG_DEVICE_ID "petdoor"
