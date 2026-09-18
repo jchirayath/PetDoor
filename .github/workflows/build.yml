@@ -48,7 +48,7 @@ jobs:
       # How a new user first flashes it: no secrets.h, no beacon, discovery
       # mode, and the door is never touched.
       - name: Compile unconfigured
-        run: arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=no_ota --warnings default petdoor
+        run: arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs --warnings default petdoor
 
       # Exercises the configured path, and the secrets.h include in config.h.
       # secrets.h is git-ignored, so CI has to create one.
@@ -61,7 +61,7 @@ jobs:
           #define RSSI_EXIT_DBM    -72
           #define RELAY_ACTIVE_LOW 1
           EOF
-          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=no_ota --warnings default petdoor
+          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs --warnings default petdoor
           rm petdoor/secrets.h
 
       # The static_asserts are load-bearing safety guardrails. Confirm they
@@ -74,7 +74,7 @@ jobs:
           check() {
             local label="$1"
             cat > petdoor/secrets.h
-            if arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=no_ota petdoor >/dev/null 2>&1; then
+            if arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs petdoor >/dev/null 2>&1; then
               echo "::error::$label — expected the build to FAIL, but it succeeded"
               fail=1
             else
@@ -119,4 +119,4 @@ jobs:
       - name: Report size
         if: always()
         run: |
-          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=no_ota petdoor 2>&1 | tail -3
+          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs petdoor 2>&1 | tail -3

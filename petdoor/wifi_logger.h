@@ -50,4 +50,24 @@ bool busy();
 
 void printStatus(Stream &out);
 
+// ---------------------------------------------------------------------------
+// Over-the-air firmware update.
+//
+// Opens a time-boxed window during which the radio is up and listening for an
+// upload, then shuts it again. It is not left listening permanently for the
+// same reason uploads are not continuous: WiFi and BLE share one antenna, and
+// a radio that is always serving WiFi is not hearing the beacon.
+//
+// This exists to replace the IO0/EN button sequence on boards with no
+// auto-reset wiring — you open the window from the serial console, or from
+// anywhere, without touching the hardware.
+// ---------------------------------------------------------------------------
+
+// Opens the window. Refuses while the animal is present, since the radio is
+// about to be shared and an update reboots the door.
+void beginOtaWindow(bool petPresent);
+
+bool otaWindowOpen();
+void closeOtaWindow();
+
 }  // namespace WifiLogger

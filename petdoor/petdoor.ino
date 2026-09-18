@@ -188,6 +188,7 @@ void printHelp() {
   Serial.println(F("  r  reset the proximity filter"));
   Serial.println(F("  l  show the event log (what the door actually did)"));
   Serial.println(F("  u  upload the log now over WiFi (if configured)"));
+  Serial.println(F("  p  open a firmware update window (OTA, no buttons)"));
   Serial.println(F("  m  edit the beacon MAC list (saved on the device)"));
   Serial.println(F("  t  edit the open/close thresholds (saved on the device)"));
   Serial.println(F("  w  edit the dwell times / how fast it reacts"));
@@ -850,6 +851,12 @@ void handleSerial(uint32_t nowMs) {
       case 'u':
         WifiLogger::requestFlushNow();
         break;
+      case 'p':
+        WifiLogger::beginOtaWindow(g_tracker.isPresent());
+        break;
+      case 'P':
+        WifiLogger::closeOtaWindow();
+        break;
       case 'L':
         EventLog::dumpCsv(Serial);
         break;
@@ -1057,7 +1064,7 @@ void controlTask(void *) {
     //     and the door is shut, so sharing the antenna cannot cost us a
     //     detection that matters. See wifi_logger.h.
     const bool idle = !g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
-                      g_entry == ENTRY_NONE;
+                      g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen();
     WifiLogger::tick(now, idle);
 
     // 5. Diagnostics.

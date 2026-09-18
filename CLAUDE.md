@@ -16,18 +16,18 @@ Always compile before claiming a change works:
 
 ```bash
 ARDUINO_CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
-"$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32:PartitionScheme=no_ota petdoor
+"$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs petdoor
 ```
 
 The bundled CLI above ships inside Arduino IDE.app; a standalone `arduino-cli`
 on PATH works identically. Target is **ESP32 Arduino core 3.x** (3.3.5 is what
 this was developed against).
 
-**Build with `PartitionScheme=no_ota`.** This project is flashed over serial and
+**Build with `PartitionScheme=min_spiffs`.** This project is flashed over serial and
 never uses over-the-air updates, so the default scheme's second 1.3 MB app slot
 is dead space. `no_ota` gives a single 2 MB app partition, which takes usage
 from ~85% to ~53% and leaves room for features like WiFi. In the Arduino IDE it
-is **Tools → Partition Scheme → No OTA (2MB APP / 2MB SPIFFS)**; PlatformIO
+is **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**; PlatformIO
 picks it up from `board_build.partitions` in `platformio.ini`.
 
 If you ever strain that, switch partitions again rather than trimming features

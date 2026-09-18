@@ -213,6 +213,8 @@ Type a single character. No Enter needed; newlines are ignored.
 | `l` | Show the persistent event log — what the door actually did |
 | `L` | Same log as CSV, for capture and analysis |
 | `u` | Upload the event log over WiFi now, if configured |
+| `p` | Open a firmware update window — flash over WiFi, no buttons |
+| `P` | Close the update window early |
 | `m` | Edit the beacon MAC list, saved on the device |
 | `t` | Edit the open/close thresholds, saved on the device |
 | `w` | Edit dwell times and the actuation lockout, saved on the device |
@@ -794,6 +796,38 @@ and the new firmware boots.
 
 The flag is detected at compile time, so on a chip without it the command says
 so and you fall back to the buttons.
+
+### Over WiFi, with no buttons at all
+
+Once the firmware on the board supports it, you never need the buttons again.
+Set an `OTA_PASSWORD` in `secrets.h` alongside your WiFi credentials, then in
+the console press **`p`**:
+
+```
+[ota] window open for 300 s — the radio is up, so BLE sampling
+[ota] is degraded until it closes.
+[ota] push with:  arduino-cli upload --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs -p 192.168.1.66 petdoor
+```
+
+Run that command and the firmware goes over the air. The board reboots into it
+and the window closes on its own.
+
+Three things it deliberately does:
+
+- **Refuses while the beacon is present.** An update reboots the door and shares
+  the radio; neither should happen with your pet at the doorway.
+- **Times out** after `OTA_WINDOW_MS`, so a forgotten window hands the antenna
+  back rather than starving BLE indefinitely. `P` closes it early.
+- **Requires a password.** Without `OTA_PASSWORD` set, OTA is off — otherwise
+  anyone on your network could reflash the door.
+
+> The radio is up for the whole window, so BLE sampling is degraded throughout.
+> That is why it is a window you open rather than a service that listens.
+
+**Chicken and egg:** the board has to already be running OTA-capable firmware.
+Getting there takes one last button-flash — and it also changes the partition
+table to the dual-slot layout OTA needs. NVS sits at the same offset in both,
+so your beacon, thresholds and event log survive.
 
 ### By hand, with the buttons
 
