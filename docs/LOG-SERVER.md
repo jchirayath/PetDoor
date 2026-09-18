@@ -168,9 +168,16 @@ ones out.
 
 ## Level 3: charts
 
-The review page is a table. For trip-duration analysis, daily rhythm and the
-beacon-battery trend, download `GET /export.csv` and drop it into the **Door Log
-portal** — see [PORTAL.md](PORTAL.md).
+Two ways, and they show the same analysis:
+
+- **Self-hosted** — the log server already serves a dashboard at `/`. Deploy it
+  with one command and open it in a browser: see
+  [WEB-DASHBOARD.md](WEB-DASHBOARD.md).
+- **Hosted** — download `GET /export.csv` and drop it into the
+  [Door Log portal](PORTAL.md). Nothing to run, but you import by hand.
+
+Self-hosting is the better fit once a door is uploading on its own: the page
+refreshes itself and there is no file to move around.
 
 ---
 

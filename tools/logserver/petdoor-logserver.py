@@ -250,6 +250,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
+            if os.path.exists(page):
+                with open(page, "rb") as fh:
+                    return self._send(200, fh.read(), "text/html; charset=utf-8")
+            return self._send(200, render(), "text/html; charset=utf-8")
+        if self.path.startswith("/api/events"):
+            with db() as conn:
+                rows = conn.execute("SELECT device,epoch,uptime,boot,type,detail,rssi "
+                                    "FROM events ORDER BY epoch, boot, uptime").fetchall()
+            return self._send(200, json.dumps({"events": [dict(r) for r in rows]}),
+                              "application/json; charset=utf-8")
+        if self.path.startswith("/table"):
+            return self._send(200, render(), "text/html; charset=utf-8")
         if self.path.startswith("/export.csv"):
             with db() as conn:
                 rows = conn.execute("SELECT * FROM events ORDER BY epoch, boot, uptime").fetchall()
@@ -257,8 +271,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 f'{r["epoch"]},{r["uptime"]},{r["boot"]},{r["type"]},{r["detail"]},{r["rssi"]}\n'
                 for r in rows)
             return self._send(200, csv, "text/csv; charset=utf-8")
-        if self.path in ("/", "/index.html"):
-            return self._send(200, render(), "text/html; charset=utf-8")
         if self.path == "/health":
             return self._send(200, json.dumps({"ok": True}), "application/json")
         self._send(404, "not found")
@@ -330,9 +342,11 @@ def main():
         print("WARNING: no shared key set. Anyone who can reach this port can post events.")
         print("         Run with --init to generate one.\n")
     print(f"PetDoor log server on http://{args.host}:{args.port}")
-    print(f"  ingest : POST http://{args.host}:{args.port}/ingest")
-    print(f"  review : http://{args.host}:{args.port}/")
-    print(f"  export : http://{args.host}:{args.port}/export.csv")
+    print(f"  dashboard : http://{args.host}:{args.port}/")
+    print(f"  ingest    : POST http://{args.host}:{args.port}/ingest")
+    print(f"  api       : http://{args.host}:{args.port}/api/events")
+    print(f"  export    : http://{args.host}:{args.port}/export.csv")
+    print(f"  plain     : http://{args.host}:{args.port}/table")
     with Server((args.host, args.port), Handler) as srv:
         try:
             srv.serve_forever()
