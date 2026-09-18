@@ -1,0 +1,538 @@
+<title>PetDoor Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --ground:#FAFBFC; --panel:#FFFFFF; --sunk:#F1F4F7;
+  --ink:#17212B; --ink-2:#4A5A6A; --ink-3:#7C8B9A;
+  --line:#DFE5EB; --line-2:#EDF1F5;
+  --in:#2A9D8F; --in-soft:#2A9D8F26;
+  --out:#E9A23B; --out-soft:#E9A23B2E;
+  --fault:#C4453B; --fault-soft:#C4453B1F;
+  --night:#17212B0A;
+  --shadow:0 1px 2px #17212B0F, 0 8px 24px -12px #17212B24;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
+  --ink:#E6EDF3; --ink-2:#A3B1BF; --ink-3:#6E7F8E;
+  --line:#26313C; --line-2:#1D262F;
+  --in:#26937F; --in-soft:#26937F33;
+  --out:#BE8129; --out-soft:#BE812938;
+  --fault:#E06C60; --fault-soft:#E06C6026;
+  --night:#FFFFFF08;
+  --shadow:0 1px 2px #0008, 0 8px 24px -12px #000A;
+}}
+:root[data-theme="dark"]{
+  --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
+  --ink:#E6EDF3; --ink-2:#A3B1BF; --ink-3:#6E7F8E;
+  --line:#26313C; --line-2:#1D262F;
+  --in:#26937F; --in-soft:#26937F33;
+  --out:#BE8129; --out-soft:#BE812938;
+  --fault:#E06C60; --fault-soft:#E06C6026;
+  --night:#FFFFFF08;
+  --shadow:0 1px 2px #0008, 0 8px 24px -12px #000A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  font-size:15px; line-height:1.55;
+  padding-block:28px; padding-left:20px; padding-right:20px;
+}
+.wrap{max-width:1080px; margin:0 auto; display:flex; flex-direction:column; gap:24px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
+
+/* ---- header ---- */
+header{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; justify-content:space-between}
+.brand{display:flex; align-items:center; gap:12px}
+.brand svg{width:40px;height:40px;flex:none}
+h1{font-size:25px; font-weight:700; letter-spacing:-.02em; margin:0; line-height:1.1}
+.sub{color:var(--ink-2); font-size:13.5px; margin:2px 0 0}
+.tools{display:flex; gap:8px; flex-wrap:wrap}
+button{
+  font:inherit; font-size:13px; font-weight:500; color:var(--ink);
+  background:var(--panel); border:1px solid var(--line); border-radius:7px;
+  padding:7px 12px; cursor:pointer;
+}
+button:hover{border-color:var(--ink-3)}
+button:focus-visible{outline:2px solid var(--in); outline-offset:2px}
+button.primary{background:var(--in); border-color:var(--in); color:#fff}
+button.primary:hover{filter:brightness(1.07)}
+
+/* ---- stat row ---- */
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+  background:var(--line); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+.stat{background:var(--panel); padding:14px 16px}
+.stat .k{font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--ink-3); font-weight:600}
+.stat .v{font-size:27px; font-weight:600; letter-spacing:-.02em; margin-top:3px; line-height:1.05}
+.stat .n{font-size:12px; color:var(--ink-2); margin-top:2px}
+.stat .v small{font-size:14px; font-weight:500; color:var(--ink-2); margin-left:1px}
+
+/* ---- panels ---- */
+section{background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow)}
+.head{display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+  padding:14px 18px; border-bottom:1px solid var(--line-2); flex-wrap:wrap}
+h2{font-size:14px; font-weight:600; margin:0; letter-spacing:-.01em}
+.hint{font-size:12.5px; color:var(--ink-3)}
+.body{padding:16px 18px}
+
+/* ---- legend ---- */
+.legend{display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:var(--ink-2)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.swatch{width:16px;height:9px;border-radius:2px;flex:none}
+
+/* ---- day strip ---- */
+.strip{width:100%; overflow-x:auto}
+.strip svg{display:block; min-width:600px; width:100%}
+
+/* ---- charts ---- */
+.two{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:24px}
+.chart{width:100%; overflow-x:auto}
+.chart svg{display:block; width:100%; min-width:280px}
+.routine{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+  border-radius:9px; overflow:hidden; background:var(--line)}
+.routine div{flex:1 1 130px; background:var(--panel); padding:11px 14px}
+.routine .k{font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+  color:var(--ink-3); font-weight:600}
+.routine .v{font-size:18px; font-weight:600; margin-top:1px; letter-spacing:-.01em}
+
+/* ---- table ---- */
+.tablewrap{overflow-x:auto; overflow-y:auto; max-height:420px}
+.tablewrap thead th{position:sticky; top:0; background:var(--panel); z-index:1}
+table{border-collapse:collapse; width:100%; font-size:13px; min-width:560px}
+th{text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--ink-3); font-weight:600; padding:0 12px 8px; border-bottom:1px solid var(--line)}
+td{padding:9px 12px; border-bottom:1px solid var(--line-2); vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tr:hover td{background:var(--sunk)}
+.pill{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
+  padding:3px 9px 3px 7px; border-radius:99px; white-space:nowrap}
+.pill.in{background:var(--in-soft); color:var(--in)}
+.pill.out{background:var(--out-soft); color:var(--out)}
+.pill.fault{background:var(--fault-soft); color:var(--fault)}
+.pill.sys{background:var(--sunk); color:var(--ink-2)}
+.cam{font-size:12px; padding:4px 9px}
+.empty{padding:36px 18px; text-align:center; color:var(--ink-3); font-size:13.5px}
+
+/* ---- ingest ---- */
+.btn{font-size:13px;font-weight:500;color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:7px;padding:7px 12px;text-decoration:none;
+  display:inline-flex;align-items:center}
+.btn:hover{border-color:var(--ink-3)}
+textarea{width:100%; min-height:90px; margin-top:10px; padding:10px; border-radius:7px;
+  border:1px solid var(--line); background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; resize:vertical}
+textarea:focus-visible{outline:2px solid var(--in); outline-offset:1px}
+
+/* ---- camera drawer ---- */
+.cams{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px}
+.camcard{border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--sunk)}
+.camcard h3{margin:0 0 4px; font-size:13px; font-weight:600}
+.camcard p{margin:0; font-size:12px; color:var(--ink-2)}
+.camcard .side{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--ink-3); font-weight:600; margin-bottom:6px}
+.frame{aspect-ratio:16/9; max-width:100%; border-radius:6px; background:var(--night);
+  border:1px solid var(--line); display:grid; place-items:center; color:var(--ink-3);
+  font-size:11.5px; margin-bottom:9px; text-align:center; padding:8px}
+code{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px;
+  background:var(--sunk); padding:1px 5px; border-radius:4px; border:1px solid var(--line-2)}
+.note{font-size:12.5px; color:var(--ink-2); margin:12px 0 0; line-height:1.5}
+footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
+@media (max-width:560px){ h1{font-size:21px} .stat .v{font-size:23px} }
+</style>
+
+<div class="wrap">
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 256 256" aria-hidden="true">
+      <rect x="38" y="26" width="180" height="204" rx="18" fill="none" stroke="var(--in)" stroke-width="14"/>
+      <path d="M64 52 L150 74 L150 182 L64 204 Z" fill="var(--in)" opacity="0.26"/>
+      <path d="M64 52 L150 74 L150 182 L64 204" fill="none" stroke="var(--in)" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="30" cy="196" r="12" fill="var(--out)"/>
+      <g fill="none" stroke="var(--out)" stroke-width="7" stroke-linecap="round">
+        <path d="M52 172 a34 34 0 0 1 0 48"/><path d="M70 156 a58 58 0 0 1 0 80" opacity="0.6"/>
+      </g>
+    </svg>
+    <div>
+      <h1>Door Log</h1>
+      <p class="sub" id="sub">Loading from the log server…</p>
+    </div>
+  </div>
+  <div class="tools">
+    <span class="hint" id="live"></span>
+    <a class="btn" href="/export.csv" download>Download CSV</a>
+    <a class="btn" href="/table">Plain table</a>
+    <button class="primary" id="refresh">Refresh</button>
+  </div>
+</header>
+
+<div class="stats" id="stats"></div>
+
+<section>
+  <div class="head">
+    <div><h2>Daily rhythm</h2></div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--out)"></i>went out</span>
+      <span><i class="dot" style="background:var(--in)"></i>came in</span>
+      <span><i class="swatch" style="background:var(--out-soft);border:1px solid var(--out)"></i>outside</span>
+      <span><i class="swatch" style="background:var(--night);border:1px solid var(--line)"></i>night</span>
+    </div>
+  </div>
+  <div class="body"><div class="strip" id="strip"></div></div>
+</section>
+
+<section>
+  <div class="head">
+    <h2>How long he stays out</h2>
+    <span class="hint" id="durhint"></span>
+  </div>
+  <div class="body"><div class="chart" id="durations"></div>
+    <p class="note" id="durnote"></p>
+  </div>
+</section>
+
+<div class="two">
+  <section>
+    <div class="head"><h2>Trips per day</h2><span class="hint" id="trendhint"></span></div>
+    <div class="body"><div class="chart" id="perday"></div></div>
+  </section>
+  <section>
+    <div class="head"><h2>Time of day</h2><span class="hint">when trips start</span></div>
+    <div class="body"><div class="chart" id="hourly"></div></div>
+  </section>
+</div>
+
+<section>
+  <div class="head">
+    <h2>Beacon signal</h2>
+    <span class="hint">strength at each return &mdash; a steady decline means a flat battery</span>
+  </div>
+  <div class="body"><div class="chart" id="signal"></div>
+    <p class="note" id="signote"></p>
+  </div>
+</section>
+
+<section>
+  <div class="head"><h2>Events</h2><span class="hint" id="evhint"></span></div>
+  <div class="tablewrap" id="tablewrap"></div>
+</section>
+
+<section id="camsec">
+  <div class="head">
+    <h2>Camera footage</h2>
+    <span class="hint">Both sides of the door</span>
+  </div>
+  <div class="body">
+    <div class="cams">
+      <div class="camcard">
+        <div class="side">Outside</div>
+        <div class="frame" id="camOut">Select an event to line up footage</div>
+        <h3>Approach camera</h3>
+        <p>Shows who arrived, and whether anything followed them in.</p>
+      </div>
+      <div class="camcard">
+        <div class="side">Inside</div>
+        <div class="frame" id="camIn">Select an event to line up footage</div>
+        <h3>Doorway camera</h3>
+        <p>Confirms the door actually moved, and that nothing was in it.</p>
+      </div>
+    </div>
+    <p class="note" id="camnote">
+      <strong>Not yet connected.</strong> Blink and Wyze both keep clips in their own
+      cloud with no public API, so a page cannot pull footage directly. What works
+      today: each event gives you a precise UTC timestamp to scrub to. What would
+      work properly: run the cameras through an RTSP bridge
+      (<code>docker-wyze-bridge</code> for Wyze) or any NVR that records to
+      files, then point these two frames at the resulting clip URLs.
+    </p>
+  </div>
+</section>
+
+<footer>PetDoor &middot; served from your own log server</footer>
+</div>
+
+<script>
+const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost"};
+const RESET={1:"power-on",3:"software",4:"panic",5:"interrupt watchdog",6:"task watchdog",7:"watchdog",9:"brownout",};
+const REFUSE={1:"already there",2:"too soon after last move",3:"boot grace period"};
+let events=[], selected=null;
+
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,"0");
+const fmtClock=e=>{const d=new Date(e*1000);return pad(d.getUTCHours())+":"+pad(d.getUTCMinutes())};
+const fmtDate=e=>{const d=new Date(e*1000);return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate())};
+const dayKey=e=>fmtDate(e);
+const secsIntoDay=e=>{const d=new Date(e*1000);return d.getUTCHours()*3600+d.getUTCMinutes()*60+d.getUTCSeconds()};
+function dur(s){if(s<60)return s+"s";const m=Math.round(s/60);if(m<60)return m+"m";const h=Math.floor(m/60);return h+"h "+pad(m%60)+"m";}
+
+function parseCsv(text){
+  const out=[];
+  for(const raw of text.split(/\r?\n/)){
+    const l=raw.trim(); if(!l||l.startsWith("epoch,"))continue;
+    const p=l.split(","); if(p.length<6)continue;
+    const ev={epoch:+p[0]||0,uptime:+p[1]||0,boot:+p[2]||0,type:p[3].trim(),detail:+p[4]||0,rssi:+p[5]||0};
+    if(!EV[ev.type])continue;
+    out.push(ev);
+  }
+  return out;
+}
+const idOf=e=>e.boot+"|"+e.uptime+"|"+e.type+"|"+e.epoch;
+function merge(incoming){
+  const seen=new Set(events.map(idOf));
+  let added=0;
+  for(const e of incoming) if(!seen.has(idOf(e))){events.push(e);seen.add(idOf(e));added++;}
+  events.sort((a,b)=>(a.epoch||0)-(b.epoch||0)||a.boot-b.boot||a.uptime-b.uptime);
+  return added;
+}
+
+/* Pair each exit with the next return, so "outside" is a span not two dots. */
+function trips(){
+  const t=[],dated=events.filter(e=>e.epoch>0);
+  for(let i=0;i<dated.length;i++){
+    if(dated[i].type!=="CLOSE")continue;
+    const back=dated.slice(i+1).find(e=>e.type==="OPEN");
+    t.push({out:dated[i].epoch,in:back?back.epoch:null});
+  }
+  return t;
+}
+
+const median=a=>{if(!a.length)return 0;const b=[...a].sort((x,y)=>x-y);const m=b.length>>1;
+  return b.length%2?b[m]:Math.round((b[m-1]+b[m])/2);};
+
+/* Reusable column chart. One scale places bars, ticks and labels; every axis
+   label names a value the chart actually reaches. */
+function bars(host,data,opts){
+  const o=Object.assign({h:170,color:"var(--in)",fmt:v=>v,label:d=>d.label,every:1,unit:""},opts||{});
+  const el=$(host);
+  if(!data.length||data.every(d=>!d.v)){el.innerHTML='<div class="empty">Not enough data yet</div>';return;}
+  const W=640,L=34,R=10,T=14,B=30,plot=W-L-R,ph=o.h-T-B;
+  const max=Math.max(...data.map(d=>d.v))||1;
+  const nice=max<=4?max:Math.ceil(max/4)*4;
+  const bw=Math.max(3,Math.min(38,plot/data.length-6));
+  const step=plot/data.length;
+  const y=v=>T+ph-(v/nice)*ph;
+  let g="";
+  for(let i=0;i<=2;i++){
+    const v=nice*i/2, yy=y(v);
+    g+=`<line x1="${L}" y1="${yy}" x2="${L+plot}" y2="${yy}" stroke="var(--line-2)" stroke-width="1"/>`;
+    g+=`<text x="${L-7}" y="${yy+3.5}" text-anchor="end" font-size="10" fill="var(--ink-3)" font-family="IBM Plex Mono,monospace">${o.fmt(v)}</text>`;
+  }
+  data.forEach((d,i)=>{
+    const cx=L+step*i+step/2, hgt=Math.max(d.v?2:0,ph-(y(d.v)-T));
+    if(d.v) g+=`<rect x="${cx-bw/2}" y="${y(d.v)}" width="${bw}" height="${hgt}" rx="3" fill="${d.color||o.color}"><title>${o.label(d)}: ${o.fmt(d.v)}${o.unit}</title></rect>`;
+    if(i%o.every===0) g+=`<text x="${cx}" y="${T+ph+16}" text-anchor="middle" font-size="10" fill="var(--ink-3)" font-family="IBM Plex Mono,monospace">${d.tick??d.label}</text>`;
+  });
+  g+=`<line x1="${L}" y1="${T+ph}" x2="${L+plot}" y2="${T+ph}" stroke="var(--line)" stroke-width="1"/>`;
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${o.h}" role="img" aria-label="${o.aria||host}">${g}</svg>`;
+}
+
+function renderDurations(){
+  const done=trips().filter(t=>t.in).map(t=>t.in-t.out);
+  if(!done.length){$("durations").innerHTML='<div class="empty">No completed trips yet</div>';$("durnote").textContent="";$("durhint").textContent="";return;}
+  const edges=[0,5,10,15,30,45,60,90,120,1e9];
+  const names=["<5m","5-10m","10-15m","15-30m","30-45m","45-60m","1-1.5h","1.5-2h","2h+"];
+  const buckets=names.map((n,i)=>({label:n,tick:n,v:0}));
+  for(const d of done){const m=d/60;
+    for(let i=0;i<edges.length-1;i++) if(m>=edges[i]&&m<edges[i+1]){buckets[i].v++;break;}}
+  bars("durations",buckets,{color:"var(--out)",h:180,every:1,unit:" trips",
+    label:d=>d.label+" outside",aria:"How many trips fell into each duration band"});
+  const med=median(done), mean=Math.round(done.reduce((a,b)=>a+b,0)/done.length);
+  $("durhint").textContent=done.length+" completed trips";
+  const skew=mean>med*1.4;
+  $("durnote").innerHTML=`Typical trip is <strong>${dur(med)}</strong> (median). `
+    +(skew?`The average is ${dur(mean)}, pulled up by a few long ones — the median is the honest number here.`
+          :`The average, ${dur(mean)}, is close to it, so trips are fairly consistent.`);
+}
+
+function renderPerDay(){
+  const dated=events.filter(e=>e.epoch>0);
+  if(!dated.length){$("perday").innerHTML='<div class="empty">No timestamped events yet</div>';return;}
+  const by={};
+  for(const t of trips()) by[dayKey(t.out)]=(by[dayKey(t.out)]||0)+1;
+  const days=[...new Set(dated.map(e=>dayKey(e.epoch)))].sort().slice(-14);
+  const data=days.map(d=>({label:d,tick:d.slice(8),v:by[d]||0}));
+  const avg=data.reduce((a,b)=>a+b.v,0)/(data.length||1);
+  bars("perday",data,{color:"var(--in)",h:170,every:Math.ceil(days.length/7),unit:" trips",
+    label:d=>d.label,aria:"Trips outside on each of the last days"});
+  $("trendhint").textContent=avg?avg.toFixed(1)+" a day on average":"";
+}
+
+function renderHourly(){
+  const t=trips();
+  if(!t.length){$("hourly").innerHTML='<div class="empty">No trips yet</div>';return;}
+  const h=Array.from({length:24},(_,i)=>({label:pad(i)+":00",tick:i%6===0?pad(i):"",v:0}));
+  for(const x of t) h[new Date(x.out*1000).getUTCHours()].v++;
+  bars("hourly",h,{color:"var(--out)",h:170,every:1,unit:" trips",
+    label:d=>"trips starting "+d.label,aria:"Trips by hour of day"});
+}
+
+function renderSignal(){
+  const pts=events.filter(e=>e.type==="OPEN"&&e.rssi&&e.epoch>0).slice(-40);
+  const el=$("signal");
+  if(pts.length<3){el.innerHTML='<div class="empty">Not enough returns recorded yet</div>';$("signote").textContent="";return;}
+  const W=640,L=38,R=12,T=14,B=26,plot=W-L-R,ph=120;
+  const vals=pts.map(p=>p.rssi), lo=Math.min(...vals)-4, hi=Math.max(...vals)+4;
+  const x=i=>L+(i/(pts.length-1))*plot, y=v=>T+ph-((v-lo)/(hi-lo))*ph;
+  let g="",d="";
+  for(const v of [hi,Math.round((hi+lo)/2),lo]){
+    g+=`<line x1="${L}" y1="${y(v)}" x2="${L+plot}" y2="${y(v)}" stroke="var(--line-2)" stroke-width="1"/>`;
+    g+=`<text x="${L-7}" y="${y(v)+3.5}" text-anchor="end" font-size="10" fill="var(--ink-3)" font-family="IBM Plex Mono,monospace">${Math.round(v)}</text>`;
+  }
+  pts.forEach((p,i)=>{d+=(i?"L":"M")+x(i)+" "+y(p.rssi);});
+  g+=`<path d="${d}" fill="none" stroke="var(--in)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  pts.forEach((p,i)=>{g+=`<circle cx="${x(i)}" cy="${y(p.rssi)}" r="${i===pts.length-1?4.5:2.5}" fill="var(--in)" stroke="var(--panel)" stroke-width="${i===pts.length-1?2:0}"><title>${fmtDate(p.epoch)} ${fmtClock(p.epoch)} · ${p.rssi} dBm</title></circle>`;});
+  g+=`<text x="${L}" y="${T+ph+18}" font-size="10" fill="var(--ink-3)" font-family="IBM Plex Mono,monospace">${fmtDate(pts[0].epoch)}</text>`;
+  g+=`<text x="${L+plot}" y="${T+ph+18}" text-anchor="end" font-size="10" fill="var(--ink-3)" font-family="IBM Plex Mono,monospace">${fmtDate(pts[pts.length-1].epoch)}</text>`;
+  el.innerHTML=`<svg viewBox="0 0 ${W} ${T+ph+B}" role="img" aria-label="Beacon signal strength at each return">${g}</svg>`;
+  const half=Math.floor(pts.length/2);
+  const early=median(vals.slice(0,half)), late=median(vals.slice(half));
+  const drop=early-late;
+  $("signote").innerHTML = drop>=6
+    ? `<strong style="color:var(--fault)">Signal has dropped ${drop} dBm</strong> across this window. That usually means the beacon battery is going — or it has moved further from the door. Worth checking before it starts missing.`
+    : `Steady within ${Math.abs(drop)} dBm, so the beacon is holding up. A sustained drop of 6 dBm or more is the early warning for a flat battery.`;
+}
+
+function renderStats(){
+  const dated=events.filter(e=>e.epoch>0), tr=trips();
+  const done=tr.filter(t=>t.in), days=new Set(dated.map(e=>dayKey(e.epoch))).size||1;
+  const total=done.reduce((s,t)=>s+(t.in-t.out),0);
+  const longest=done.reduce((m,t)=>Math.max(m,t.in-t.out),0);
+  const faults=events.filter(e=>e.type==="BOOT"&&e.detail===9).length;
+  const durs=done.map(t=>t.in-t.out);
+  const med=median(durs);
+  const perDay=tr.length/days;
+  const outPerDay=Math.round(total/days);
+  const firsts=[],lasts=[];
+  for(const d of new Set(dated.map(e=>dayKey(e.epoch)))){
+    const day=tr.filter(t=>dayKey(t.out)===d).map(t=>secsIntoDay(t.out));
+    if(day.length){firsts.push(Math.min(...day));lasts.push(Math.max(...day));}
+  }
+  const hhmm=s2=>pad(Math.floor(s2/3600))+":"+pad(Math.round((s2%3600)/60));
+  const cards=[
+    ["Trips a day",perDay?perDay.toFixed(1):"—",`${tr.length} over ${days} day${days>1?"s":""}`],
+    ["Typical trip",med?dur(med):"—","median, not average"],
+    ["Longest trip",longest?dur(longest):"—","single outing"],
+    ["Outside a day",outPerDay?dur(outPerDay):"—","total time out"],
+    ["First out",firsts.length?hhmm(median(firsts)):"—","typical start"],
+    ["Last out",lasts.length?hhmm(median(lasts)):"—","typical finish"],
+  ];
+  if(faults) cards.push(["Brownouts",faults,"check the power supply"]);
+  $("stats").innerHTML=cards.map(([k,v,n])=>
+    `<div class="stat"><div class="k">${k}</div><div class="v mono">${v}</div><div class="n">${n}</div></div>`).join("");
+}
+
+function renderStrip(){
+  const dated=events.filter(e=>e.epoch>0);
+  const host=$("strip");
+  if(!dated.length){host.innerHTML='<div class="empty">No timestamped events yet. The door records real times once it has synced its clock over WiFi.</div>';return;}
+  const days=[...new Set(dated.map(e=>dayKey(e.epoch)))].sort().slice(-14);
+  const L=74,R=18,T=28,rowH=34,H=T+days.length*rowH+18,W=900,plot=W-L-R;
+  const x=s=>L+(s/86400)*plot;
+  const tr=trips();
+  let g="";
+  // night shading 20:00-06:00 — the circadian frame the data sits in
+  g+=`<rect x="${L}" y="${T}" width="${x(6*3600)-L}" height="${days.length*rowH}" fill="var(--night)"/>`;
+  g+=`<rect x="${x(20*3600)}" y="${T}" width="${L+plot-x(20*3600)}" height="${days.length*rowH}" fill="var(--night)"/>`;
+  for(let h=0;h<=24;h+=3){
+    g+=`<line x1="${x(h*3600)}" y1="${T}" x2="${x(h*3600)}" y2="${T+days.length*rowH}" stroke="var(--line-2)" stroke-width="1"/>`;
+    g+=`<text x="${x(h*3600)}" y="${T-9}" text-anchor="middle" font-size="10.5" fill="var(--ink-3)" font-family="IBM Plex Mono,monospace">${pad(h)}</text>`;
+  }
+  days.forEach((d,i)=>{
+    const y=T+i*rowH+rowH/2;
+    const lbl=new Date(d+"T00:00:00Z");
+    g+=`<text x="${L-12}" y="${y+4}" text-anchor="end" font-size="11.5" fill="var(--ink-2)" font-family="IBM Plex Mono,monospace">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][lbl.getUTCDay()]} ${d.slice(5)}</text>`;
+    g+=`<line x1="${L}" y1="${y}" x2="${L+plot}" y2="${y}" stroke="var(--line-2)" stroke-width="1"/>`;
+    // outside spans
+    for(const t of tr){
+      if(dayKey(t.out)!==d)continue;
+      const x1=x(secsIntoDay(t.out));
+      const x2=t.in&&dayKey(t.in)===d?x(secsIntoDay(t.in)):L+plot;
+      g+=`<rect x="${x1}" y="${y-8}" width="${Math.max(3,x2-x1)}" height="16" rx="4" fill="var(--out)" opacity="0.30" stroke="var(--out)" stroke-width="1.25"/>`;
+    }
+    for(const e of dated.filter(e=>dayKey(e.epoch)===d)){
+      const cx=x(secsIntoDay(e.epoch));
+      if(e.type==="CLOSE") g+=`<circle cx="${cx}" cy="${y}" r="5" fill="var(--out)" stroke="var(--panel)" stroke-width="2"><title>Went out ${fmtClock(e.epoch)}</title></circle>`;
+      else if(e.type==="OPEN") g+=`<circle cx="${cx}" cy="${y}" r="5" fill="var(--in)" stroke="var(--panel)" stroke-width="2"><title>Came in ${fmtClock(e.epoch)}</title></circle>`;
+      else if(e.type==="BOOT") g+=`<rect x="${cx-2}" y="${y-9}" width="4" height="18" rx="1.5" fill="${e.detail===9?"var(--fault)":"var(--ink-3)"}"><title>${e.detail===9?"Brownout":"Restart"} ${fmtClock(e.epoch)}</title></rect>`;
+    }
+  });
+  host.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Timeline of door events by hour for each day"><rect x="0" y="0" width="${W}" height="${H}" fill="none"/>${g}</svg>`;
+}
+
+function renderTable(){
+  const host=$("tablewrap");
+  if(!events.length){host.innerHTML='<div class="empty">Nothing imported yet. Load the example, or drop in a CSV from the door.</div>';$("evhint").textContent="";return;}
+  const rows=events.slice().reverse().slice(0,60);
+  $("evhint").textContent=events.length+" events"+(events.length>60?" · newest 60, scroll for more":"");
+  const cls=t=>t==="OPEN"?"in":t==="CLOSE"?"out":t==="REFUSED"?"fault":"sys";
+  host.innerHTML="<table><thead><tr><th>When</th><th>Event</th><th>Detail</th><th>Signal</th><th></th></tr></thead><tbody>"
+   +rows.map((e,i)=>{
+     const when=e.epoch?`<span class="mono">${fmtDate(e.epoch)}</span> <span class="mono" style="color:var(--ink-2)">${fmtClock(e.epoch)}</span>`
+                       :`<span class="mono" style="color:var(--ink-3)">boot ${e.boot} · +${e.uptime}s</span>`;
+     let d="";
+     if(e.type==="BOOT") d=RESET[e.detail]||("reset "+e.detail);
+     else if(e.type==="REFUSED") d=REFUSE[e.detail]||("reason "+e.detail);
+     if(e.type==="BOOT"&&e.detail===9) d=`<strong style="color:var(--fault)">${d}</strong>`;
+     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" style="background:currentColor"></i>${EV[e.type]}</span></td>`
+      +`<td style="color:var(--ink-2)">${d}</td><td class="mono" style="color:var(--ink-2)">${e.rssi?e.rssi+" dBm":""}</td>`
+      +`<td style="text-align:right">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
+   }).join("")+"</tbody></table>";
+  host.querySelectorAll("button[data-ep]").forEach(b=>b.onclick=()=>selectEvent(+b.dataset.ep));
+}
+
+function selectEvent(ep){
+  selected=ep;
+  const stamp=fmtDate(ep)+" "+fmtClock(ep)+"Z";
+  for(const id of ["camOut","camIn"]){
+    $(id).innerHTML=`<div><div class="mono" style="font-size:15px;color:var(--ink);font-weight:600">${stamp}</div>
+      <div style="margin-top:4px">scrub here</div></div>`;
+  }
+  $("camsec").scrollIntoView({behavior:"matchMedia" in window && matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"nearest"});
+}
+
+function renderAll(){renderStats();renderStrip();renderDurations();renderPerDay();
+  renderHourly();renderSignal();renderTable();
+  const dated=events.filter(e=>e.epoch>0);
+  $("sub").textContent=events.length?`${events.length} events`+(dated.length?` · ${fmtDate(dated[0].epoch)} to ${fmtDate(dated[dated.length-1].epoch)}`:" · no clock set on the door"):"Comings and goings, from the PetDoor event log";
+}
+
+
+
+
+/* ---- data comes from the log server ---- */
+let lastLoad=0;
+async function load(){
+  try{
+    const r=await fetch("/api/events",{cache:"no-store"});
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const j=await r.json();
+    events=(j.events||[]).map(e=>({epoch:+e.epoch||0,uptime:+e.uptime||0,boot:+e.boot||0,
+      type:e.type,detail:+e.detail||0,rssi:+e.rssi||0,device:e.device||""}));
+    events.sort((a,b)=>(a.epoch||0)-(b.epoch||0)||a.boot-b.boot||a.uptime-b.uptime);
+    lastLoad=Date.now();
+    renderAll();
+    const devs=[...new Set(events.map(e=>e.device).filter(Boolean))];
+    $("live").textContent=events.length
+      ? `${events.length} events${devs.length>1?` from ${devs.length} doors`:""} · updated just now`
+      : "";
+    if(!events.length){
+      $("sub").innerHTML='No events yet. Point a door at this server &mdash; '
+        +'set <code>LOG_ENDPOINT_URL</code> in its <code>secrets.h</code>.';
+    }
+  }catch(err){
+    $("sub").textContent="Could not reach the log server ("+err.message+")";
+    $("live").textContent="";
+  }
+}
+$("refresh").onclick=load;
+renderAll();
+load();
+// The door uploads in bursts when the pet is away, so there is no point polling
+// hard. Once a minute keeps an always-on wall display current.
+setInterval(load,60000);
+setInterval(()=>{ if(lastLoad){const m=Math.round((Date.now()-lastLoad)/60000);
+  if(m>=1&&events.length) $("live").textContent=$("live").textContent
+    .replace(/updated .*/,`updated ${m} min ago`);} },60000);
+</script>
