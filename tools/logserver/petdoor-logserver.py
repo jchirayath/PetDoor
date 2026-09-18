@@ -74,6 +74,17 @@ def init_db():
             PRIMARY KEY (device, boot, uptime, type)
         );
         CREATE INDEX IF NOT EXISTS events_epoch ON events(epoch);
+        -- One row per door: what it is running and when it last called in.
+        -- Reboots are the number the door itself counts, so a climbing value
+        -- between uploads is a restart loop visible without a serial cable.
+        CREATE TABLE IF NOT EXISTS devices (
+            device   TEXT PRIMARY KEY,
+            version  TEXT,
+            build    TEXT,
+            boots    INTEGER,
+            last_seen INTEGER,
+            last_ip  TEXT
+        );
         """)
 
 
@@ -87,6 +98,18 @@ def set_key(key):
     with db() as conn:
         conn.execute("INSERT INTO settings(k,v) VALUES('shared_key',?) "
                      "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key,))
+
+
+def note_device(device, version, build, boots, ip):
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO devices(device,version,build,boots,last_seen,last_ip)"
+            " VALUES(?,?,?,?,?,?)"
+            " ON CONFLICT(device) DO UPDATE SET"
+            "   version=excluded.version, build=excluded.build,"
+            "   boots=excluded.boots, last_seen=excluded.last_seen,"
+            "   last_ip=excluded.last_ip",
+            (device, version, build, boots, int(time.time()), ip))
 
 
 def store(device, rows):
@@ -227,6 +250,18 @@ def render():
             f'<td class="mono" style="color:var(--dim)">'
             f'{str(r["rssi"]) + " dBm" if r["rssi"] else ""}</td></tr>')
 
+    with db() as conn:
+        devs = conn.execute("SELECT * FROM devices ORDER BY device").fetchall()
+    if devs:
+        bits = []
+        for d in devs:
+            age = int((time.time() - (d["last_seen"] or 0)) / 60)
+            bits.append(f'{html.escape(d["device"])} v{html.escape(d["version"] or "?")} '
+                        f'&middot; boot #{d["boots"] or 0} &middot; {age} min ago')
+        cards += ('<div class="card"><div class="k">Doors</div>'
+                  '<div style="font-size:12.5px;margin-top:4px;line-height:1.6">'
+                  + "<br>".join(bits) + "</div></div>")
+
     ago = f"last upload {int((time.time() - last) / 60)} min ago" if last else "nothing received yet"
     sub = f"{ago} &middot; showing newest {len(rows)} of {total:,}"
     return PAGE.format(sub=sub, cards=cards,
@@ -260,7 +295,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             with db() as conn:
                 rows = conn.execute("SELECT device,epoch,uptime,boot,type,detail,rssi "
                                     "FROM events ORDER BY epoch, boot, uptime").fetchall()
-            return self._send(200, json.dumps({"events": [dict(r) for r in rows]}),
+                devs = conn.execute("SELECT * FROM devices").fetchall()
+            return self._send(200, json.dumps({"events": [dict(r) for r in rows],
+                                               "devices": [dict(d) for d in devs]}),
                               "application/json; charset=utf-8")
         if self.path.startswith("/table"):
             return self._send(200, render(), "text/html; charset=utf-8")
@@ -290,9 +327,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(401, f"rejected: {reason}\n")
 
         device = (self.headers.get("X-PetDoor-Id") or "petdoor")[:32]
+        version = (self.headers.get("X-PetDoor-Version") or "")[:32]
+        build = (self.headers.get("X-PetDoor-Build") or "")[:40]
+        try:
+            boots = int(self.headers.get("X-PetDoor-Boot") or 0)
+        except ValueError:
+            boots = 0
         rows = parse_csv(body.decode("utf-8", "replace"))
         added = store(device, rows)
-        self.log_message("%s: %d events, %d new (%s)", device, len(rows), added, reason)
+        note_device(device, version, build, boots, self.client_address[0])
+        self.log_message("%s v%s boot#%d: %d events, %d new (%s)",
+                         device, version or "?", boots, len(rows), added, reason)
         return self._send(200, json.dumps({"received": len(rows), "new": added}) + "\n",
                           "application/json")
 

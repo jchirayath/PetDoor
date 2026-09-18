@@ -15,6 +15,17 @@
 #endif
 #endif
 
+// Firmware version, reported in the banner, in `s`, and with every upload so a
+// server collecting from several doors can tell which build produced an event.
+// Bump it when you change behaviour someone might need to correlate against.
+#ifndef PETDOOR_VERSION
+#define PETDOOR_VERSION "1.0.0"
+#endif
+
+// Set automatically by the compiler — useful when several people build from
+// the same version string and you need to tell their binaries apart.
+#define PETDOOR_BUILD (__DATE__ " " __TIME__)
+
 // ===========================================================================
 // 1. BEACON IDENTITY  — which BLE device is "the key"
 // ===========================================================================

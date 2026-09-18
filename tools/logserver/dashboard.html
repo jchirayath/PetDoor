@@ -91,6 +91,12 @@ h2{font-size:14px; font-weight:600; margin:0; letter-spacing:-.01em}
 .two{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:24px}
 .chart{width:100%; overflow-x:auto}
 .chart svg{display:block; width:100%; min-width:280px}
+.doors{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+  border-radius:9px; overflow:hidden; background:var(--line)}
+.doors div{flex:1 1 190px; background:var(--panel); padding:11px 14px}
+.doors .n{font-size:13px; font-weight:600}
+.doors .m{font-size:12px; color:var(--ink-2); margin-top:2px}
+.doors .warn{color:var(--fault); font-weight:600}
 .routine{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
   border-radius:9px; overflow:hidden; background:var(--line)}
 .routine div{flex:1 1 130px; background:var(--panel); padding:11px 14px}
@@ -169,6 +175,7 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 </header>
 
 <div class="stats" id="stats"></div>
+<div id="doors"></div>
 
 <section>
   <div class="head">
@@ -492,6 +499,25 @@ function selectEvent(ep){
   $("camsec").scrollIntoView({behavior:"matchMedia" in window && matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"nearest"});
 }
 
+function renderDoors(devs){
+  const host=$("doors");
+  if(!devs.length){host.innerHTML="";return;}
+  const now=Date.now()/1000;
+  host.innerHTML='<div class="doors">'+devs.map(d=>{
+    const mins=Math.round((now-(d.last_seen||0))/60);
+    // A door that has not called in for hours is either off, off the network,
+    // or failing to upload — worth flagging rather than leaving to be noticed.
+    const stale=mins>180;
+    const when=mins<1?"just now":mins<60?`${mins} min ago`:`${Math.round(mins/60)} h ago`;
+    // Reboots climbing between uploads is the signature of a power problem.
+    const boots=d.boots||0;
+    return `<div><div class="n">${(d.device||"door").replace(/[<>&]/g,"")}</div>`
+      +`<div class="m">firmware v${(d.version||"?").replace(/[<>&]/g,"")} &middot; `
+      +`${boots} boot${boots===1?"":"s"}</div>`
+      +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div></div>`;
+  }).join("")+"</div>";
+}
+
 function renderAll(){renderStats();renderStrip();renderDurations();renderPerDay();
   renderHourly();renderSignal();renderTable();
   const dated=events.filter(e=>e.epoch>0);
@@ -511,6 +537,7 @@ async function load(){
     events=(j.events||[]).map(e=>({epoch:+e.epoch||0,uptime:+e.uptime||0,boot:+e.boot||0,
       type:e.type,detail:+e.detail||0,rssi:+e.rssi||0,device:e.device||""}));
     events.sort((a,b)=>(a.epoch||0)-(b.epoch||0)||a.boot-b.boot||a.uptime-b.uptime);
+    renderDoors(j.devices||[]);
     lastLoad=Date.now();
     renderAll();
     const devs=[...new Set(events.map(e=>e.device).filter(Boolean))];
