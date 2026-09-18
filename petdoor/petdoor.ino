@@ -61,6 +61,7 @@ bool g_lastReportedScanHealthy = true; // radio assumed good until proven otherw
 
 // The console is otherwise single-keystroke. Editing a MAC needs a whole line,
 // so `m` switches into a line-buffered mode until Enter is pressed.
+TaskHandle_t g_controlTaskHandle = nullptr;
 uint32_t g_bootCount = 0;
 
 // Why the ESP32 last restarted. BROWNOUT is the one that matters: it means the
@@ -287,6 +288,19 @@ void printStatus(uint32_t nowMs) {
   Serial.printf("  boot         : #%lu, last reset: %s\r\n",
                 static_cast<unsigned long>(g_bootCount), resetReasonName());
   WifiLogger::printStatus(Serial);
+  // Stack headroom, in bytes still unused at the worst moment so far. A task
+  // sized much larger than its high-water mark is heap sitting idle; one
+  // approaching zero is a crash waiting for the right input.
+  if (g_controlTaskHandle) {
+    Serial.printf("  task stacks  : control %lu free of %d",
+                  static_cast<unsigned long>(
+                      uxTaskGetStackHighWaterMark(g_controlTaskHandle) * sizeof(StackType_t)),
+                  CONTROL_TASK_STACK);
+    const uint32_t up = WifiLogger::stackFreeBytes();
+    if (up) Serial.printf(", uploader %lu free of %d", static_cast<unsigned long>(up),
+                          WIFI_TASK_STACK);
+    Serial.println();
+  }
   Serial.printf("  free heap    : %lu bytes (low-water %lu)\r\n",
                 static_cast<unsigned long>(ESP.getFreeHeap()),
                 static_cast<unsigned long>(ESP.getMinFreeHeap()));
@@ -1145,7 +1159,8 @@ void setup() {
   printBanner();
 
   WifiLogger::begin();
-  xTaskCreatePinnedToCore(controlTask, "petdoor", 8192, nullptr, 1, nullptr, 1);
+  xTaskCreatePinnedToCore(controlTask, "petdoor", CONTROL_TASK_STACK, nullptr, 1,
+                          &g_controlTaskHandle, 1);
   Serial.println(F("[system] running"));
 }
 

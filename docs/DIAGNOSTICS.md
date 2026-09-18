@@ -812,6 +812,16 @@ the console press **`p`**:
 Run that command and the firmware goes over the air. The board reboots into it
 and the window closes on its own.
 
+> **Add `--protocol network` if the upload fails.** `arduino-cli` finds network
+> boards over mDNS, and when discovery has not completed it treats the address
+> as a serial port and tries to talk esptool at it — which fails with a bare
+> `exit status 2`. The flag says explicitly that this is a network upload:
+>
+> ```bash
+> arduino-cli upload --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
+>   -p 192.168.1.66 --protocol network --upload-field password=... petdoor
+> ```
+
 Three things it deliberately does:
 
 - **Refuses while the beacon is present.** An update reboots the door and shares

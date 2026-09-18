@@ -371,6 +371,29 @@
 #define CONTROL_TICK_MS 100
 #endif
 
+// Task stack sizes, in bytes. Check `task stacks` in the `s` output before
+// changing these: it reports how much each task has never used. Too small is a
+// crash on an unusual input; too large is heap doing nothing.
+//
+// Measured on hardware after exercising the heaviest paths (discovery dump plus
+// a log upload): control peaked at ~1,970 bytes used, uploader at ~2,650. These
+// sizes leave roughly 3 KB and 1.4 KB of margin respectively, and hand about
+// 5 KB back to the heap versus the 8192/6144 they started at.
+//
+// Raise WIFI_TASK_STACK if you enable LOG_ALLOW_TLS — a TLS handshake needs
+// several KB more stack than a plain POST.
+#ifndef CONTROL_TASK_STACK
+#define CONTROL_TASK_STACK 5120
+#endif
+//
+// 4096 was tried and measured at only ~1.4 KB of headroom, which is too thin
+// for a task handling variable-length HTTP responses — a stack overflow is a
+// hard crash, not a degraded upload. 5120 restores ~2.4 KB while still handing
+// 1 KB back versus the original 6144.
+#ifndef WIFI_TASK_STACK
+#define WIFI_TASK_STACK 5120
+#endif
+
 // Max distinct devices held in the discovery table.
 #ifndef DEVICE_TABLE_SIZE
 #define DEVICE_TABLE_SIZE 40

@@ -67,6 +67,9 @@ void printStatus(Stream &out);
 // about to be shared and an update reboots the door.
 void beginOtaWindow(bool petPresent);
 
+// Unused stack on the uploader task, in bytes. 0 when it is not running.
+uint32_t stackFreeBytes();
+
 bool otaWindowOpen();
 void closeOtaWindow();
 

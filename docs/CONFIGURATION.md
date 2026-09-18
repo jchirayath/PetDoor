@@ -268,6 +268,8 @@ whether or not you set `WIFI_SSID`. That is why the project builds with the
 |---|---|---|
 | `SERIAL_BAUD` | `115200` | Serial console speed. |
 | `CONTROL_TICK_MS` | `100` | Control loop **idle** period. The loop normally wakes the moment a BLE sample arrives; this only caps how long it waits when the beacon is silent. It also sets how often the status LED is refreshed, so it bounds the shortest LED pattern that can be rendered — much above 250 ms and the blip and fault flutter visibly break. |
+| `CONTROL_TASK_STACK` | `5120` | Control-task stack in bytes. Sized from measurement — check the `task stacks` line in the `s` output before changing it. |
+| `WIFI_TASK_STACK` | `5120` | Uploader-task stack. Raise it if you enable `LOG_ALLOW_TLS`; a TLS handshake needs several KB more stack than a plain POST. |
 | `DEVICE_TABLE_SIZE` | `40` | Max distinct devices held in the discovery table. Costs RAM and BLE-callback time. |
 | `TABLE_MIN_UPDATE_MS` | `500` | Per-device throttle on discovery-table writes, so a busy RF environment cannot flood the heap from the BLE callback. |
 | `EVENT_LOG_CAPACITY` | `128` | Events kept in the persistent NVS log. Each entry is 16 bytes and the whole ring is rewritten on every event, so keep it modest — 128 is 2 KB and covers weeks of a door cycling a few times a day. |
