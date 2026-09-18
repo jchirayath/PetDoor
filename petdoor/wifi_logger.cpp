@@ -2,6 +2,7 @@
 
 #include <HTTPClient.h>
 #include <WiFi.h>
+#include <mbedtls/md.h>
 #include <time.h>
 
 #include "eventlog.h"
@@ -84,15 +85,65 @@ String buildBody() {
   return body;
 }
 
+// HMAC-SHA256 of `body` under `key`, lower-case hex. SHA256 is in mbedTLS
+// already (WPA2 needs it), so this costs microseconds and no extra flash.
+String signBody(const String &body, const char *key, const String &timestamp) {
+  const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+  if (info == nullptr) return String();
+
+  mbedtls_md_context_t ctx;
+  mbedtls_md_init(&ctx);
+  if (mbedtls_md_setup(&ctx, info, 1) != 0) {
+    mbedtls_md_free(&ctx);
+    return String();
+  }
+  mbedtls_md_hmac_starts(&ctx, reinterpret_cast<const unsigned char *>(key), strlen(key));
+  // Sign timestamp + body, not body alone: without the timestamp inside the
+  // signature an eavesdropper could replay an old batch verbatim.
+  mbedtls_md_hmac_update(&ctx, reinterpret_cast<const unsigned char *>(timestamp.c_str()),
+                         timestamp.length());
+  mbedtls_md_hmac_update(&ctx, reinterpret_cast<const unsigned char *>("\n"), 1);
+  mbedtls_md_hmac_update(&ctx, reinterpret_cast<const unsigned char *>(body.c_str()),
+                         body.length());
+  unsigned char out[32];
+  mbedtls_md_hmac_finish(&ctx, out);
+  mbedtls_md_free(&ctx);
+
+  static const char hexd[] = "0123456789abcdef";
+  String hex;
+  hex.reserve(64);
+  for (int i = 0; i < 32; i++) {
+    hex += hexd[out[i] >> 4];
+    hex += hexd[out[i] & 0x0F];
+  }
+  return hex;
+}
+
+int g_lastHttpCode = 0;
+
 bool post(const String &body) {
   if (LOG_ENDPOINT_URL[0] == '\0') return false;
   HTTPClient http;
-  if (!http.begin(LOG_ENDPOINT_URL)) return false;
+  if (!http.begin(LOG_ENDPOINT_URL)) {
+    g_lastHttpCode = -1;
+    return false;
+  }
   http.setTimeout(8000);
   http.addHeader("Content-Type", "text/csv");
+  http.addHeader("X-PetDoor-Id", LOG_DEVICE_ID);
+
+  const String ts = String(static_cast<unsigned long>(time(nullptr)));
+  http.addHeader("X-PetDoor-Timestamp", ts);
+
+  if (LOG_SHARED_KEY[0] != '\0') {
+    const String sig = signBody(body, LOG_SHARED_KEY, ts);
+    if (sig.length()) http.addHeader("X-PetDoor-Signature", sig);
+  }
+
   const int code = http.POST(const_cast<uint8_t *>(
                                  reinterpret_cast<const uint8_t *>(body.c_str())),
                              body.length());
+  g_lastHttpCode = code;
   http.end();
   return code >= 200 && code < 300;
 }
@@ -122,7 +173,19 @@ void doFlush() {
                   g_clockSynced ? ", clock synced" : "");
   } else {
     g_failures++;
-    Serial.println(F("[wifi] upload failed (endpoint unset or unreachable)"));
+    if (LOG_ENDPOINT_URL[0] == '\0') {
+      Serial.println(F("[wifi] no LOG_ENDPOINT_URL set — logging locally only"));
+    } else if (g_lastHttpCode == 401 || g_lastHttpCode == 403) {
+      Serial.printf("[wifi] upload REJECTED (HTTP %d) — the server did not accept "
+                    "our signature. Check LOG_SHARED_KEY matches.\r\n", g_lastHttpCode);
+    } else if (g_lastHttpCode > 0) {
+      Serial.printf("[wifi] upload failed, HTTP %d\r\n", g_lastHttpCode);
+    } else {
+      Serial.println(F("[wifi] upload failed — endpoint unreachable"));
+    }
+    // Deliberately NOT recorded in the event log: a failure entry would be a
+    // new event, which would arm another upload, which could fail again.
+    Serial.println(F("[wifi] events are kept locally and will be retried"));
   }
   Serial.println(F("[wifi] radio down"));
   g_busy = false;
@@ -187,6 +250,13 @@ void printStatus(Stream &out) {
     out.println(F("  wifi         : not configured (no WIFI_SSID)"));
     return;
   }
+  if (LOG_ENDPOINT_URL[0] == '\0') {
+    out.println(F("  wifi         : configured, but no log endpoint — local only"));
+    return;
+  }
+  out.printf("  log endpoint : %s%s\r\n", LOG_ENDPOINT_URL,
+             LOG_SHARED_KEY[0] ? "  (signed)" : "  (unsigned)");
+  if (g_lastHttpCode) out.printf("  last response: HTTP %d\r\n", g_lastHttpCode);
   out.printf("  wifi         : %s, %lu uploads, %lu failures%s\r\n",
              g_busy ? "RADIO UP" : "idle (radio off)",
              static_cast<unsigned long>(g_uploads),

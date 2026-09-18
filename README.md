@@ -22,9 +22,11 @@ the beacon has been convincingly close for a moment it pulses an OPEN relay;
 when it has been convincingly gone for a while it pulses a CLOSE relay. No
 cloud, no app, no subscription — the ESP32 and the beacon are the whole system.
 
-**WiFi is optional and off by default.** Set a network in `secrets.h` and the
-firmware will upload its event log to an endpoint you run; leave it unset and
-the radio is never brought up. Even when enabled it stays off almost all the
+**WiFi, the log server and the portal are all optional and all off by default.**
+Out of the box the door keeps its last 128 events in its own memory, rolling the
+oldest out so it cannot fill up, and nothing ever leaves it. Set a network and an
+endpoint in `secrets.h` and it will additionally upload that log to a server you
+run — see [LOG-SERVER.md](docs/LOG-SERVER.md). Even when enabled it stays off almost all the
 time, because the ESP32 shares one antenna between WiFi and BLE — see
 [the note on deferred uploads](docs/CONFIGURATION.md#why-uploads-are-deferred-rather-than-immediate).
 
@@ -590,6 +592,8 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all of them.
 - [ESP32 primer](docs/ESP32-PRIMER.md) — what the board is and how to program it, from zero
 - [Coop / pet door conversion](docs/COOP-CONVERSION.md) — wiring relays into a door you already own
 - [Diagnostics](docs/DIAGNOSTICS.md) — connecting to the serial console, every command, and what the output means
+- [Log server](docs/LOG-SERVER.md) — *optional* — collect history on a machine of your own
+- [Portal](docs/PORTAL.md) — *optional* — charts, trip analysis and beacon health
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — when it does not work
 - [Safety](docs/SAFETY.md) — read before connecting a motor
 

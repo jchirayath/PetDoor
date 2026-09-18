@@ -210,7 +210,9 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 |---|---|---|
 | `WIFI_SSID` | `""` | Network name. Empty disables everything below. |
 | `WIFI_PASSWORD` | `""` | Network password. |
-| `LOG_ENDPOINT_URL` | `""` | Where the CSV batch is POSTed. Plain HTTP by default — HTTPS adds a TLS handshake to every burst, which is more radio time away from BLE. |
+| `LOG_ENDPOINT_URL` | `""` | Where the CSV batch is POSTed. **Empty means local-only**: events are still recorded and still roll oldest-out, but nothing is sent and the radio is never brought up. |
+| `LOG_SHARED_KEY` | `""` | Optional. When set, each upload is signed with HMAC-SHA256. **The key is never transmitted** — only a signature over the timestamp and body — so plain HTTP is still safe from forgery. See [LOG-SERVER.md](LOG-SERVER.md#why-http-and-not-https). |
+| `LOG_DEVICE_ID` | `"petdoor"` | Identifies this door to the server, so one endpoint can collect from several. |
 | `WIFI_IDLE_SETTLE_MS` | `60000` | Everything must have been quiet this long before an upload is allowed. |
 | `WIFI_MIN_UPLOAD_INTERVAL_MS` | `300000` | Never upload more often than this, however many events arrive. |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Give up associating after this long, so a missing access point cannot hold the radio. |
@@ -237,6 +239,21 @@ decisions, and it **aborts if the animal returns mid-flush**.
 
 > Do not change this to upload on every event. The deferral is the entire
 > reason WiFi can coexist with the beacon at all.
+
+### Signing, and why not TLS
+
+With `LOG_SHARED_KEY` set, the door signs each upload with HMAC-SHA256 over the
+timestamp and body. The key never crosses the wire, so an eavesdropper can read
+the events but cannot forge or replay them.
+
+TLS would additionally hide the contents, and costs a **1–3 second handshake
+plus ~40 KB of heap on every upload**. Radio time is the one resource this
+project cannot spare — it is the same antenna the beacon needs. Door events are
+low-secrecy but high-integrity, so HMAC buys the part that matters for free.
+Signing added **zero flash**, because mbedTLS is already linked for WPA2.
+
+For an endpoint across the internet, put it behind a VPN or a TLS-terminating
+proxy rather than asking the ESP32 to do TLS.
 
 Enabling WiFi costs about **540 KB of flash**, and the library is linked in
 whether or not you set `WIFI_SSID`. That is why the project builds with the

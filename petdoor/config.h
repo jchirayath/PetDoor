@@ -267,10 +267,36 @@
 #define WIFI_PASSWORD ""
 #endif
 
-// Where the CSV batch is POSTed. Plain HTTP by default: HTTPS adds a TLS
-// handshake to every burst, which is more radio time away from BLE.
+// Where the CSV batch is POSTed. Empty means LOCAL LOGGING ONLY: events are
+// still recorded to the NVS ring and still roll oldest-out, nothing is sent
+// anywhere, and the radio is never brought up.
 #ifndef LOG_ENDPOINT_URL
 #define LOG_ENDPOINT_URL ""
+#endif
+
+// Shared key for authenticating uploads. Optional — leave it empty and events
+// are POSTed unsigned, which is fine on a network you trust entirely.
+//
+// When set, the body is signed with HMAC-SHA256 and the signature sent in a
+// header. The KEY ITSELF NEVER CROSSES THE WIRE, so a plain-HTTP endpoint is
+// still safe from forgery: an eavesdropper can read the door events but cannot
+// invent new ones.
+//
+// Deliberately HTTP rather than HTTPS. A TLS handshake costs 1-3 seconds of
+// radio time and ~40 KB of heap on every burst, and radio time is exactly what
+// starves BLE sampling. Door events are low-secrecy but high-integrity: it
+// matters much more that nobody can forge "door opened" than that a sniffer on
+// your LAN learns the door opened. HMAC buys the integrity for free.
+//
+// If the endpoint is across the public internet, put it behind a VPN or a
+// reverse proxy that terminates TLS, rather than paying for TLS on the ESP32.
+#ifndef LOG_SHARED_KEY
+#define LOG_SHARED_KEY ""
+#endif
+
+// Identifies this door to the server, so one endpoint can collect from several.
+#ifndef LOG_DEVICE_ID
+#define LOG_DEVICE_ID "petdoor"
 #endif
 
 // Everything must have been quiet this long before an upload is allowed.
