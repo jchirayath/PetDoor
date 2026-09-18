@@ -315,6 +315,19 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #endif
 
+// How long an over-the-air update window stays open before the radio is handed
+// back to BLE. Long enough to start an upload, short enough that forgetting to
+// close it is not a problem.
+#ifndef OTA_WINDOW_MS
+#define OTA_WINDOW_MS 300000
+#endif
+
+// Password required to push an update. Strongly recommended: without it anyone
+// on the network can reflash the door. Empty disables OTA entirely.
+#ifndef OTA_PASSWORD
+#define OTA_PASSWORD ""
+#endif
+
 // NTP server used to set the clock, so log entries carry real timestamps.
 #ifndef NTP_SERVER
 #define NTP_SERVER "pool.ntp.org"

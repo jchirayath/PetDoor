@@ -43,6 +43,12 @@
 // signature over each upload — so plain HTTP cannot be forged or replayed.
 // #define LOG_SHARED_KEY   "4f8a1c9e2b7d3056a1e8f4c2d9b06537"
 
+// Password for over-the-air firmware updates. Set this and you can reflash from
+// the console with `p` instead of holding IO0 and tapping EN. Leave it unset
+// and OTA is disabled, because without a password anyone on your network could
+// push firmware to the door.
+// #define OTA_PASSWORD     "something-only-you-know"
+
 // Optional, if one server collects from more than one door.
 // #define LOG_DEVICE_ID    "back-door"
 

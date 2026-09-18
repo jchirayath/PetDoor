@@ -88,7 +88,7 @@ and `BOOT`/`IO0`) is what you want. Boards sold as "ESP32 DevKit V1",
 3. **Tools → Board → Boards Manager**, search `esp32`, install **version 3.x**
    (this project requires 3.x; 2.x will not compile)
 4. **Tools → Board → ESP32 Arduino → ESP32 Dev Module**
-5. **Tools → Partition Scheme → No OTA (2MB APP / 2MB SPIFFS)** — see the note
+5. **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)** — see the note
    below; the default leaves the build 85% full
 6. **Tools → Port** — pick the one that appears when you plug the board in
 7. Open `petdoor/petdoor.ino`, click **Upload**
@@ -104,15 +104,15 @@ arduino-cli core install esp32:esp32
 
 arduino-cli board list                      # find your port
 
-FQBN=esp32:esp32:esp32:PartitionScheme=no_ota
+FQBN=esp32:esp32:esp32:PartitionScheme=min_spiffs
 arduino-cli compile --fqbn $FQBN petdoor
 arduino-cli upload  --fqbn $FQBN -p /dev/cu.usbserial-0001 petdoor
 ```
 
-`PartitionScheme=no_ota` matters: the default layout reserves a second app slot
+`PartitionScheme=min_spiffs` matters: the default layout reserves a second app slot
 for over-the-air updates this project never uses, leaving the build ~85% full.
 `no_ota` gives a single 2 MB app partition and drops that to ~53%. In the
-Arduino IDE it is **Tools → Partition Scheme → No OTA (2MB APP / 2MB SPIFFS)**;
+Arduino IDE it is **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**;
 PlatformIO reads it from `platformio.ini` automatically.
 
 **Option C: PlatformIO**

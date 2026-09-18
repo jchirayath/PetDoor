@@ -1,5 +1,6 @@
 #include "wifi_logger.h"
 
+#include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #include <WiFi.h>
 #include <mbedtls/md.h>
@@ -9,6 +10,11 @@
 
 namespace WifiLogger {
 namespace {
+
+volatile bool g_otaRequested = false;
+volatile bool g_otaOpen = false;
+uint32_t g_otaOpenedMs = 0;
+bool g_otaBegun = false;
 
 volatile bool g_flushRequested = false;
 volatile bool g_busy = false;
@@ -191,8 +197,67 @@ void doFlush() {
   g_busy = false;
 }
 
+void startOta() {
+  if (!g_otaBegun) {
+    ArduinoOTA.setHostname(LOG_DEVICE_ID);
+    if (OTA_PASSWORD[0] != '\0') ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.onStart([]() {
+      Serial.println(F("\r\n[ota] receiving firmware — do not power off"));
+    });
+    ArduinoOTA.onProgress([](unsigned int done, unsigned int total) {
+      static int last = -1;
+      const int pct = total ? (done * 100) / total : 0;
+      if (pct / 10 != last / 10) {
+        last = pct;
+        Serial.printf("[ota] %d%%\r\n", pct);
+      }
+    });
+    ArduinoOTA.onEnd([]() {
+      Serial.println(F("[ota] written; rebooting into the new firmware"));
+    });
+    ArduinoOTA.onError([](ota_error_t e) {
+      Serial.printf("[ota] failed (%u)%s\r\n", e,
+                    e == OTA_AUTH_ERROR ? " — wrong password" : "");
+    });
+    ArduinoOTA.begin();
+    g_otaBegun = true;
+  }
+  g_otaOpen = true;
+  g_otaOpenedMs = millis();
+  Serial.printf("[ota] window open for %lu s — the radio is up, so BLE sampling\r\n",
+                static_cast<unsigned long>(OTA_WINDOW_MS / 1000));
+  Serial.println(F("[ota] is degraded until it closes."));
+  Serial.printf("[ota] push with:  arduino-cli upload --fqbn "
+                "esp32:esp32:esp32:PartitionScheme=min_spiffs -p %s petdoor\r\n",
+                WiFi.localIP().toString().c_str());
+}
+
+void stopOta(const char *why) {
+  if (!g_otaOpen) return;
+  g_otaOpen = false;
+  radioDown();
+  Serial.printf("[ota] window closed (%s); radio back to BLE\r\n", why);
+}
+
 void uploaderTask(void *) {
   for (;;) {
+    if (g_otaRequested) {
+      g_otaRequested = false;
+      if (radioUp()) {
+        startOta();
+      } else {
+        Serial.println(F("[ota] could not associate; window not opened"));
+        radioDown();
+      }
+    }
+
+    if (g_otaOpen) {
+      ArduinoOTA.handle();
+      if ((millis() - g_otaOpenedMs) > OTA_WINDOW_MS) stopOta("timed out");
+      vTaskDelay(pdMS_TO_TICKS(20));
+      continue;  // an update window takes precedence over log uploads
+    }
+
     if (g_flushRequested) {
       g_flushRequested = false;
       doFlush();
@@ -243,7 +308,33 @@ void requestFlushNow() {
   Serial.println(F("[wifi] flush requested"));
 }
 
-bool busy() { return g_busy; }
+bool busy() { return g_busy || g_otaOpen; }
+
+bool otaWindowOpen() { return g_otaOpen; }
+
+void beginOtaWindow(bool petPresent) {
+  if (!configured()) {
+    Serial.println(F("[ota] no WIFI_SSID configured — use the IO0/EN buttons"));
+    return;
+  }
+  if (OTA_PASSWORD[0] == '\0') {
+    Serial.println(F("[ota] OTA_PASSWORD is not set, so OTA is disabled."));
+    Serial.println(F("[ota] Without one, anyone on the network could reflash the door."));
+    return;
+  }
+  if (petPresent) {
+    Serial.println(F("[ota] refused: the beacon is present. An update reboots the"));
+    Serial.println(F("[ota] door and shares the radio — wait until they are away."));
+    return;
+  }
+  if (g_otaOpen) {
+    Serial.println(F("[ota] window already open"));
+    return;
+  }
+  g_otaRequested = true;
+}
+
+void closeOtaWindow() { stopOta("closed by request"); }
 
 void printStatus(Stream &out) {
   if (!configured()) {

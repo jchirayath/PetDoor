@@ -216,6 +216,8 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 | `WIFI_IDLE_SETTLE_MS` | `60000` | Everything must have been quiet this long before an upload is allowed. |
 | `WIFI_MIN_UPLOAD_INTERVAL_MS` | `300000` | Never upload more often than this, however many events arrive. |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Give up associating after this long, so a missing access point cannot hold the radio. |
+| `OTA_PASSWORD` | `""` | Password for over-the-air firmware updates. **Empty disables OTA entirely** — without one, anyone on the network could reflash the door. |
+| `OTA_WINDOW_MS` | `300000` | How long an update window stays open before the radio is handed back to BLE. |
 | `NTP_SERVER` | `"pool.ntp.org"` | Used to set the clock, so log entries carry real timestamps. |
 
 ### Why uploads are deferred rather than immediate
