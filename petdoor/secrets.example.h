@@ -36,7 +36,15 @@
 // ---------------------------------------------------------------------------
 // #define WIFI_SSID        "your-network"
 // #define WIFI_PASSWORD    "your-password"
-// #define LOG_ENDPOINT_URL "http://192.168.1.50:8080/petdoor"
+// #define LOG_ENDPOINT_URL "http://192.168.1.50:8080/ingest"
+
+// Optional shared key. Run `tools/logserver/petdoor-logserver.py --init` and it
+// prints one. The key is never sent over the wire — only an HMAC-SHA256
+// signature over each upload — so plain HTTP cannot be forged or replayed.
+// #define LOG_SHARED_KEY   "4f8a1c9e2b7d3056a1e8f4c2d9b06537"
+
+// Optional, if one server collects from more than one door.
+// #define LOG_DEVICE_ID    "back-door"
 
 // ---------------------------------------------------------------------------
 // Anything else from config.h can be overridden here too, e.g.:
