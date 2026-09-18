@@ -94,7 +94,7 @@ prints everything it hears, and **never touches the door**.
 
 | Setting | Default | Description |
 |---|---|---|
-| `PETDOOR_VERSION` | `"1.0.0"` | Firmware version, shown in the banner and in `s`, and sent with every upload so a server collecting from several doors can tell which build produced an event. Bump it when you change behaviour someone might need to correlate against. |
+| `PETDOOR_VERSION` | `"1.0.0"` | Firmware version, shown in the banner and in `s`, and sent with every upload so a server collecting from several doors can tell which build produced an event. Bump it when you change behaviour someone might need to correlate against. A companion `PETDOOR_BUILD` is set by the compiler from `__DATE__`/`__TIME__` and is not a setting — it tells two builds of the same version apart. |
 | `BEACON_MAC` | `""` | Beacon MAC address, upper or lower case. `""` disables MAC matching. Accepts a **comma-separated list** — any listed address matches. The simplest and most reliable matcher. |
 | `BEACON_MAX_MACS` | `4` | How many addresses `BEACON_MAC` may list. Each costs 18 bytes of RAM and is walked in the BLE callback. |
 | `BEACON_UUID` | `""` | iBeacon 128-bit UUID, with or without dashes. `""` disables iBeacon matching. |
