@@ -1011,10 +1011,13 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
 
   if (g_door.state() != g_lastReportedDoorState) {
     g_lastReportedDoorState = g_door.state();
-    Serial.printf("[door] %s  (rssi %d dBm, ~%s m)\r\n",
-                  DoorController::stateName(g_door.state()), g_tracker.filteredRssi(),
+    const bool manual = g_door.lastSource() == SRC_MANUAL;
+    Serial.printf("[door] %s  (%s, rssi %d dBm, ~%s m)\r\n",
+                  DoorController::stateName(g_door.state()),
+                  manual ? "manual" : "beacon", g_tracker.filteredRssi(),
                   fmt1(g_tracker.distanceM()).c_str());
-    EventLog::record(g_door.state() == DOOR_OPEN ? LOG_OPEN : LOG_CLOSE, 0,
+    EventLog::record(g_door.state() == DOOR_OPEN ? LOG_OPEN : LOG_CLOSE,
+                     static_cast<uint8_t>(g_door.lastSource()),
                      g_tracker.filteredRssi());
   }
 

@@ -25,6 +25,13 @@ enum DoorState {
   DOOR_CLOSED,
 };
 
+// What caused an actuation. Recorded in the event log so "the door opened" can
+// be told apart from "I opened the door" weeks later.
+enum ActuationSource : uint8_t {
+  SRC_BEACON = 0,  // the proximity logic decided
+  SRC_MANUAL = 1,  // someone typed o or x at the console
+};
+
 enum ActuationResult {
   ACT_DONE,             // relay pulsed
   ACT_ALREADY,          // already in that state, nothing to do
@@ -47,6 +54,9 @@ class DoorController {
   DoorState state() const { return state_; }
   uint32_t lastActuationMs() const { return lastActuationMs_; }
   bool hasActuated() const { return hasActuated_; }
+
+  // Why the door last moved. Meaningless before the first actuation.
+  ActuationSource lastSource() const { return lastSource_; }
 
   // Lifetime-of-boot counters. Opens/closes are motor wear; the refusals tell
   // you *why* the door is not moving when you expected it to.
@@ -89,6 +99,7 @@ class DoorController {
   uint32_t lastActuationMs_ = 0;
   bool hasActuated_ = false;
 
+  ActuationSource lastSource_ = SRC_BEACON;
   uint32_t minIntervalMs_ = MIN_ACTUATION_INTERVAL_MS;
   uint32_t directionGapMs_ = DIRECTION_CHANGE_GAP_MS;
   uint32_t openCount_ = 0;

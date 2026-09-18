@@ -4,6 +4,13 @@
 petdoor/secrets.h
 **/secrets.h
 
+# Local deployment details — your hostnames, IPs and usernames. These are
+# specific to one installation and would only confuse anyone else reading the
+# repo, so they stay out of it. See docs/WEB-DASHBOARD.md for the generic guide.
+*.local.sh
+*.local.env
+deploy.local*
+
 # Session history / assistant scratch. May contain captured BLE scans, which
 # include the addresses of neighbouring devices.
 .remember/

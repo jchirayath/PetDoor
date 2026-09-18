@@ -212,6 +212,7 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 | `WIFI_PASSWORD` | `""` | Network password. |
 | `LOG_ENDPOINT_URL` | `""` | Where the CSV batch is POSTed. **Empty means local-only**: events are still recorded and still roll oldest-out, but nothing is sent and the radio is never brought up. |
 | `LOG_SHARED_KEY` | `""` | Optional. When set, each upload is signed with HMAC-SHA256. **The key is never transmitted** — only a signature over the timestamp and body — so plain HTTP is still safe from forgery. See [LOG-SERVER.md](LOG-SERVER.md#why-http-and-not-https). |
+| `LOG_ALLOW_TLS` | `0` | Compile in TLS for uploads. **Off by default because it does not fit on a classic ESP32** — measured, a handshake drove free heap from 80 KB to 18 KB and failed to connect, and it costs ~170 KB of flash. Uploads are signed with HMAC instead, which gives integrity without it. |
 | `LOG_DEVICE_ID` | `"petdoor"` | Identifies this door to the server, so one endpoint can collect from several. |
 | `WIFI_IDLE_SETTLE_MS` | `60000` | Everything must have been quiet this long before an upload is allowed. |
 | `WIFI_MIN_UPLOAD_INTERVAL_MS` | `300000` | Never upload more often than this, however many events arrive. |

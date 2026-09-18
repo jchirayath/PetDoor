@@ -147,6 +147,8 @@ void dump(Stream &out) {
       out.printf(" reset=%u", e.detail);
     } else if (e.type == LOG_REFUSED) {
       out.printf(" reason=%u", e.detail);
+    } else if (e.type == LOG_OPEN || e.type == LOG_CLOSE) {
+      out.printf(" %s", e.detail ? "manual" : "beacon");
     }
     if (e.rssi != 0) out.printf(" rssi=%d", e.rssi);
     out.println();
