@@ -173,8 +173,39 @@ Measured on `min_spiffs` (1.875 MB app partition):
 | `0` | `0` | 1,121,163 | 57% | 46,204 |
 | **`1`** | **`0`** | **650,567** | **33%** | 40,880 |
 
-NimBLE alone saves **454 KB of flash and 5 KB of RAM**. With WiFi compiled out
-as well the image is a third of its default size.
+NimBLE alone saves **454 KB of flash**. The RAM column above is only *static*
+allocation, and it badly understates the benefit — most of what Bluedroid costs
+is heap it takes at runtime. Measured on the reference build (ESP32 WROOM-32,
+Minew beacon, WiFi on, same NVS settings, same beacon, back-to-back):
+
+| | Bluedroid | NimBLE |
+|---|---|---|
+| free heap | 66,304 | **138,480** |
+| heap low-water | **7,912** | 88,064 |
+
+**+72 KB of free heap, and eleven times the headroom at the low-water mark.**
+That second number is the one that matters: under Bluedroid this firmware ran
+within 8 KB of exhaustion, which is why `LOG_ALLOW_TLS` had to be made opt-in —
+the TLS handshake could not get a buffer. With NimBLE there is room.
+
+With WiFi compiled out as well the image is a third of its default size.
+
+**Detection is not faster, and was never going to be.** Measured over matched
+9-minute windows, the target beacon yielded 1.93 samples/sec on Bluedroid and
+1.89 on NimBLE — the same number within noise. Sample rate is set by how often
+the beacon advertises, not by the host stack. What NimBLE buys is space and
+heap, not speed.
+
+Total advertisement callbacks are lower on NimBLE (50.2/sec versus 60.5), which
+is expected rather than a regression: Bluedroid raises a callback for the
+advertisement *and* another for the scan response, where NimBLE raises one per
+pair. The target sample rate — the number the door actually uses — is unchanged.
+
+WiFi, NTP sync, HMAC-signed upload and ArduinoOTA were all verified working on
+the NimBLE build. Whether NimBLE is more or less prone to losing the beacon is
+**not yet established**: the two windows above saw different amounts of beacon
+movement, and WiFi upload bursts degrade BLE sampling on either stack, so a
+short comparison cannot separate the causes.
 
 Turning it on is one line in `secrets.h`:
 

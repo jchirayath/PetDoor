@@ -384,6 +384,13 @@ half the image, so the difference is large:
 Bluedroid's host (`libbt.a`, 521 KB linked) is what goes away; the controller
 (`libbtdm_app.a`, 133 KB) is shared and stays.
 
+Those are link-time figures. On hardware the *heap* difference is larger than
+the static RAM column suggests, because most of what Bluedroid costs it takes at
+runtime — 66,304 bytes free versus 138,480, and a low-water mark of 7,912 versus
+88,064. Detection speed is unchanged (1.93 versus 1.89 target samples/sec over
+matched windows); the beacon's advertising interval sets that, not the stack.
+See [CONFIGURATION.md](CONFIGURATION.md#ble-host-stack) for the full run.
+
 Everything the two stacks disagree about is confined to the **stack adapter** at
 the top of `ble_scanner.cpp` — class names, the callback signature, `start()`'s
 argument list, and `String` versus `std::string`. Below that block the scanner is
