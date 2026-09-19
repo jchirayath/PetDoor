@@ -253,9 +253,25 @@ wrong:
 | `The fast filter must not be slower than the slow one` | `RSSI_FAST_WINDOW` ≤ `RSSI_MEDIAN_WINDOW` **and** `RSSI_FAST_ALPHA` ≥ `RSSI_EWMA_ALPHA`. |
 | `SCAN_WINDOW_MS must be <= SCAN_INTERVAL_MS` | Window cannot exceed interval. |
 | `PIN_RELAY_OPEN and PIN_RELAY_CLOSE must be different pins` | Self-explanatory. |
+| `NimBLEDevice.h: No such file or directory` | You set `PETDOOR_USE_NIMBLE=1` without the library. Library Manager → **NimBLE-Arduino** (2.5.1+). |
+| `Sketch too big` | You are on the default partition scheme. Switch to **Minimal SPIFFS** — see [ESP32-PRIMER.md](ESP32-PRIMER.md#what-you-need-to-program-it). |
 
 **Sketch folder not recognised by the Arduino IDE** — the folder must be named
 `petdoor` and contain `petdoor.ino`. Keep those in sync.
+
+**Not sure which BLE stack is running** — the boot banner and the `s` command
+both say. If you flipped `PETDOOR_USE_NIMBLE` and the banner still says
+`Bluedroid`, the define did not reach the compiler: put it in `secrets.h` rather
+than passing it on a command line, which is the reliable route in the Arduino
+IDE.
+
+**Detection got worse after switching to NimBLE** — the two stacks drive the
+same controller, so the radio behaviour should be identical, but check `s`
+first: `worst gap` and `samples` are the numbers that matter. If the gap grew,
+the duplicate filter is the thing to suspect; `applyScanSettings()` passes
+`true` for `wantDuplicates` on both stacks and that argument is what makes
+repeat advertisements arrive at all. See
+[ARCHITECTURE.md](ARCHITECTURE.md#the-duplicate-filter-trap).
 
 ## Upload fails
 

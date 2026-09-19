@@ -337,6 +337,7 @@ firmware is built around the fixes:
 |---|---|
 | Only ever got one signal reading per device, so proximity never updated | Scan with duplicate reporting **on** — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-duplicate-filter-trap) |
 | Signal spikes and dropouts from multipath | Median filter, then exponential smoothing — run twice, fast for opening and slow for closing |
+| Bluetooth stack eating over half the flash | Optional NimBLE build — one library, 89% → 65% — see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#ble-host-stack) |
 | Door flapping open/closed at the threshold | Two thresholds with a hysteresis band between them — see below |
 | Door closing during a brief signal dropout | 15-second dwell before closing; a stale signal can never *open* the door |
 | Bluetooth stack silently wedging | Watchdog restarts the scan if the radio goes quiet |

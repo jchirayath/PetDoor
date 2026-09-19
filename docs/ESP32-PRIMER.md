@@ -120,6 +120,10 @@ does not fit in it:
 | `no_ota` | 2.0 MB | 85% | 53% |
 | `min_spiffs` | 1.875 MB | 89% | 57% |
 
+(Those are the default Bluetooth stack. See *a much smaller build* below —
+switching to NimBLE takes the WiFi-on figure from 89% to 65%, and the default
+scheme then fits too.)
+
 `min_spiffs` is the recommendation because it keeps a second app slot, which is
 what makes over-the-air flashing possible — worth having once the board is
 screwed to a coop wall. Choose `no_ota` instead if you would rather have the
@@ -127,6 +131,30 @@ headroom and are happy to flash over USB forever.
 
 If you build with `-DPETDOOR_ENABLE_WIFI=0`, every scheme fits comfortably,
 including the default.
+
+### Optional: a much smaller build
+
+The Bluetooth stack bundled with the Arduino core (Bluedroid) is over half the
+firmware. Swapping it for NimBLE takes the build from **89% to 65%** with WiFi
+still on, and costs one library:
+
+1. **Tools → Manage Libraries**, search `NimBLE-Arduino`, install **2.5.1** or
+   later
+2. Add one line to `petdoor/secrets.h` (create the file if it is not there):
+   ```c
+   #define PETDOOR_USE_NIMBLE 1
+   ```
+3. Upload as normal
+
+Same radio, same behaviour, same Arduino IDE. The boot banner tells you which
+stack is running. Leave it off if you are not short of space — the default build
+needs no extra libraries at all.
+
+| | flash on `min_spiffs` | |
+|---|---|---|
+| default (Bluedroid + WiFi) | 1,760,679 | 89% |
+| NimBLE + WiFi | 1,295,523 | 65% |
+| NimBLE, no WiFi | 650,567 | 33% |
 
 In the Arduino IDE this is
 **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**;

@@ -8,6 +8,10 @@ name: build
 #   2. It builds for both BLE stacks — Bluedroid on the classic ESP32, NimBLE
 #      on the S3/C3. Keeping both alive is a project invariant, and it is easy
 #      to break without noticing on one board.
+#   3. It builds with PETDOOR_USE_NIMBLE=1 (the NimBLE-Arduino library) on the
+#      classic ESP32. That is a different thing from item 2: it is the optional
+#      small build, and it goes through the stack adapter in ble_scanner.cpp
+#      that nothing else exercises.
 
 on:
   push:
@@ -114,9 +118,71 @@ jobs:
           #define PIN_RELAY_CLOSE  16
           EOF
 
+          # Invariant 4: the open path must never lag the close path.
+          check "open filter slower than close filter" <<'EOF'
+          #pragma once
+          #define BEACON_MAC         "aa:bb:cc:dd:ee:ff"
+          #define RSSI_MEDIAN_WINDOW 3
+          #define RSSI_FAST_WINDOW   7
+          EOF
+
           exit $fail
 
       - name: Report size
         if: always()
         run: |
           arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs petdoor 2>&1 | tail -3
+
+  # The optional small build: NimBLE-Arduino on the classic ESP32, selected by
+  # PETDOOR_USE_NIMBLE=1. This is the only job that compiles the NimBLE half of
+  # the stack adapter in ble_scanner.cpp, so without it a change that builds
+  # fine on Bluedroid can silently break the smaller build.
+  compile-nimble:
+    runs-on: ubuntu-latest
+    name: ESP32 (PETDOOR_USE_NIMBLE=1)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: arduino/setup-arduino-cli@v2
+
+      - name: Install ESP32 core 3.x and NimBLE-Arduino
+        run: |
+          arduino-cli core update-index \
+            --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core install esp32:esp32 \
+            --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install NimBLE-Arduino@2.5.1
+
+      # Note compiler.cpp.extra_flags, not build.extra_flags: the latter carries
+      # -DCORE_DEBUG_LEVEL, -DESP32 and the loop/event core settings, and
+      # overriding it drops them.
+      - name: Compile unconfigured
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
+            --build-property "compiler.cpp.extra_flags=-DPETDOOR_USE_NIMBLE=1" \
+            --build-property "compiler.c.extra_flags=-DPETDOOR_USE_NIMBLE=1" \
+            --warnings default petdoor
+
+      - name: Compile with a beacon configured
+        run: |
+          cat > petdoor/secrets.h <<'EOF'
+          #pragma once
+          #define BEACON_MAC       "aa:bb:cc:dd:ee:ff"
+          #define RSSI_ENTER_DBM   -60
+          #define RSSI_EXIT_DBM    -72
+          #define RELAY_ACTIVE_LOW 1
+          EOF
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
+            --build-property "compiler.cpp.extra_flags=-DPETDOOR_USE_NIMBLE=1" \
+            --build-property "compiler.c.extra_flags=-DPETDOOR_USE_NIMBLE=1" \
+            --warnings default petdoor
+          rm petdoor/secrets.h
+
+      - name: Report size
+        if: always()
+        run: |
+          arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
+            --build-property "compiler.cpp.extra_flags=-DPETDOOR_USE_NIMBLE=1" \
+            --build-property "compiler.c.extra_flags=-DPETDOOR_USE_NIMBLE=1" \
+            petdoor 2>&1 | tail -3
