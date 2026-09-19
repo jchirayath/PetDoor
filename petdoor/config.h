@@ -262,6 +262,25 @@
 // ===========================================================================
 // 4b. WIFI LOG UPLOAD  — optional, off unless WIFI_SSID is set
 // ===========================================================================
+// Compile the WiFi subsystem in at all. Setting this to 0 removes the uploader,
+// OTA and the whole network stack from the binary.
+//
+// Measured, classic ESP32:
+//     with WiFi     1,757,751 flash (89% of min_spiffs)   65,588 static RAM
+//     without       1,118,063 flash (56%)                 46,188 static RAM
+//                    -639,688 flash                       -19,400 RAM
+//
+// That is 33 percentage points of the partition and ~19 KB of RAM for a feature
+// a local-only door never uses. If you are not uploading logs and not using
+// over-the-air updates, turn it off — you get the space back and the radio is
+// never shared with Bluetooth at all.
+//
+// Leaving it at 1 does NOT bring the radio up: with no WIFI_SSID the stack is
+// linked but idle. This flag is about the binary, WIFI_SSID about the runtime.
+#ifndef PETDOOR_ENABLE_WIFI
+#define PETDOOR_ENABLE_WIFI 1
+#endif
+
 // Leave WIFI_SSID empty and the radio is never brought up: no WiFi, no cloud,
 // exactly as before. Put credentials in secrets.h, not here.
 //
