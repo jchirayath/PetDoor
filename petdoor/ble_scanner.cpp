@@ -1,9 +1,14 @@
 #include "ble_scanner.h"
 
+#if PETDOOR_USE_NIMBLE
+#include <NimBLEDevice.h>
+#else
 #include <BLEAdvertisedDevice.h>
 #include <BLEDevice.h>
 #include <BLEScan.h>
+#endif
 #include <Preferences.h>
+#include <string>
 #include <ctype.h>
 #include <math.h>
 #include <string.h>
@@ -13,7 +18,31 @@
 #include <freertos/semphr.h>
 
 namespace BleScanner {
+
+// ---------------------------------------------------------------------------
+// Stack adapter.
+//
+// The two BLE stacks expose the same capabilities under different names and
+// different string types. Everything that differs is confined to this block;
+// the scanner logic below is written once and compiles against either.
+#if PETDOOR_USE_NIMBLE
+using BleDevice = NimBLEDevice;
+using BleScanHandle = NimBLEScan *;
+using BleUuid = NimBLEUUID;
+using ScanCallbackBase = NimBLEScanCallbacks;
+#else
+using BleDevice = ::BLEDevice;
+using BleScanHandle = ::BLEScan *;
+using BleUuid = ::BLEUUID;
+using ScanCallbackBase = ::BLEAdvertisedDeviceCallbacks;
+#endif
+
 namespace {
+
+// NimBLE returns std::string where the Arduino stack returns String. Both
+// overloads exist in both builds; only one is ever called.
+inline String bleToString(const String &s) { return s; }
+inline String bleToString(const std::string &s) { return String(s.c_str()); }
 
 struct SeenDevice {
   char mac[18];
@@ -31,7 +60,7 @@ struct SeenDevice {
 
 constexpr size_t kSampleQueueDepth = 32;
 
-BLEScan *g_scan = nullptr;
+BleScanHandle g_scan = nullptr;
 QueueHandle_t g_sampleQueue = nullptr;
 SemaphoreHandle_t g_tableMutex = nullptr;
 
@@ -155,7 +184,11 @@ bool matchesTarget(const String &macLower, bool haveIb, const IBeaconData &ib) {
   return true;
 }
 
-void updateTable(const String &macLower, BLEAdvertisedDevice &device, const String &mfg,
+// Templated so one body serves both stacks: DevT deduces to
+// `BLEAdvertisedDevice` on Bluedroid and `const NimBLEAdvertisedDevice` on
+// NimBLE, which also sidesteps the two stacks disagreeing about constness.
+template <typename DevT>
+void updateTable(const String &macLower, DevT &device, const String &mfg,
                  bool isTarget, int8_t measuredPower, uint32_t nowMs) {
   if (g_tableMutex == nullptr) return;
   if (xSemaphoreTake(g_tableMutex, 0) != pdTRUE) return;  // never block the BLE task
@@ -199,7 +232,7 @@ void updateTable(const String &macLower, BLEAdvertisedDevice &device, const Stri
   // discovery table.
   e.name = String();
   if (device.haveName()) {
-    const String raw = device.getName();
+    const String raw = bleToString(device.getName());
     for (size_t i = 0; i < raw.length(); i++) {
       const char c = raw[i];
       e.name += (c >= 0x20 && c < 0x7F) ? c : '.';
@@ -211,10 +244,10 @@ void updateTable(const String &macLower, BLEAdvertisedDevice &device, const Stri
                  : String();
 
   String svc;
-  if (device.haveServiceUUID()) svc += device.getServiceUUID().toString();
+  if (device.haveServiceUUID()) svc += bleToString(device.getServiceUUID().toString());
   if (device.haveServiceData()) {
     if (svc.length()) svc += ',';
-    svc += device.getServiceDataUUID().toString();
+    svc += bleToString(device.getServiceDataUUID().toString());
   }
   svc.toLowerCase();
   e.svc = svc;
@@ -230,58 +263,73 @@ void updateTable(const String &macLower, BLEAdvertisedDevice &device, const Stri
   xSemaphoreGive(g_tableMutex);
 }
 
-class ScanCallbacks : public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice device) override {
-    const uint32_t now = millis();
-    g_lastAdvMs = now;
-    g_advCount++;
+// The advertisement handler proper. Both stacks' callback classes below do
+// nothing but forward into this.
+template <typename DevT>
+void handleAdvert(DevT &device) {
+  const uint32_t now = millis();
+  g_lastAdvMs = now;
+  g_advCount++;
 
-    String mac = device.getAddress().toString();
-    mac.toLowerCase();
+  String mac = bleToString(device.getAddress().toString());
+  mac.toLowerCase();
 
-    String mfg;
-    if (device.haveManufacturerData()) mfg = device.getManufacturerData();
+  String mfg;
+  if (device.haveManufacturerData()) mfg = bleToString(device.getManufacturerData());
 
-    IBeaconData ib = {};
-    const bool haveIb = mfg.length() ? parseIBeacon(mfg, ib) : false;
+  IBeaconData ib = {};
+  const bool haveIb = mfg.length() ? parseIBeacon(mfg, ib) : false;
 
-    const bool isTarget = matchesTarget(mac, haveIb, ib);
-    if (isTarget) {
-      g_targetSeen = true;
+  const bool isTarget = matchesTarget(mac, haveIb, ib);
+  if (isTarget) {
+    g_targetSeen = true;
 
-      // Eddystone beacons interleave TLM frames with their UID/URL frames, so
-      // this lands only on some advertisements. Cheap: a length check and a
-      // handful of byte reads, safe for the BLE callback.
-      // Gate on the Eddystone UUID: getServiceData() returns whichever service
-      // data came first, so without this any payload whose first byte happens
-      // to be 0x20 would be accepted as battery telemetry.
-      if (device.haveServiceData() &&
-          device.getServiceDataUUID().equals(BLEUUID(static_cast<uint16_t>(0xFEAA)))) {
-        const String sd = device.getServiceData();
-        EddystoneTlm tlm;
-        if (sd.length() && parseEddystoneTlm(sd, tlm)) {
-          g_targetTlm = tlm;
-          g_targetTlmMs = now;
-          g_haveTargetTlm = true;
-        }
-      }
-      BleSample sample;
-      sample.rssi = device.getRSSI();
-      sample.measuredPower = haveIb ? ib.measuredPower : 0;
-      sample.atMs = now;
-      if (g_sampleQueue != nullptr && xQueueSend(g_sampleQueue, &sample, 0) != pdTRUE) {
-        // Queue full means the control task is behind. Dropping the newest
-        // sample is harmless; the filter only needs a steady stream, not
-        // every single packet.
-        g_droppedSamples++;
+    // Eddystone beacons interleave TLM frames with their UID/URL frames, so
+    // this lands only on some advertisements. Cheap: a length check and a
+    // handful of byte reads, safe for the BLE callback.
+    // Gate on the Eddystone UUID: getServiceData() returns whichever service
+    // data came first, so without this any payload whose first byte happens
+    // to be 0x20 would be accepted as battery telemetry.
+    if (device.haveServiceData() &&
+        device.getServiceDataUUID().equals(BleUuid(static_cast<uint16_t>(0xFEAA)))) {
+      const String sd = bleToString(device.getServiceData());
+      EddystoneTlm tlm;
+      if (sd.length() && parseEddystoneTlm(sd, tlm)) {
+        g_targetTlm = tlm;
+        g_targetTlmMs = now;
+        g_haveTargetTlm = true;
       }
     }
-
-    if (g_discover) {
-      updateTable(mac, device, mfg, isTarget, haveIb ? ib.measuredPower : 0, now);
+    BleSample sample;
+    sample.rssi = device.getRSSI();
+    sample.measuredPower = haveIb ? ib.measuredPower : 0;
+    sample.atMs = now;
+    if (g_sampleQueue != nullptr && xQueueSend(g_sampleQueue, &sample, 0) != pdTRUE) {
+      // Queue full means the control task is behind. Dropping the newest
+      // sample is harmless; the filter only needs a steady stream, not
+      // every single packet.
+      g_droppedSamples++;
     }
   }
+
+  if (g_discover) {
+    updateTable(mac, device, mfg, isTarget, haveIb ? ib.measuredPower : 0, now);
+  }
+}
+
+#if PETDOOR_USE_NIMBLE
+class ScanCallbacks : public ScanCallbackBase {
+  // NimBLE hands over a const pointer and fires onResult() once the scan
+  // response (if any) has been collected — the same point Bluedroid reports at.
+  void onResult(const NimBLEAdvertisedDevice *device) override {
+    if (device != nullptr) handleAdvert(*device);
+  }
 };
+#else
+class ScanCallbacks : public ScanCallbackBase {
+  void onResult(BLEAdvertisedDevice device) override { handleAdvert(device); }
+};
+#endif
 
 ScanCallbacks g_callbacks;
 
@@ -296,7 +344,48 @@ void applyScanSettings() {
   // seen it") and enables the controller's duplicate filter as well — so an
   // infinite scan yields exactly one callback per device, forever. Passing
   // true is what turns this into a real RSSI sample stream.
+  //
+  // NimBLE spells it setScanCallbacks() and has no results-map bail-out of its
+  // own — the "already seen it" half of the trap is Bluedroid-specific — but
+  // the argument still drives the controller's duplicate filter
+  // (setScanCallbacks() calls setDuplicateFilter(!wantDuplicates)), so it
+  // matters exactly as much here. Pass true on both.
+#if PETDOOR_USE_NIMBLE
+  g_scan->setScanCallbacks(&g_callbacks, true);
+
+  // Must be set explicitly. NimBLE defaults this to 10240 ms and only falls
+  // back to "report what we have" when the timer fires OR the scan completes —
+  // and our scan never completes. A scannable beacon that ignores scan requests
+  // would otherwise go unreported for 10.24 s at a time, well past
+  // SAMPLE_MAX_AGE_MS, and the door would sit at "no fix" forever.
+  //
+  // Same family of trap as the duplicate filter below: a library default that
+  // is right for a scan with an end, and quietly wrong for one without.
+  g_scan->setScanResponseTimeout(NIMBLE_SCAN_RSP_TIMEOUT_MS);
+
+  // Callbacks only — do not let NimBLE accumulate a device list of its own.
+  //
+  // Its default is 0xFF, "unlimited", and that list is only emptied by
+  // clearResults(), which this firmware calls just from the scan watchdog — an
+  // event that never fires while things are working. Phones nearby rotate their
+  // BLE addresses every few minutes, so "distinct devices seen" grows forever
+  // on a door that stays powered for years. With 0, NimBLE frees each device as
+  // soon as the callback has run; the bounded LRU table in this file is the
+  // only device list we keep.
+  g_scan->setMaxResults(0);
+#else
   g_scan->setAdvertisedDeviceCallbacks(&g_callbacks, true);
+#endif
+}
+
+// Start an endless scan. Bluedroid takes (duration, completionCb, isContinue);
+// NimBLE takes (duration, isContinue, restart). 0 means "no timeout" in both.
+bool startScan() {
+#if PETDOOR_USE_NIMBLE
+  return g_scan->start(0, false, true);
+#else
+  return g_scan->start(0, nullptr, false);
+#endif
 }
 
 }  // namespace
@@ -342,8 +431,8 @@ bool begin() {
     return false;
   }
 
-  BLEDevice::init("PetDoor");
-  g_scan = BLEDevice::getScan();
+  BleDevice::init("PetDoor");
+  g_scan = BleDevice::getScan();
   if (g_scan == nullptr) {
     Serial.println(F("[ble] getScan() returned null"));
     return false;
@@ -352,7 +441,7 @@ bool begin() {
   applyScanSettings();
 
   // duration 0 == scan until told otherwise.
-  if (!g_scan->start(0, nullptr, false)) {
+  if (!startScan()) {
     Serial.println(F("[ble] scan failed to start"));
     return false;
   }
@@ -536,6 +625,14 @@ void clearStoredTiming() {
   prefs.end();
 }
 
+const char *stackName() {
+#if PETDOOR_USE_NIMBLE
+  return "NimBLE";
+#else
+  return "Bluedroid";
+#endif
+}
+
 bool loadStoredFilter(uint8_t &windowSize, float &alpha) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
@@ -635,7 +732,7 @@ bool serviceWatchdog(uint32_t nowMs) {
   g_scan->stop();
   g_scan->clearResults();
   applyScanSettings();
-  g_scan->start(0, nullptr, false);
+  startScan();
 
   g_lastScanRestartMs = nowMs;
   g_lastAdvMs = nowMs;  // give it a fresh window before judging again

@@ -23,15 +23,35 @@ The bundled CLI above ships inside Arduino IDE.app; a standalone `arduino-cli`
 on PATH works identically. Target is **ESP32 Arduino core 3.x** (3.3.5 is what
 this was developed against).
 
-**Build with `PartitionScheme=min_spiffs`.** This project is flashed over serial and
-never uses over-the-air updates, so the default scheme's second 1.3 MB app slot
-is dead space. `no_ota` gives a single 2 MB app partition, which takes usage
-from ~85% to ~53% and leaves room for features like WiFi. In the Arduino IDE it
-is **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**; PlatformIO
-picks it up from `board_build.partitions` in `platformio.ini`.
+**Build with `PartitionScheme=min_spiffs`.** It is required, not an
+optimisation: with WiFi enabled the image does not fit the default scheme at all
+(136%). `min_spiffs` keeps a second app slot, which is what `wifi_logger.cpp`'s
+ArduinoOTA support needs — the firmware *does* flash over the air. In the
+Arduino IDE it is **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**;
+PlatformIO picks it up from `board_build.partitions` in `platformio.ini`.
 
-If you ever strain that, switch partitions again rather than trimming features
-silently.
+Two compile-time switches move the size a lot. Measured on min_spiffs:
+
+| | flash | of 1.875 MB |
+|---|---|---|
+| default (Bluedroid + WiFi) | 1,760,679 | 89% |
+| `-DPETDOOR_USE_NIMBLE=1` | 1,295,523 | 65% |
+| `-DPETDOOR_ENABLE_WIFI=0` | 1,121,163 | 57% |
+| both | 650,567 | 33% |
+
+Measure with `compiler.cpp.extra_flags`, **not** `build.extra_flags` — the
+latter carries `-DCORE_DEBUG_LEVEL`, `-DESP32` and the loop/event core settings,
+and overriding it drops them and inflates the image by ~33 KB.
+
+`PETDOOR_USE_NIMBLE=1` needs the NimBLE-Arduino library installed and is
+opt-in; the default build must keep working with no extra libraries. **Both
+stacks must keep compiling** — check both before claiming a BLE change works:
+
+```bash
+"$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs petdoor
+"$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
+  --build-property "build.extra_flags=-DPETDOOR_USE_NIMBLE=1" petdoor
+```
 
 Do not flash hardware unless the user explicitly asks. Uploading drives a real
 motor attached to a real door.
@@ -107,8 +127,12 @@ comment above it explains why; keep the comment with the code.
 - `static_assert` any config relationship that could silently misbehave.
 - No dynamic allocation in the BLE hot path beyond what the Arduino `String`
   API forces; the discovery table is a fixed array with LRU eviction.
-- Both Bluedroid (classic ESP32) and NimBLE (S3/C3/C6) must keep building —
-  only use BLE APIs common to both, or `#if defined(CONFIG_NIMBLE_ENABLED)`.
+- Both Bluedroid and NimBLE must keep building. Everything the two stacks
+  disagree about — class names, the callback signature, `start()`'s arguments,
+  `String` vs `std::string` — lives in the stack-adapter block at the top of
+  `ble_scanner.cpp`. The scanner logic below it is written once, as templates on
+  the device type, and must stay stack-agnostic. Add new differences to the
+  adapter, never `#if` in the middle of the logic.
 
 ## Documentation
 

@@ -362,13 +362,86 @@ diagnostic effort goes into it.
 
 ---
 
+## The two BLE stacks
+
+The firmware builds against either host stack, selected by `PETDOOR_USE_NIMBLE`:
+
+- **Bluedroid** (`0`, the default) ships with the ESP32 Arduino core. Nothing to
+  install.
+- **NimBLE** (`1`) comes from the NimBLE-Arduino library, which bundles the
+  whole NimBLE host as Arduino sources. Still the Arduino IDE; one extra library
+  from Library Manager.
+
+Same radio, same controller — only the host stack changes. Bluedroid is over
+half the image, so the difference is large:
+
+| Full firmware, `min_spiffs`, WiFi on | flash | | RAM |
+|---|---|---|---|
+| Bluedroid | 1,760,679 | 89% | 72,924 |
+| NimBLE | 1,295,523 | 65% | 67,740 |
+| **saving** | **465,156** (454 KB) | | **5,184** |
+
+Bluedroid's host (`libbt.a`, 521 KB linked) is what goes away; the controller
+(`libbtdm_app.a`, 133 KB) is shared and stays.
+
+Everything the two stacks disagree about is confined to the **stack adapter** at
+the top of `ble_scanner.cpp` — class names, the callback signature, `start()`'s
+argument list, and `String` versus `std::string`. Below that block the scanner is
+written once, as templates on the advertised-device type, and is stack-agnostic:
+
+```cpp
+template <typename DevT>
+void handleAdvert(DevT &device);   // DevT = BLEAdvertisedDevice
+                                   //     or const NimBLEAdvertisedDevice
+```
+
+Templating on the device type rather than writing two copies also sidesteps the
+two stacks disagreeing about constness — NimBLE hands over a `const` pointer,
+Bluedroid a mutable value.
+
+**Add new differences to the adapter, never `#if` in the middle of the logic.**
+Two divergent copies of the advertisement handler is exactly how a fix lands in
+one stack and not the other.
+
+Note that the duplicate-filter trap below is *Bluedroid-specific* in its
+"already seen it" half — NimBLE has no results-map bail-out. The other half, the
+controller's own duplicate filter, applies to both, so both pass
+`wantDuplicates = true`.
+
+### Two NimBLE defaults that must be overridden
+
+Both are the same shape as the duplicate-filter trap: a library default that is
+correct for a scan with an end, and quietly wrong for one without. This firmware
+scans forever.
+
+**`setScanResponseTimeout(100)`** — NimBLE's default is 10240 ms. When a beacon
+advertises as scannable (`ADV_IND`/`ADV_SCAN_IND`), NimBLE holds the
+advertisement back waiting for a scan response, releasing it on that timer *or*
+when the scan completes. A scannable beacon that ignores scan requests would
+therefore be reported once per 10.24 s — more than three times
+`SAMPLE_MAX_AGE_MS`, so `hasFix()` would be false essentially always and the
+door would never open. Broadcast-only beacons are reported immediately and never
+enter this path, which is what makes the failure intermittent across beacon
+models rather than obvious.
+
+**`setMaxResults(0)`** — NimBLE's default is `0xFF`, meaning it stores every
+distinct device it has ever seen, freed only by `clearResults()`. This firmware
+calls that only from the scan watchdog, which never fires while things are
+working. Nearby phones rotate their BLE addresses every few minutes, so each
+rotation is a new "device" and the list grows for as long as the door has power.
+`0` means callbacks only: NimBLE frees each device once the callback has run,
+and the bounded LRU table in `ble_scanner.cpp` stays the only device list.
+
+The Bluedroid path needs neither. It already deletes each device when
+`wantDuplicates` is true, and has no scan-response holding list.
+
+---
+
 ## Portability
 
-Both **Bluedroid** (classic ESP32) and **NimBLE** (S3/C3/C6) must keep building.
-Only use BLE APIs common to both, or guard with
-`#if defined(CONFIG_NIMBLE_ENABLED)`.
-
-Flash sits around 83% of the default partition scheme. If you add much, switch
+Beyond the two stacks, the S3/C3/C6 parts are supported by the same code. Flash
+usage depends on the two big switches — see
+[CONFIGURATION.md](CONFIGURATION.md#ble-host-stack). If you add much, switch
 partition schemes rather than quietly trimming features.
 
 ---

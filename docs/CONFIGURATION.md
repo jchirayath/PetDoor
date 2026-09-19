@@ -155,6 +155,53 @@ How near is "near". See [TUNING.md](TUNING.md) for the procedure.
 | `BEACON_LOW_BATTERY_MV` | `2400` | Beacon battery level (from Eddystone-TLM) at or below which the status LED flashes at 2 Hz. `0` disables the warning. |
 | `BEACON_MEASURED_POWER_DBM` | `-59` | Fallback calibrated RSSI at 1 m, used for the distance display when the beacon does not advertise one. iBeacon frames carry this; **Eddystone and sensor tags do not** and show `?` without it. Set to `0` to go back to `?`. Display only. |
 
+### BLE host stack
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `PETDOOR_USE_NIMBLE` | `0` | `0` = Bluedroid (bundled with the Arduino core, nothing to install). `1` = NimBLE, via the **NimBLE-Arduino** library from Library Manager. |
+| `NIMBLE_SCAN_RSP_TIMEOUT_MS` | `100` | NimBLE only. How long to wait for a scan response before reporting the advertisement anyway. |
+
+Both stacks drive the same radio through the same controller; only the host
+changes. Bluedroid is over half the firmware image, so the difference is large.
+Measured on `min_spiffs` (1.875 MB app partition):
+
+| `PETDOOR_USE_NIMBLE` | `PETDOOR_ENABLE_WIFI` | flash | | RAM |
+|---|---|---|---|---|
+| `0` *(default)* | `1` *(default)* | 1,760,679 | 89% | 72,924 |
+| **`1`** | `1` | **1,295,523** | **65%** | 67,740 |
+| `0` | `0` | 1,121,163 | 57% | 46,204 |
+| **`1`** | **`0`** | **650,567** | **33%** | 40,880 |
+
+NimBLE alone saves **454 KB of flash and 5 KB of RAM**. With WiFi compiled out
+as well the image is a third of its default size.
+
+Turning it on is one line in `secrets.h`:
+
+```c
+#define PETDOOR_USE_NIMBLE 1
+```
+
+…plus installing **NimBLE-Arduino** (2.5.1 or later) from Library Manager. The
+boot banner and `s` both report which stack is running, so there is never any
+doubt.
+
+**Why it is opt-in rather than automatic.** Switching stacks changes the code
+driving the radio on a device that moves a door. That should be a decision you
+made, not a side effect of which libraries happen to be sitting in your
+`libraries` folder — and the default build has to keep working for someone who
+has installed nothing.
+
+**`NIMBLE_SCAN_RSP_TIMEOUT_MS` is not a knob you should need**, but it is not
+safe to remove. NimBLE's own default is 10240 ms, chosen for scans that finish;
+this firmware scans endlessly. A beacon advertising as scannable
+(`ADV_IND`/`ADV_SCAN_IND`) that does not answer scan requests would be withheld
+for 10.24 s at a time — past `SAMPLE_MAX_AGE_MS` (3000), so the door would read
+"no fix" permanently. Broadcast-only beacons are reported immediately and never
+touch this path.
+
+---
+
 ### Why there are two filters
 
 The four `RSSI_*` filter settings above are two pairs, not four knobs. The same

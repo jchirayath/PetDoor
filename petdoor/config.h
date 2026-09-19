@@ -131,6 +131,52 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// BLE host stack.
+//
+// 0 = Bluedroid, the stack bundled with the ESP32 Arduino core. Nothing to
+//     install; this is the default so a fresh checkout builds with no extra
+//     steps.
+// 1 = NimBLE, via the NimBLE-Arduino library (Library Manager → "NimBLE-Arduino",
+//     2.5.1 or later). Same Arduino IDE, one extra library.
+//
+// NimBLE is the same radio and the same controller; it replaces only the host
+// stack, and it is far smaller. Measured on a minimal scan sketch:
+//
+//     Bluedroid   1,072,811 bytes flash   39,860 bytes RAM
+//     NimBLE        592,219 bytes flash   34,528 bytes RAM
+//     saving          469 KB flash         5.2 KB RAM
+//
+// That is the single largest saving available to this firmware — Bluedroid is
+// over half the image. Turn it on if you are short of flash, especially with
+// PETDOOR_ENABLE_WIFI on.
+//
+// It is opt-in rather than automatic on purpose. Switching BLE stacks changes
+// the code that drives the radio on a device that moves a door; that should be
+// a decision you made, not a side effect of which libraries happen to be
+// installed. The boot banner and `s` both report which stack is running.
+#ifndef PETDOOR_USE_NIMBLE
+#define PETDOOR_USE_NIMBLE 0
+#endif
+
+// NimBLE only. How long to wait for a scan response before reporting an
+// advertisement with just the data it already carried.
+//
+// This exists because NimBLE's own default is 10240 ms, and that default is
+// written for scans that END. Ours never does — begin() starts an endless scan.
+// A beacon that advertises as scannable (ADV_IND / ADV_SCAN_IND) but does not
+// answer scan requests would sit on NimBLE's waiting list for those 10.24 s,
+// which is more than three times SAMPLE_MAX_AGE_MS: the door would read "no
+// fix" permanently and never open.
+//
+// 100 ms is far longer than a scan response actually takes (it follows the
+// advertisement within the same advertising event) and far shorter than
+// anything the door cares about. Non-scannable broadcast-only beacons are
+// reported immediately and never touch this path at all.
+#ifndef NIMBLE_SCAN_RSP_TIMEOUT_MS
+#define NIMBLE_SCAN_RSP_TIMEOUT_MS 100
+#endif
+
+// ---------------------------------------------------------------------------
 // Fast path — the OPEN decision only.
 //
 // The two settings above shape the signal the CLOSE decision reads. The two

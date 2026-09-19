@@ -76,6 +76,11 @@ void clearStoredTiming();
 uint32_t loadStoredDirectionGap();
 void storeDirectionGap(uint32_t ms);
 
+// "Bluedroid" or "NimBLE" — which host stack this build is using. Reported in
+// the boot banner and in `s`, because it changes the RF code path and is the
+// first thing to state in a bug report.
+const char *stackName();
+
 bool loadStoredFilter(uint8_t &windowSize, float &alpha);
 void storeFilter(uint8_t windowSize, float alpha);
 void clearStoredFilter();

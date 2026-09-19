@@ -141,7 +141,8 @@ void printBanner() {
   Serial.println();
   Serial.println(F("=================================================="));
   Serial.println(F("  PetDoor — BLE proximity door controller"));
-  Serial.printf("  v%s  (built %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD);
+  Serial.printf("  v%s  (built %s, %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD,
+                BleScanner::stackName());
   Serial.println(F("=================================================="));
   Serial.print(F("  target beacon : "));
   Serial.println(BleScanner::describeTarget());
@@ -288,6 +289,7 @@ void printStatus(uint32_t nowMs) {
                 static_cast<unsigned long>(g_door.bootGraceCount()));
   Serial.printf("  scan restarts: %lu\r\n", static_cast<unsigned long>(BleScanner::scanRestarts()));
   Serial.printf("  firmware     : v%s (built %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD);
+  Serial.printf("  ble stack    : %s\r\n", BleScanner::stackName());
   Serial.printf("  boot         : #%lu, last reset: %s\r\n",
                 static_cast<unsigned long>(g_bootCount), resetReasonName());
   WifiLogger::printStatus(Serial);
