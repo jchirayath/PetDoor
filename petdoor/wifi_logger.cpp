@@ -1,5 +1,7 @@
 #include "wifi_logger.h"
 
+#if PETDOOR_ENABLE_WIFI
+
 #include <ArduinoOTA.h>
 #include <HTTPClient.h>
 #if LOG_ALLOW_TLS
@@ -413,3 +415,29 @@ void printStatus(Stream &out) {
 }
 
 }  // namespace WifiLogger
+
+#else  // PETDOOR_ENABLE_WIFI
+
+// Not compiled in. The API stays so the rest of the firmware needs no #ifdefs;
+// every call is a no-op and the linker drops the network stack entirely.
+namespace WifiLogger {
+bool isEnabled() { return false; }
+void begin() {}
+void setBootCount(uint32_t) {}
+void tick(uint32_t, bool) {}
+void requestFlushNow() {
+  Serial.println(F("[wifi] not compiled in (PETDOOR_ENABLE_WIFI is 0)"));
+}
+bool busy() { return false; }
+uint32_t stackFreeBytes() { return 0; }
+bool otaWindowOpen() { return false; }
+void closeOtaWindow() {}
+void beginOtaWindow(bool) {
+  Serial.println(F("[ota] not compiled in — use the IO0/EN buttons"));
+}
+void printStatus(Stream &out) {
+  out.println(F("  wifi         : not compiled in"));
+}
+}  // namespace WifiLogger
+
+#endif  // PETDOOR_ENABLE_WIFI

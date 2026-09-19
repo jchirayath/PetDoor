@@ -209,6 +209,7 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 
 | Setting | Default | Description |
 |---|---|---|
+| `PETDOOR_ENABLE_WIFI` | `1` | **Compile-time.** `0` removes the uploader, OTA and the whole network stack from the binary — measured at **640 KB of flash and 19 KB of RAM** (89% → 56% of the partition). Leaving it at `1` does not bring the radio up; that is what `WIFI_SSID` controls. |
 | `WIFI_SSID` | `""` | Network name. Empty disables everything below. |
 | `WIFI_PASSWORD` | `""` | Network password. |
 | `LOG_ENDPOINT_URL` | `""` | Where the CSV batch is POSTed. **Empty means local-only**: events are still recorded and still roll oldest-out, but nothing is sent and the radio is never brought up. |
@@ -259,8 +260,34 @@ Signing added **zero flash**, because mbedTLS is already linked for WPA2.
 For an endpoint across the internet, put it behind a VPN or a TLS-terminating
 proxy rather than asking the ESP32 to do TLS.
 
-Enabling WiFi costs about **540 KB of flash**, and the library is linked in
-whether or not you set `WIFI_SSID`. That is why the project builds with the
+### Two switches, and they do different jobs
+
+| | Controls | When |
+|---|---|---|
+| `PETDOOR_ENABLE_WIFI` | whether the network stack is **in the binary** | compile time |
+| `WIFI_SSID` | whether the radio ever **comes up** | runtime |
+
+`PETDOOR_ENABLE_WIFI=1` with no `WIFI_SSID` — the default — links the stack but
+never transmits. The flag is about size; the SSID is about behaviour.
+
+Measured on a classic ESP32:
+
+```
+with WiFi     1,757,751 flash (89% of min_spiffs)   65,588 static RAM
+without       1,118,063 flash (56%)                 46,188 static RAM
+               -639,688                              -19,400
+```
+
+Setting it to `0` costs you log upload, NTP timestamps and **over-the-air
+updates** — which means the IO0/EN buttons come back. The commands remain and
+say so rather than failing silently:
+
+```
+u  ->  [wifi] not compiled in (PETDOOR_ENABLE_WIFI is 0)
+p  ->  [ota] not compiled in — use the IO0/EN buttons
+```
+
+The event log is unaffected: it lives in NVS and never needed a network. That is why the project builds with the
 `no_ota` partition scheme — see [ESP32-PRIMER.md](ESP32-PRIMER.md).
 
 ## 5. Diagnostics
