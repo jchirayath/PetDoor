@@ -96,8 +96,9 @@ protects you from a glitch. It cannot protect you from an inverted
                  │           IN2 ├───────┘     (CLOSE)
                  │           GND ├───────────────────┘
                  │               │
-                 │  COM1 NO1 NC1 ├── to door controller OPEN input
-                 │  COM2 NO2 NC2 ├── to door controller CLOSE input
+                 │  COM1 NO1 NC1 ├── COM1 + NO1 → door controller OPEN input
+                 │  COM2 NO2 NC2 ├── COM2 + NO2 → door controller CLOSE input
+                 │               │   NC1 and NC2 stay empty
                  └───────────────┘
 ```
 
@@ -112,6 +113,59 @@ Key points:
   draws 60–90 mA; a GPIO pin can source about 12 mA.
 - Size the 5 V supply for the ESP32's Wi-Fi/BLE current peaks *plus* both relay
   coils. 1 A is a comfortable minimum.
+
+---
+
+## Which output terminals to use
+
+Each relay channel brings out three screw terminals. **Use `COM` and `NO`.
+Leave `NC` empty.**
+
+| Terminal | | Use it? |
+|---|---|---|
+| `COM` | common | **yes** |
+| `NO` | normally open — open at rest, closed while the relay is energised | **yes** |
+| `NC` | normally closed — closed at rest, open while energised | **no** |
+
+The two wires go across your door controller's button, in parallel with it (or
+in place of it). The existing button keeps working if you leave it fitted.
+
+### Why `NO`, and why `NC` is the dangerous choice
+
+The firmware is imitating a finger on a button:
+
+```cpp
+digitalWrite(pin, RELAY_ASSERT);
+delay(RELAY_PULSE_MS);            // 200 ms
+digitalWrite(pin, RELAY_RELEASE);
+```
+
+A pushbutton is open at rest and closed while pressed. `COM`↔`NO` is exactly
+that: open at idle, closed for 200 ms, open again.
+
+Wire `COM`↔`NC` instead and every one of those states inverts. The door
+controller sees its button **held down permanently**, with a 200 ms *release*
+each time the firmware tries to act. Depending on the controller that is a motor
+that runs continuously, or one that starts the instant you apply power, or both
+— the failure [SAFETY.md](SAFETY.md) exists to prevent. Nothing in the firmware
+can detect this or protect you from it; it is downstream of the ESP32 entirely.
+
+### These are dry contacts
+
+The relay contacts are an isolated switch. They do **not** supply power — they
+only close your door controller's own button circuit. Do not run the module's
+5 V rail into `COM`; feeding voltage into a controller input that expects a
+simple contact closure can destroy it.
+
+That isolation is the whole point of the relay: it is what lets a 3.3 V logic
+pin control a mains-adjacent motor circuit without the two ever meeting.
+
+### If the relay clicks at boot, this is not the problem
+
+A relay that energises at power-up and stays energised is `RELAY_ACTIVE_LOW` set
+wrong, not a terminal mistake. Diagnose it with **nothing connected to the
+output terminals** — see
+[the active-high vs active-low trap](#the-active-high-vs-active-low-trap) above.
 
 ---
 
