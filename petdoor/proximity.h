@@ -9,6 +9,17 @@
 //   3. Hysteresis +    two thresholds and two dwell timers, so the door never
 //      dwell timers     flaps at the boundary and rides out short dropouts.
 //
+// Stages 1 and 2 run TWICE over the same samples, at two different speeds:
+//
+//   fast  -> feeds the OPEN decision, and cancels a pending close
+//   slow  -> feeds the CLOSE decision
+//
+// The asymmetry is deliberate and is the whole point. Opening late can shut an
+// animal out of the coop; closing early can shut a door on one. A single filter
+// has to be tuned somewhere between "reacts now" and "ignores dropouts", and
+// whichever way it is tuned, one of those two directions pays for it. Running
+// two costs 64 bytes and removes the compromise.
+//
 // Not thread safe. Only the control task touches it; the BLE callback hands
 // samples over through a queue. See ble_scanner.h.
 
@@ -65,6 +76,17 @@ class ProximityTracker {
   float alpha() const { return alpha_; }
   bool setFilter(uint8_t windowSize, float alpha);
 
+  // Shape of the fast filter, the one the open decision reads. Same validation
+  // as setFilter(); window must be odd and 1..15, alpha in (0, 1].
+  //
+  // There is no ordering requirement against the slow window — both read from
+  // the same 15-sample ring, each taking as many of the most recent entries as
+  // it wants. Setting these equal to the slow pair restores the old
+  // single-filter behaviour exactly.
+  uint8_t fastWindowSize() const { return fastWindow_; }
+  float fastAlpha() const { return fastAlpha_; }
+  bool setFastFilter(uint8_t windowSize, float alpha);
+
   void setDwell(uint32_t enterMs, uint32_t exitMs) {
     enterConfirmMs_ = enterMs;
     exitConfirmMs_ = exitMs;
@@ -83,7 +105,16 @@ class ProximityTracker {
   // True when there are enough recent samples to trust the reading.
   bool hasFix(uint32_t nowMs) const;
 
+  // The slow (close-path) value. Reported everywhere a single "the signal is
+  // this strong" number is wanted — status lines, the event log, the distance
+  // estimate — because it is the steadier of the two.
   int filteredRssi() const { return filteredRssi_; }
+
+  // The fast (open-path) value. Diagnostics only; the door decision reads it
+  // internally. Expect it to lead filteredRssi() by a sample or two and to be
+  // visibly noisier — that is what it is for.
+  int fastRssi() const { return fastRssi_; }
+
   int rawRssi() const { return rawRssi_; }
   int8_t measuredPower() const { return measuredPower_; }
   float distanceM() const;
@@ -131,16 +162,23 @@ class ProximityTracker {
   uint32_t pendingExitMs(uint32_t nowMs) const;
 
  private:
-  int median() const;
+  // Median of the `count` most recent samples in the ring, clamped to however
+  // many have actually arrived.
+  int median(uint8_t count) const;
 
+  // One ring shared by both filters, always sized for the largest window either
+  // could ask for. Sizing it to the configured window instead would make the
+  // two filters fight over the buffer whenever their windows differed.
   int window_[kMaxMedianWindow] = {0};
   uint8_t windowCount_ = 0;
   uint8_t windowHead_ = 0;
 
   float ewma_ = 0.0f;
+  float fastEwma_ = 0.0f;
   bool ewmaInit_ = false;
 
   int filteredRssi_ = -127;
+  int fastRssi_ = -127;
   int rawRssi_ = -127;
   int8_t measuredPower_ = 0;
 
@@ -156,6 +194,8 @@ class ProximityTracker {
   int exitDbm_ = RSSI_EXIT_DBM;
   uint8_t windowSize_ = RSSI_MEDIAN_WINDOW;
   float alpha_ = RSSI_EWMA_ALPHA;
+  uint8_t fastWindow_ = RSSI_FAST_WINDOW;
+  float fastAlpha_ = RSSI_FAST_ALPHA;
   uint32_t enterConfirmMs_ = ENTER_CONFIRM_MS;
   uint32_t exitConfirmMs_ = EXIT_CONFIRM_MS;
 

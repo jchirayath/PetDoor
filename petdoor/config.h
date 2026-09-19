@@ -130,6 +130,35 @@
 #define RSSI_EWMA_ALPHA 0.35f
 #endif
 
+// ---------------------------------------------------------------------------
+// Fast path — the OPEN decision only.
+//
+// The two settings above shape the signal the CLOSE decision reads. The two
+// below shape a second, deliberately twitchy filter over the same samples that
+// only the open decision reads. Why two:
+//
+//   Opening late can shut an animal out; opening early only lets in a draught.
+//   Closing early can shut a door on an animal. The two directions do not want
+//   the same amount of smoothing, and a single filter has to compromise.
+//
+// Before this split, making the door open promptly meant shortening the median
+// window for BOTH decisions, which is what stripped the close path of its
+// immunity to dropouts. Now the slow pair can go back to being genuinely slow
+// (7 / 0.35 rides out a multi-second fade) without costing any open latency.
+//
+// A single strong spike still cannot open the door: the fast filter has to stay
+// above RSSI_ENTER_DBM for the whole of ENTER_CONFIRM_MS. The dwell timer is
+// what confirms, so the filter is free to be fast.
+#ifndef RSSI_FAST_WINDOW
+#define RSSI_FAST_WINDOW 1
+#endif
+
+// 0.9 reaches ~90% of a step in one sample. Raise ENTER_CONFIRM_MS, not this,
+// if the door opens too eagerly — the dwell is the safety, this is the speed.
+#ifndef RSSI_FAST_ALPHA
+#define RSSI_FAST_ALPHA 0.9f
+#endif
+
 // Path-loss exponent for the distance estimate: ~2.0 open air, 2.5–3.0 through
 // a coop wall, 3.0+ cluttered. Only affects the displayed distance, never the
 // open/close decision (which uses RSSI directly).

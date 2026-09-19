@@ -218,7 +218,7 @@ Type a single character. No Enter needed; newlines are ignored.
 | `m` | Edit the beacon MAC list, saved on the device |
 | `t` | Edit the open/close thresholds, saved on the device |
 | `w` | Edit dwell times and the actuation lockout, saved on the device |
-| `f` | Edit the filter shape (median window, smoothing), saved on the device |
+| `f` | Edit both filter shapes — the slow close filter and the fast open filter — saved on the device |
 | `!` | Reboot into flash mode — no IO0/EN buttons needed |
 
 `o` and `x` are compiled out when `ALLOW_MANUAL_SERIAL_CONTROL` is `0`. If `h`
@@ -407,19 +407,34 @@ dwell timers.
 
 ```
 ---- filter shape (how fast RSSI is tracked) ----
-  median window : 3 samples (max 15)
-  ewma alpha    : 0.70  (higher = faster, noisier)
+  two filters run over the same samples:
+  CLOSE window  : 7 samples (max 15)
+  CLOSE alpha   : 0.35  (higher = faster, noisier)
+  OPEN  window  : 1 samples
+  OPEN  alpha   : 0.90
 ```
+
+The same advertisements are filtered twice — slowly for the close decision,
+quickly for the open decision. Opening late can shut an animal out; closing
+early can shut a door on one, and the two want opposite amounts of smoothing.
+
+The presets act on the **close** pair:
 
 | Type | Effect |
 |---|---|
-| `fast` | window 3, alpha 0.7 — responsive |
+| `fast` | window 3, alpha 0.7 — twitchy close; rarely needed now |
 | `default` | window 7, alpha 0.35 — the shipped shape |
 | `smooth` | window 11, alpha 0.2 — noisy RF |
 | `3,0.7` | window,alpha directly (window odd, 1–15) |
+| `open 1,0.9` | set the **open** pair directly |
+| `open same` | make the open pair match the close pair (old single-filter behaviour) |
+| `clear` | forget both saved pairs |
 
-Lag is roughly `(window/2 + 1/alpha)` × the sample interval. At a 350 ms sample
-rate, `default` costs about 2 s and `fast` about 0.7 s.
+Lag is roughly `(window/2 + 1/alpha)` × the sample interval, and now applies to
+**closing** only. Opening is limited by `ENTER_CONFIRM_MS` alone — at the
+shipped open pair the filter adds no lag of its own.
+
+The open pair may not be slower than the close pair; the menu refuses it.
 
 Window 1 with alpha 1.0 disables filtering entirely and switches the door on
 raw RSSI — the exact failure this project exists to fix. The firmware warns if

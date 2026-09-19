@@ -25,9 +25,12 @@ flowchart TD
     B -- yes --> C["push to queue<br/><i>non-blocking, depth 32</i>"]
     C ==> D["<b>median filter</b><br/>rejects isolated spikes<br/>and deep fades"]
     D --> E["<b>EWMA smoothing</b><br/>removes what is left"]
-    E --> F{"<b>hysteresis</b><br/>+ dwell timers"}
-    F -- "≥ enter, held<br/>ENTER_CONFIRM_MS" --> G["PRESENT<br/>→ pulse OPEN"]
-    F -- "≤ exit, held<br/>EXIT_CONFIRM_MS" --> H["ABSENT<br/>→ pulse CLOSE"]
+    E --> Efast["<b>fast pair</b><br/>1 / 0.90"]
+    E --> Eslow["<b>slow pair</b><br/>7 / 0.35"]
+    Efast --> F{"<b>hysteresis</b><br/>+ dwell timers"}
+    Eslow --> F
+    F -- "fast ≥ enter, held<br/>ENTER_CONFIRM_MS" --> G["PRESENT<br/>→ pulse OPEN"]
+    F -- "slow ≤ exit, held<br/>EXIT_CONFIRM_MS" --> H["ABSENT<br/>→ pulse CLOSE"]
     F -- "in the dead band" --> I["no change"]
 
     style A fill:#E9A23B,stroke:#C8862A,color:#3b2a10
@@ -91,7 +94,10 @@ is why losing the beacon can only ever close the door.
 
 ### Stage 1 — median filter
 
-`RSSI_MEDIAN_WINDOW` (7) most recent samples, sorted, middle one taken.
+The most recent samples, sorted, middle one taken — `RSSI_MEDIAN_WINDOW` (7) of
+them for the close decision, `RSSI_FAST_WINDOW` (1, i.e. none) for the open one.
+Both read the same 15-entry ring, each taking as many of the newest entries as
+its window asks for.
 
 A median is the right tool here because BLE RSSI noise is dominated by
 **isolated outliers** — a deep multipath fade or a spike lasting one or two
@@ -101,11 +107,41 @@ most 15 elements, so anything cleverer would be slower.
 
 ### Stage 2 — exponential smoothing
 
-`ewma = α · median + (1 − α) · ewma`, with `RSSI_EWMA_ALPHA` at 0.35.
+`ewma = α · median + (1 − α) · ewma`, run twice: `RSSI_EWMA_ALPHA` (0.35) over
+the slow median, `RSSI_FAST_ALPHA` (0.9) over the fast one.
 
 The median removes spikes but still steps around. The EWMA smooths what is
-left. Lower α is steadier but slower to react; this is the knob to reach for if
-presence is stable but sluggish, or twitchy but responsive.
+left. Lower α is steadier but slower to react.
+
+### Why the filter runs twice
+
+Opening late can shut an animal out of the coop. Closing early can shut a door
+on one. A single filter has to sit somewhere between "reacts now" and "ignores
+dropouts", and either choice makes one of those two directions worse. Running it
+at two speeds costs 64 bytes of RAM and ~2 KB of flash, and removes the
+compromise entirely:
+
+- the **fast** value feeds `near`, which starts the open dwell — and which also
+  cancels a pending close, so an animal walking back into a closing door is
+  noticed on the very next advertisement rather than after the slow filter has
+  climbed back over the exit threshold;
+- the **slow** value feeds `far`, which starts the close dwell, so a fade or a
+  dropped packet cannot talk the door shut.
+
+A fast filter is safe here because it is not what confirms anything. The dwell
+timers do that: the fast value has to stay above `RSSI_ENTER_DBM` for the whole
+of `ENTER_CONFIRM_MS` before the door moves, so a single strong spike still
+cannot open it.
+
+Measured against a 1 Hz beacon, open latency drops from 3500 ms (one filter
+tuned for responsiveness) or 7500 ms (one filter at the shipped shape) to
+1500 ms — which is `ENTER_CONFIRM_MS` exactly, meaning the filter contributes no
+lag of its own at all.
+
+The ordering is an invariant, not a preference: the open pair must never be
+slower than the close pair, or the door would notice an animal leaving before it
+noticed one arriving. `static_assert` enforces it for the compiled defaults and
+`applyFastFilter()` enforces it for anything typed at the console.
 
 ### Stage 3 — hysteresis and dwell
 
@@ -345,7 +381,7 @@ partition schemes rather than quietly trimming features.
 | `config.h` | every tunable, each wrapped in `#ifndef` |
 | `secrets.h` | git-ignored local overrides; may not exist |
 | `ble_scanner.*` | BLE stack, scan, target matching, discovery table |
-| `proximity.*` | median + EWMA filter, hysteresis state machine |
+| `proximity.*` | dual-rate median + EWMA filters, hysteresis state machine |
 | `door.*` | relay pulses, interlock, lockout, boot grace |
 | `beacon.*` | iBeacon parsing, classification, distance estimate — pure functions |
 
@@ -359,20 +395,22 @@ Enforced by `static_assert` where possible:
 1. `RSSI_ENTER_DBM > RSSI_EXIT_DBM` — the gap is the hysteresis band.
 2. `MIN_ACTUATION_INTERVAL_MS < EXIT_CONFIRM_MS` — or the lockout delays
    closing.
-3. `RSSI_MEDIAN_WINDOW` is odd, 3–15.
-4. `SCAN_WINDOW_MS <= SCAN_INTERVAL_MS`.
-5. `PIN_RELAY_OPEN != PIN_RELAY_CLOSE`.
+3. `RSSI_MEDIAN_WINDOW` is odd, 3–15; `RSSI_FAST_WINDOW` is odd, 1–15.
+4. `RSSI_FAST_WINDOW ≤ RSSI_MEDIAN_WINDOW` and `RSSI_FAST_ALPHA ≥
+   RSSI_EWMA_ALPHA` — the open path must never lag the close path.
+5. `SCAN_WINDOW_MS <= SCAN_INTERVAL_MS`.
+6. `PIN_RELAY_OPEN != PIN_RELAY_CLOSE`.
 
 And enforced by design, not by the compiler:
 
-6. A stale signal can close the door but never open it.
-7. Never actuate before the beacon has been heard once since boot.
-8. Never close during `BOOT_GRACE_MS`.
-9. Relays are interlocked — `pulse()` always releases the opposite relay and
-   waits `DIRECTION_CHANGE_GAP_MS` first.
-10. The BLE callback stays cheap and never blocks.
-11. Door state is owned by `controlTask` alone.
-12. **Opening is never rate-limited.** The actuation lockout applies only to
+7. A stale signal can close the door but never open it.
+8. Never actuate before the beacon has been heard once since boot.
+9. Never close during `BOOT_GRACE_MS`.
+10. Relays are interlocked — `pulse()` always releases the opposite relay and
+    waits `DIRECTION_CHANGE_GAP_MS` first.
+11. The BLE callback stays cheap and never blocks.
+12. Door state is owned by `controlTask` alone.
+13. **Opening is never rate-limited.** The actuation lockout applies only to
     closing. A lockout can only prevent thrash by *delaying* an actuation, and
     delaying an open is the one direction that can strand an animal outside a
     door it just watched close. Thrash stays impossible anyway: a close needs

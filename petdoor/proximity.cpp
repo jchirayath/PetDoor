@@ -9,6 +9,15 @@ static_assert(RSSI_ENTER_DBM > RSSI_EXIT_DBM,
               "otherwise there is no hysteresis band and the door will flap.");
 static_assert(RSSI_MEDIAN_WINDOW % 2 == 1 && RSSI_MEDIAN_WINDOW >= 3 && RSSI_MEDIAN_WINDOW <= 15,
               "RSSI_MEDIAN_WINDOW must be an odd number between 3 and 15.");
+// The fast window may be 1 (no median at all), which the slow one may not: the
+// open path is confirmed by ENTER_CONFIRM_MS rather than by smoothing.
+static_assert(RSSI_FAST_WINDOW % 2 == 1 && RSSI_FAST_WINDOW >= 1 && RSSI_FAST_WINDOW <= 15,
+              "RSSI_FAST_WINDOW must be an odd number between 1 and 15.");
+static_assert(RSSI_FAST_ALPHA > 0.0f && RSSI_FAST_ALPHA <= 1.0f,
+              "RSSI_FAST_ALPHA must be in (0, 1].");
+static_assert(RSSI_FAST_WINDOW <= RSSI_MEDIAN_WINDOW && RSSI_FAST_ALPHA >= RSSI_EWMA_ALPHA,
+              "The fast filter must not be slower than the slow one, or the open "
+              "decision would lag the close decision and the asymmetry inverts.");
 static_assert(MIN_ACTUATION_INTERVAL_MS < EXIT_CONFIRM_MS,
               "MIN_ACTUATION_INTERVAL_MS must be shorter than EXIT_CONFIRM_MS, "
               "or the actuation lockout will delay the door closing.");
@@ -23,7 +32,48 @@ bool ProximityTracker::setFilter(uint8_t windowSize, float alpha) {
   if (!isfinite(alpha) || alpha <= 0.0f || alpha > 1.0f) return false;
   windowSize_ = windowSize;
   alpha_ = alpha;
-  reset();  // the old window contents were sized for the old shape
+
+  // Keep the open path from ever becoming the slower of the two. Shrinking the
+  // close window below the open window, or raising the close alpha above the
+  // open alpha, would otherwise invert the asymmetry silently — and it is the
+  // close filter being edited, so refusing the edit would be the wrong answer.
+  // Drag the fast pair along instead; callers report it (see applyFilter()).
+  if (fastWindow_ > windowSize_) fastWindow_ = windowSize_;
+  if (fastAlpha_ < alpha_) fastAlpha_ = alpha_;
+
+  // Both filters share one fixed-size ring, so the buffer itself survives a
+  // shape change. The reset is kept for a different reason: it drops the fix,
+  // forcing MIN_SAMPLES_FOR_FIX fresh samples before the door can act on a
+  // filter nobody has observed yet.
+  reset();
+  return true;
+}
+
+bool ProximityTracker::setFastFilter(uint8_t windowSize, float alpha) {
+  // Same validation as setFilter(), except a window of 1 is allowed here.
+  if (windowSize < 1 || windowSize > kMaxMedianWindow) return false;
+  if (windowSize % 2 == 0) return false;
+  if (!isfinite(alpha) || alpha <= 0.0f || alpha > 1.0f) return false;
+
+  // The ordering invariant is enforced here rather than by the caller, so that
+  // it cannot be sidestepped — including by a stale pair restored from NVS at
+  // boot, which no console code path ever inspects.
+  //
+  // This direction REFUSES rather than clamping, the opposite of setFilter():
+  // here it is the open pair being edited, so silently substituting a different
+  // open latency than the one asked for would be the surprising answer.
+  if (windowSize > windowSize_ || alpha < alpha_) return false;
+
+  fastWindow_ = windowSize;
+  fastAlpha_ = alpha;
+
+  // Deliberately no reset(): the ring is shared and still valid, and dropping
+  // the fix here would stall the open path for MIN_SAMPLES_FOR_FIX samples —
+  // the exact delay this filter exists to remove. Re-seed from what we have.
+  if (ewmaInit_) {
+    fastEwma_ = static_cast<float>(median(fastWindow_));
+    fastRssi_ = static_cast<int>(lroundf(fastEwma_));
+  }
   return true;
 }
 
@@ -41,7 +91,9 @@ void ProximityTracker::reset() {
   windowHead_ = 0;
   ewmaInit_ = false;
   ewma_ = 0.0f;
+  fastEwma_ = 0.0f;
   filteredRssi_ = -127;
+  fastRssi_ = -127;
   rawRssi_ = -127;
   measuredPower_ = 0;
   lastSeenMs_ = 0;
@@ -69,29 +121,45 @@ void ProximityTracker::addSample(int rssi, int8_t measuredPower, uint32_t atMs) 
   lastSeenMs_ = atMs;
   if (totalSamples_ < UINT32_MAX) totalSamples_++;
 
+  // The ring always advances by the buffer size, never by the configured
+  // window: both filters read from it and they ask for different amounts.
   window_[windowHead_] = rssi;
-  windowHead_ = static_cast<uint8_t>((windowHead_ + 1) % windowSize_);
-  if (windowCount_ < windowSize_) windowCount_++;
+  windowHead_ = static_cast<uint8_t>((windowHead_ + 1) % kMaxMedianWindow);
+  if (windowCount_ < kMaxMedianWindow) windowCount_++;
 
-  const int med = median();
+  const int slowMed = median(windowSize_);
+  const int fastMed = median(fastWindow_);
   if (!ewmaInit_) {
-    ewma_ = static_cast<float>(med);
+    ewma_ = static_cast<float>(slowMed);
+    fastEwma_ = static_cast<float>(fastMed);
     ewmaInit_ = true;
   } else {
-    ewma_ = alpha_ * static_cast<float>(med) + (1.0f - alpha_) * ewma_;
+    ewma_ = alpha_ * static_cast<float>(slowMed) + (1.0f - alpha_) * ewma_;
+    fastEwma_ = fastAlpha_ * static_cast<float>(fastMed) + (1.0f - fastAlpha_) * fastEwma_;
   }
   filteredRssi_ = static_cast<int>(lroundf(ewma_));
+  fastRssi_ = static_cast<int>(lroundf(fastEwma_));
 }
 
-int ProximityTracker::median() const {
-  if (windowCount_ == 0) return -127;
+int ProximityTracker::median(uint8_t count) const {
+  // Early in a session fewer samples have arrived than the window asks for.
+  const uint8_t n = (count < windowCount_) ? count : windowCount_;
+  if (n == 0) return -127;
 
   int sorted[kMaxMedianWindow];
-  for (uint8_t i = 0; i < windowCount_; i++) sorted[i] = window_[i];
+  for (uint8_t i = 0; i < n; i++) {
+    // window_ is a ring and windowHead_ points at the slot the NEXT sample will
+    // take, so the most recent sample is one slot behind it. Walking backwards
+    // is what makes "the last n samples" mean the same thing to both filters
+    // regardless of the window each one uses.
+    const uint8_t idx =
+        static_cast<uint8_t>((windowHead_ + kMaxMedianWindow - 1 - i) % kMaxMedianWindow);
+    sorted[i] = window_[idx];
+  }
 
-  // Insertion sort: windowCount_ is at most 15, so this is cheaper than
+  // Insertion sort: n is at most 15, so this is cheaper than
   // anything cleverer and has no allocation.
-  for (uint8_t i = 1; i < windowCount_; i++) {
+  for (uint8_t i = 1; i < n; i++) {
     const int key = sorted[i];
     int j = static_cast<int>(i) - 1;
     while (j >= 0 && sorted[j] > key) {
@@ -100,7 +168,7 @@ int ProximityTracker::median() const {
     }
     sorted[j + 1] = key;
   }
-  return sorted[windowCount_ / 2];
+  return sorted[n / 2];
 }
 
 bool ProximityTracker::hasFix(uint32_t nowMs) const {
@@ -121,7 +189,13 @@ void ProximityTracker::update(uint32_t nowMs) {
 
   // A stale signal counts as far but never as near, so losing the beacon can
   // only ever close the door, never open it.
-  const bool near = fix && filteredRssi_ >= enterDbm_;
+  //
+  // The two tests read different filters on purpose. `near` takes the fast one
+  // so an arriving animal is noticed as soon as the signal is genuinely strong;
+  // `far` takes the slow one so a fade or a dropped advertisement cannot talk
+  // the door into closing. Both directions still have to survive their dwell
+  // timer, which is what turns a fast filter into a safe one.
+  const bool near = fix && fastRssi_ >= enterDbm_;
   const bool far = !fix || filteredRssi_ <= exitDbm_;
 
   if (state_ == PRESENCE_ABSENT) {
@@ -143,7 +217,13 @@ void ProximityTracker::update(uint32_t nowMs) {
 
   // PRESENCE_PRESENT
   nearSinceValid_ = false;
-  if (far) {
+
+  // `!near` is what makes a return instant. Without it a beacon coming back
+  // mid-close would have to wait for the SLOW filter to climb back over the
+  // exit threshold before the pending close was cancelled — seconds during
+  // which the door is already travelling shut on an animal walking into it.
+  // Reading the fast filter here cancels on the first strong advertisement.
+  if (far && !near) {
     if (!farSinceValid_) {
       farSinceMs_ = nowMs;
       farSinceValid_ = true;
@@ -153,7 +233,8 @@ void ProximityTracker::update(uint32_t nowMs) {
       farSinceValid_ = false;
     }
   } else {
-    // Back inside the band (or above it): cancel the pending close.
+    // Back inside the band, above it, or strong on the fast filter: cancel the
+    // pending close.
     farSinceValid_ = false;
   }
 }
