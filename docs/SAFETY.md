@@ -46,6 +46,13 @@ your mechanism.
   it cannot recover the door's real position.
 - **A jammed or iced door.** The firmware pulses the relay and assumes success.
   It has no way to notice the motor stalled.
+- **The relay wired to the wrong contacts.** Landing on `COM`/`NC` instead of
+  `COM`/`NO` inverts every state: the door controller sees its button held down
+  permanently, and the firmware's 200 ms "press" becomes a 200 ms *release*.
+  That is a motor that runs continuously, or starts the moment power is applied.
+  It is downstream of the ESP32, so no amount of firmware can detect or prevent
+  it. Use `COM` and `NO`; leave `NC` empty. See
+  [WIRING.md](WIRING.md#which-output-terminals-to-use).
 - **The beacon being left inside the coop.** The door will simply stay open.
   This is the safe failure, but it is a failure.
 - **A beacon carried by a predator-sized animal.** Anything holding the beacon
@@ -114,6 +121,11 @@ Do these in order. Do not skip ahead because the previous step looked fine.
    relay you expect. If `o` clicks the CLOSE relay, your wiring is swapped. If a
    relay sits energised continuously, `RELAY_ACTIVE_LOW` is wrong — fix it
    before going further.
+
+   While you are here, put a meter across `COM` and `NO` on each channel. At
+   idle it must read **open**, and closed only for the ~200 ms of the pulse. If
+   it reads closed at idle you are on `NC`; move the wire before a motor is
+   anywhere near this. This is the last point at which that mistake is free.
 3. **Connect the motor with the door removed or disengaged**, if your mechanism
    allows it. Confirm direction.
 4. **Reconnect the door and test with the coop empty.** Run a full open and
