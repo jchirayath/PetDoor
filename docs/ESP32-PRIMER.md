@@ -18,7 +18,7 @@ An ESP32 is a **$5–10 computer the size of a stick of gum**. It has:
 | RAM | 520 KB |
 | Flash | 4 MB typical — program storage |
 | **Bluetooth LE** | The part this project needs |
-| WiFi | Present, deliberately unused here |
+| WiFi | Optional — off by default in the sense that it does nothing until you give it credentials; used only for the optional log upload and over-the-air flashing. Compile it out entirely with `-DPETDOOR_ENABLE_WIFI=0` to save ~640 KB. |
 | GPIO pins | ~25 usable digital in/out, 3.3 V logic |
 | Power | 5 V in via USB, ~80–150 mA |
 | Price | About the same as a sandwich |
@@ -88,8 +88,9 @@ and `BOOT`/`IO0`) is what you want. Boards sold as "ESP32 DevKit V1",
 3. **Tools → Board → Boards Manager**, search `esp32`, install **version 3.x**
    (this project requires 3.x; 2.x will not compile)
 4. **Tools → Board → ESP32 Arduino → ESP32 Dev Module**
-5. **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)** — see the note
-   below; the default leaves the build 85% full
+5. **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)** —
+   **this step is required, not an optimisation.** With WiFi enabled the build
+   does not fit the default partition scheme at all; see the note below
 6. **Tools → Port** — pick the one that appears when you plug the board in
 7. Open `petdoor/petdoor.ino`, click **Upload**
 
@@ -109,10 +110,26 @@ arduino-cli compile --fqbn $FQBN petdoor
 arduino-cli upload  --fqbn $FQBN -p /dev/cu.usbserial-0001 petdoor
 ```
 
-`PartitionScheme=min_spiffs` matters: the default layout reserves a second app slot
-for over-the-air updates this project never uses, leaving the build ~85% full.
-`no_ota` gives a single 2 MB app partition and drops that to ~53%. In the
-Arduino IDE it is **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**;
+`PartitionScheme=min_spiffs` matters. The default layout splits the flash into
+two equal app slots, leaving only 1.25 MB for the program — and the firmware
+does not fit in it:
+
+| Partition scheme | App space | With WiFi | Without WiFi |
+|---|---|---|---|
+| `default` | 1.25 MB | **136% — will not build** | 86% |
+| `no_ota` | 2.0 MB | 85% | 53% |
+| `min_spiffs` | 1.875 MB | 89% | 57% |
+
+`min_spiffs` is the recommendation because it keeps a second app slot, which is
+what makes over-the-air flashing possible — worth having once the board is
+screwed to a coop wall. Choose `no_ota` instead if you would rather have the
+headroom and are happy to flash over USB forever.
+
+If you build with `-DPETDOOR_ENABLE_WIFI=0`, every scheme fits comfortably,
+including the default.
+
+In the Arduino IDE this is
+**Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**;
 PlatformIO reads it from `platformio.ini` automatically.
 
 **Option C: PlatformIO**

@@ -179,7 +179,8 @@ Work down this list:
 - **The beacon rests right on a threshold.** Move the threshold so its resting
   position is not on the boundary.
 - **Filter too twitchy.** Raise `RSSI_MEDIAN_WINDOW` to 11, lower
-  `RSSI_EWMA_ALPHA` to 0.2.
+  `RSSI_EWMA_ALPHA` to 0.2. This affects the close decision only and costs no
+  open latency, so it is a cheap thing to try.
 - **`ENTER_CONFIRM_MS` too short** for someone who merely walks past. Raise it
   to 3000–5000.
 
@@ -247,6 +248,9 @@ wrong:
 | `RSSI_ENTER_DBM must be greater...` | Enter must be *less negative* than exit. `-65` > `-75`. |
 | `MIN_ACTUATION_INTERVAL_MS must be shorter...` | Lower the lockout or raise `EXIT_CONFIRM_MS`. |
 | `RSSI_MEDIAN_WINDOW must be an odd number between 3 and 15` | Use 3, 5, 7, 9, 11, 13 or 15. |
+| `RSSI_FAST_WINDOW must be an odd number between 1 and 15` | Use 1, 3, 5 … 15. Unlike the close window, 1 is allowed. |
+| `RSSI_FAST_ALPHA must be in (0, 1]` | Greater than 0, at most 1.0. |
+| `The fast filter must not be slower than the slow one` | `RSSI_FAST_WINDOW` ≤ `RSSI_MEDIAN_WINDOW` **and** `RSSI_FAST_ALPHA` ≥ `RSSI_EWMA_ALPHA`. |
 | `SCAN_WINDOW_MS must be <= SCAN_INTERVAL_MS` | Window cannot exceed interval. |
 | `PIN_RELAY_OPEN and PIN_RELAY_CLOSE must be different pins` | Self-explanatory. |
 

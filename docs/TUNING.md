@@ -68,8 +68,10 @@ Two readings per second. The columns:
 
 - **raw** — the most recent advertisement, unfiltered. Watch how much it jumps
   while standing perfectly still. That jitter is the reason the filter exists.
-- **filtered** — after the median and the EWMA. **This is the number you tune
-  against.** Everything the door decides uses this value.
+- **filtered** — after the slow median and EWMA. **This is the number you tune
+  against.** It is what the close decision reads. The open decision reads a
+  second, faster filter over the same samples (see below); it tracks the same
+  signal a second or so earlier, so tuning against `filtered` is still correct.
 - **~m** — a rough distance estimate from the path-loss model. Indicative only;
   it plays no part in any decision. Ignore it for tuning.
 - **PRESENT / absent** — the current state machine output.
@@ -85,7 +87,8 @@ watch the *filtered* column settle.
 Write down the value it hovers around. Call it `OPEN_HERE`.
 
 Now walk in and out through that point a few times. You will notice the filtered
-value lags by a second or two — that is the EWMA doing its job.
+value lags by a second or two — that is the EWMA doing its job. The door itself
+will already have opened by then: the open decision reads a faster filter.
 
 ## Step 3 — measure the gone point
 
@@ -158,19 +161,51 @@ closed door with an animal on the wrong side of it.
 Only reach for these if the thresholds alone are not getting you a stable
 result.
 
+There are two filters, and they are tuned for opposite things. The **close**
+pair (`RSSI_MEDIAN_WINDOW` / `RSSI_EWMA_ALPHA`) wants to be slow and unshakeable.
+The **open** pair (`RSSI_FAST_WINDOW` / `RSSI_FAST_ALPHA`) wants to be quick.
+
 | Symptom | Change | Cost |
 |---|---|---|
-| Filtered value still jumps around a lot | `RSSI_MEDIAN_WINDOW` 7 → 11 | Slower to react |
-| Filtered value is stable but sluggish | `RSSI_EWMA_ALPHA` 0.35 → 0.5 | More jitter |
-| Occasional single wild readings get through | `RSSI_MEDIAN_WINDOW` 7 → 9 or 11 | Slower to react |
-| Very slow to notice you have arrived | `RSSI_EWMA_ALPHA` 0.35 → 0.5, or lower `ENTER_CONFIRM_MS` | More jitter |
+| Door closes on a brief signal dropout | `RSSI_MEDIAN_WINDOW` 7 → 11 | Slower to close. **No effect on opening.** |
+| Occasional single wild readings get through | `RSSI_MEDIAN_WINDOW` 7 → 9 or 11 | Slower to close only |
+| Filtered value is stable but sluggish to fall | `RSSI_EWMA_ALPHA` 0.35 → 0.5 | Closing gets twitchier |
+| Very slow to notice you have arrived | lower `ENTER_CONFIRM_MS` | A brief strong reflection can open the door |
+| Door still opens sluggishly at `ENTER_CONFIRM_MS` | already at the floor — nothing left to gain here | — |
+| Door opens too eagerly | raise `ENTER_CONFIRM_MS` | Slower to open |
+
+The most common mistake before the filters were split was widening the median to
+stop false closes and then finding the door had become slow to open. That
+trade-off is gone: **the close pair no longer costs any open latency**, so widen
+it freely.
 
 `RSSI_MEDIAN_WINDOW` must be **odd and between 3 and 15**. A bigger window
-rejects more outliers but adds lag: at ~10 samples per second, a window of 11 is
-roughly a second of extra delay.
+rejects more outliers but adds lag *to closing*: at ~10 samples per second, a
+window of 11 is roughly a second of extra delay.
 
 `RSSI_EWMA_ALPHA` is 0.0–1.0. Lower is smoother and slower; 1.0 disables the
 smoothing entirely and leaves you with just the median.
+
+### Touching the open pair
+
+Most people never need to. `RSSI_FAST_WINDOW 1` / `RSSI_FAST_ALPHA 0.9` already
+puts open latency at `ENTER_CONFIRM_MS` exactly — the filter adds nothing, so
+there is no lag left to remove. The dwell timer is what confirms an arrival, so
+reach for `ENTER_CONFIRM_MS` rather than these if the door opens too eagerly or
+too slowly.
+
+The open pair may never be slower than the close pair
+(`RSSI_FAST_WINDOW ≤ RSSI_MEDIAN_WINDOW`, `RSSI_FAST_ALPHA ≥ RSSI_EWMA_ALPHA`).
+The firmware refuses the reverse at compile time and at the console, because it
+would mean noticing an animal leaving before noticing one arriving.
+
+From the `f` console menu:
+
+```
+open 1,0.9    set the open pair directly
+open same     make the open pair match the close pair
+              (restores the old single-filter behaviour)
+```
 
 ---
 

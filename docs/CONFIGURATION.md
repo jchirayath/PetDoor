@@ -147,11 +147,55 @@ How near is "near". See [TUNING.md](TUNING.md) for the procedure.
 | `EXIT_CONFIRM_MS` | `15000` | How long "far" must hold before the door closes. |
 | `SAMPLE_MAX_AGE_MS` | `3000` | An advertisement older than this stops counting as a live reading. |
 | `MIN_SAMPLES_FOR_FIX` | `3` | Ignore the beacon until this many samples have arrived, so one stray packet can never move the door. |
-| `RSSI_MEDIAN_WINDOW` | `7` | Median filter width. Must be **odd, 3–15**. Bigger = steadier but slower. |
-| `RSSI_EWMA_ALPHA` | `0.35f` | Smoothing applied after the median, 0.0–1.0. Lower = smoother and slower. |
+| `RSSI_MEDIAN_WINDOW` | `7` | Median filter width for the **close** decision. Must be **odd, 3–15**. Bigger = steadier but slower. |
+| `RSSI_EWMA_ALPHA` | `0.35f` | Smoothing after the median for the **close** decision, 0.0–1.0. Lower = smoother and slower. |
+| `RSSI_FAST_WINDOW` | `1` | Median width for the **open** decision. Odd, **1–15** — 1 is allowed here, because the open path is confirmed by `ENTER_CONFIRM_MS` rather than by smoothing. |
+| `RSSI_FAST_ALPHA` | `0.9f` | Smoothing for the **open** decision. Higher = faster. |
 | `PATH_LOSS_EXPONENT` | `2.5f` | For the displayed distance estimate only: ~2.0 open air, 2.5–3.0 through a coop wall, 3.0+ cluttered. **Never affects the open/close decision**, which uses RSSI directly. |
 | `BEACON_LOW_BATTERY_MV` | `2400` | Beacon battery level (from Eddystone-TLM) at or below which the status LED flashes at 2 Hz. `0` disables the warning. |
 | `BEACON_MEASURED_POWER_DBM` | `-59` | Fallback calibrated RSSI at 1 m, used for the distance display when the beacon does not advertise one. iBeacon frames carry this; **Eddystone and sensor tags do not** and show `?` without it. Set to `0` to go back to `?`. Display only. |
+
+### Why there are two filters
+
+The four `RSSI_*` filter settings above are two pairs, not four knobs. The same
+stream of advertisements is filtered twice — slowly for the close decision,
+quickly for the open decision.
+
+That split exists because the two directions want opposite things. Opening late
+can shut an animal out of the coop; opening early only lets in a draught.
+Closing early can shut a door on an animal. One filter has to be tuned somewhere
+between "reacts now" and "ignores dropouts", and whichever way you tune it, one
+of those two directions pays.
+
+The practical difference, measured over a 1 Hz beacon:
+
+| | one filter, tuned fast (3 / 0.70) | one filter, shipped (7 / 0.35) | two filters (shipped) |
+|---|---|---|---|
+| Door opens after the animal arrives | 3500 ms | 7500 ms | **1500 ms** |
+| Survives a 4-second signal fade | **no — closes** | yes | yes |
+| Cancels a pending close on return | 1000 ms | 4000 ms | **0 ms** |
+
+1500 ms is `ENTER_CONFIRM_MS`. The open path now adds no lag of its own at all;
+the dwell timer is the only thing left between a strong signal and an open door.
+
+The knock-on effect is that `EXIT_CONFIRM_MS` can be much shorter safely. With a
+single filter the exit dwell has to be at least as long as the worst fade you
+want to ride out. With two, the slow median absorbs the fade first:
+
+| Fade to survive | Minimum `EXIT_CONFIRM_MS`, one filter (3 / 0.70) | …with two filters |
+|---|---|---|
+| 2 s | 2000 ms | 500 ms |
+| 4 s | 4000 ms | 500 ms |
+| 8 s | 8000 ms | 3000 ms |
+
+**The open pair must never be slower than the close pair** — `RSSI_FAST_WINDOW ≤
+RSSI_MEDIAN_WINDOW` and `RSSI_FAST_ALPHA ≥ RSSI_EWMA_ALPHA`. Reversing them
+would make the door notice an animal leaving before it noticed one arriving. A
+`static_assert` catches it at compile time and the `f` console menu refuses it at
+runtime.
+
+To go back to the old single-filter behaviour, set the open pair equal to the
+close pair (`open same` in the `f` menu).
 
 **`RSSI_ENTER_DBM` must be greater (less negative) than `RSSI_EXIT_DBM`.** The
 gap between them is the hysteresis band that stops the door flapping. A
@@ -337,10 +381,14 @@ The door should be open whenever the flock is anywhere in the run:
 Neighbours, wifi, a dozen Bluetooth devices. Trade responsiveness for stability:
 
 ```c
-#define RSSI_MEDIAN_WINDOW 11
+#define RSSI_MEDIAN_WINDOW 11     // close path: ride out the interference
 #define RSSI_EWMA_ALPHA    0.2f
 #define ENTER_CONFIRM_MS   3000
 ```
+
+Leave the open pair alone while doing this. Widening the close window costs
+nothing in open latency any more, which is the point of the split — reach for
+`ENTER_CONFIRM_MS` if the door still opens too eagerly in a noisy spot.
 
 ### Two birds, two beacons
 

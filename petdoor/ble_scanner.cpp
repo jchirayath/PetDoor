@@ -567,6 +567,37 @@ void clearStoredFilter() {
   prefs.end();
 }
 
+bool loadStoredFastFilter(uint8_t &windowSize, float &alpha) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const uint32_t w = prefs.getUInt("fastWin", 0);
+  const float a = prefs.getFloat("fastAlpha", 0.0f);
+  prefs.end();
+  // Same NaN guard as loadStoredFilter(): a poisoned value would otherwise be
+  // reloaded on every boot and there would be no way back short of a wipe.
+  if (w == 0 || !isfinite(a) || a <= 0.0f || a > 1.0f) return false;
+  if (w > 15) return false;
+  windowSize = static_cast<uint8_t>(w);
+  alpha = a;
+  return true;
+}
+
+void storeFastFilter(uint8_t windowSize, float alpha) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUInt("fastWin", windowSize);
+  prefs.putFloat("fastAlpha", alpha);
+  prefs.end();
+}
+
+void clearStoredFastFilter() {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.remove("fastWin");
+  prefs.remove("fastAlpha");
+  prefs.end();
+}
+
 void clearStoredTargetMacs() {
   Preferences prefs;
   if (prefs.begin(kNvsNamespace, /*readOnly=*/false)) {

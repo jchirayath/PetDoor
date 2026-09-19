@@ -130,6 +130,7 @@ uint16_t g_macLineLen = 0;
 bool g_thresholdsStored = false;
 bool g_timingStored = false;
 bool g_filterStored = false;
+bool g_fastFilterStored = false;
 
 String fmt1(float v) {
   if (v < 0.0f) return String("?");
@@ -699,28 +700,43 @@ void processTimingLine(char *line) {
 void printFilterMenu() {
   Serial.println();
   Serial.println(F("---- filter shape (how fast RSSI is tracked) ----"));
-  Serial.printf("  median window : %u samples (max %u)\r\n", g_tracker.windowSize(),
+  Serial.println(F("  two filters run over the same samples:"));
+  Serial.printf("  CLOSE window  : %u samples (max %u)\r\n", g_tracker.windowSize(),
                 kMaxMedianWindow);
-  Serial.printf("  ewma alpha    : %s  (higher = faster, noisier)\r\n",
+  Serial.printf("  CLOSE alpha   : %s  (higher = faster, noisier)\r\n",
                 String(g_tracker.alpha(), 2).c_str());
-  Serial.printf("  source        : %s\r\n", g_filterStored ? "saved on device" : "compiled in");
+  Serial.printf("  OPEN  window  : %u samples\r\n", g_tracker.fastWindowSize());
+  Serial.printf("  OPEN  alpha   : %s\r\n", String(g_tracker.fastAlpha(), 2).c_str());
+  Serial.printf("  source        : %s / %s\r\n",
+                g_filterStored ? "saved" : "compiled",
+                g_fastFilterStored ? "saved" : "compiled");
 
   // Show what this actually costs in time, using the measured sample rate.
   const uint32_t gap = g_tracker.maxGapMs();
   Serial.printf("  worst sample gap measured: %lu ms\r\n", static_cast<unsigned long>(gap));
   Serial.println(F("  lag is roughly (window/2 + 1/alpha) x the sample interval."));
+  Serial.println(F("  the CLOSE pair no longer costs open latency, so prefer a"));
+  Serial.println(F("  LONG window here and tune the OPEN pair for speed."));
   Serial.println(F("  type one of:"));
-  Serial.println(F("    fast        window 3, alpha 0.7  (responsive)"));
+  Serial.println(F("    fast        window 3, alpha 0.7  (twitchy close; rarely needed now)"));
   Serial.println(F("    default     window 7, alpha 0.35 (the shipped shape)"));
   Serial.println(F("    smooth      window 11, alpha 0.2 (noisy RF)"));
   Serial.println(F("    3,0.7       window,alpha directly (window odd, 1..15)"));
-  Serial.println(F("    clear       forget saved values"));
+  Serial.println(F("    open 1,0.9  set the OPEN pair (window odd, 1..15)"));
+  Serial.println(F("    open same   make OPEN match CLOSE (old single-filter behaviour)"));
+  Serial.println(F("    clear       forget saved values (both pairs)"));
   Serial.println(F("    q           cancel"));
   Serial.println(F("  (live output is paused while this menu is open)"));
   Serial.print(F("> "));
 }
 
 void applyFilter(int win, float alpha) {
+  // setFilter() may drag the fast pair along to keep the open path from
+  // becoming the slower of the two. Note what it was so the change can be
+  // reported and persisted rather than silently forgotten at the next boot.
+  const uint8_t prevFastWin = g_tracker.fastWindowSize();
+  const float prevFastAlpha = g_tracker.fastAlpha();
+
   // Check the int before narrowing: 257 truncates to 1, which setFilter would
   // accept as a valid odd window — silently disabling the filter while the
   // "near-unfiltered" warning below tested the untruncated value and stayed
@@ -741,7 +757,39 @@ void applyFilter(int win, float alpha) {
     Serial.println(F("[filt] !! near-unfiltered. A single RSSI spike can now move"));
     Serial.println(F("[filt]    the door. This is the failure the project fixes."));
   }
+  if (g_tracker.fastWindowSize() != prevFastWin || g_tracker.fastAlpha() != prevFastAlpha) {
+    // Persist it, or the clamp would be undone by the stored value at the next
+    // boot and the invariant would hold only until a power cut.
+    BleScanner::storeFastFilter(g_tracker.fastWindowSize(), g_tracker.fastAlpha());
+    g_fastFilterStored = true;
+    Serial.printf("[filt] OPEN pair pulled to %u, %s to stay ahead of CLOSE.\r\n",
+                  g_tracker.fastWindowSize(), String(g_tracker.fastAlpha(), 2).c_str());
+  }
   Serial.println(F("[filt] filter reset; it will re-acquire in a second or two."));
+  g_entry = ENTRY_NONE;
+}
+
+void applyFastFilter(int win, float alpha) {
+  // setFastFilter() changes nothing when it refuses, so there is no rollback to
+  // do here — it rejects both a malformed pair and one that would make the open
+  // path slower than the close path.
+  //
+  // Same narrowing guard as applyFilter(): check the int before the cast, or
+  // 257 would truncate to a valid-looking 1.
+  if (win < 1 || win > kMaxMedianWindow ||
+      !g_tracker.setFastFilter(static_cast<uint8_t>(win), alpha)) {
+    Serial.printf("\r\n[filt] rejected: window must be ODD and 1..%u, alpha 0<a<=1,\r\n",
+                  kMaxMedianWindow);
+    Serial.printf("[filt] and must not be slower than CLOSE (window <= %u, alpha >= %s).\r\n",
+                  g_tracker.windowSize(), String(g_tracker.alpha(), 2).c_str());
+    printFilterMenu();
+    return;
+  }
+  BleScanner::storeFastFilter(static_cast<uint8_t>(win), alpha);
+  g_fastFilterStored = true;
+  Serial.printf("\r\n[filt] saved: OPEN window %u, alpha %s\r\n", g_tracker.fastWindowSize(),
+                String(g_tracker.fastAlpha(), 2).c_str());
+  Serial.println(F("[filt] the close path is unchanged; only open latency moved."));
   g_entry = ENTRY_NONE;
 }
 
@@ -757,10 +805,31 @@ void processFilterLine(char *line) {
   }
   if (strcmp(line, "clear") == 0) {
     BleScanner::clearStoredFilter();
+    BleScanner::clearStoredFastFilter();
     g_tracker.setFilter(RSSI_MEDIAN_WINDOW, RSSI_EWMA_ALPHA);
+    g_tracker.setFastFilter(RSSI_FAST_WINDOW, RSSI_FAST_ALPHA);
     g_filterStored = false;
-    Serial.println(F("\r\n[filt] reverted to the compiled-in defaults."));
+    g_fastFilterStored = false;
+    Serial.println(F("\r\n[filt] reverted to the compiled-in defaults (both pairs)."));
     g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "open", 4) == 0 && (line[4] == ' ' || line[4] == '\0')) {
+    const char *arg = line + 4;
+    while (*arg == ' ' || *arg == '\t') arg++;
+    if (strcmp(arg, "same") == 0) {
+      // Collapse back to one filter: both decisions read the same numbers,
+      // which is exactly how the tracker behaved before the split.
+      applyFastFilter(g_tracker.windowSize(), g_tracker.alpha());
+      return;
+    }
+    const char *c = strchr(arg, ',');
+    if (c == nullptr) {
+      Serial.println(F("\r\n[filt] give: open window,alpha e.g. open 1,0.9"));
+      printFilterMenu();
+      return;
+    }
+    applyFastFilter(atoi(arg), atof(c + 1));
     return;
   }
   if (strcmp(line, "fast") == 0) { applyFilter(3, 0.7f); return; }
@@ -1139,6 +1208,15 @@ void setup() {
     float a = RSSI_EWMA_ALPHA;
     if (BleScanner::loadStoredFilter(w, a) && g_tracker.setFilter(w, a)) {
       g_filterStored = true;
+    }
+  }
+  {
+    // Loaded after the slow pair, because setFilter() calls reset() and would
+    // otherwise wipe the fast filter's re-seeded value.
+    uint8_t w = RSSI_FAST_WINDOW;
+    float a = RSSI_FAST_ALPHA;
+    if (BleScanner::loadStoredFastFilter(w, a) && g_tracker.setFastFilter(w, a)) {
+      g_fastFilterStored = true;
     }
   }
   {

@@ -80,6 +80,12 @@ bool loadStoredFilter(uint8_t &windowSize, float &alpha);
 void storeFilter(uint8_t windowSize, float alpha);
 void clearStoredFilter();
 
+// The fast (open-path) filter, persisted separately so that restoring the slow
+// pair to its default does not silently reset the open latency too.
+bool loadStoredFastFilter(uint8_t &windowSize, float &alpha);
+void storeFastFilter(uint8_t windowSize, float alpha);
+void clearStoredFastFilter();
+
 // Pops one queued sample. Returns false if the queue was empty.
 bool popSample(BleSample &out);
 
