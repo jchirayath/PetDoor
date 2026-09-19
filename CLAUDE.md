@@ -44,7 +44,11 @@ latter carries `-DCORE_DEBUG_LEVEL`, `-DESP32` and the loop/event core settings,
 and overriding it drops them and inflates the image by ~33 KB.
 
 `PETDOOR_USE_NIMBLE=1` needs the NimBLE-Arduino library installed and is
-opt-in; the default build must keep working with no extra libraries. **Both
+opt-in; the default build must keep working with no extra libraries. It has been
+validated on the reference hardware: same target sample rate as Bluedroid, and
+free heap 66 KB -> 138 KB (low-water 7.9 KB -> 88 KB), with WiFi, NTP, signed
+upload and OTA all working. Do not quote the static-RAM delta as the benefit —
+it is heap, and it is an order of magnitude larger. **Both
 stacks must keep compiling** — check both before claiming a BLE change works:
 
 ```bash
