@@ -22,6 +22,7 @@ reverse proxy rather than asking the ESP32 to do TLS.
 """
 
 import argparse
+from urllib.parse import urlparse
 import hashlib
 import hmac
 import html
@@ -284,14 +285,69 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    # ------------------------------------------------------------------
+    # PUBLIC vs PRIVATE
+    #
+    # This server does no authentication of its own. It splits the routes so a
+    # reverse proxy in front of it can, because "when does this door open and
+    # close" is a detailed record of when a house is occupied and empty.
+    #
+    #   PUBLIC   /            project page, no data
+    #            /images/*    photographs used by that page
+    #            /health      so uptime monitoring does not need a credential
+    #
+    #   PRIVATE  /dashboard   the analytics
+    #            /api/events  the raw log the analytics are built from
+    #            /table       plain-HTML fallback view
+    #            /export.csv  the whole log as a file
+    #
+    #   SIGNED   /ingest      POST only, HMAC over timestamp + body
+    #
+    # Protect the private set at the proxy. Leaving them open publishes your
+    # household routine to anyone who finds the hostname. See
+    # docs/WEB-DASHBOARD.md for worked nginx, Caddy and Apache rules.
+    # ------------------------------------------------------------------
+    def _serve_file(self, name, ctype):
+        page = os.path.join(os.path.dirname(os.path.abspath(__file__)), name)
+        if os.path.exists(page):
+            with open(page, "rb") as fh:
+                return self._send(200, fh.read(), ctype)
+        return None
+
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            page = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard.html")
-            if os.path.exists(page):
-                with open(page, "rb") as fh:
-                    return self._send(200, fh.read(), "text/html; charset=utf-8")
+        # Match on the path alone. Exact-matching self.path would 404 on
+        # anything carrying a query string — a cache-buster, a share link with
+        # UTM parameters, a proxy that appends its own.
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
+            sent = self._serve_file("public.html", "text/html; charset=utf-8")
+            if sent is not None:
+                return sent
+            # No public page deployed: fall through to the dashboard rather than
+            # serving nothing, so an existing single-page install keeps working.
+            sent = self._serve_file("dashboard.html", "text/html; charset=utf-8")
+            if sent is not None:
+                return sent
             return self._send(200, render(), "text/html; charset=utf-8")
-        if self.path.startswith("/api/events"):
+        if path in ("/dashboard", "/dashboard.html"):
+            sent = self._serve_file("dashboard.html", "text/html; charset=utf-8")
+            if sent is not None:
+                return sent
+            return self._send(200, render(), "text/html; charset=utf-8")
+        if path.startswith("/images/"):
+            # Static, read-only, and strictly from the images directory beside
+            # this script. basename() strips any traversal attempt outright.
+            name = os.path.basename(path[len("/images/"):])
+            root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
+            path = os.path.join(root, name)
+            ext = os.path.splitext(name)[1].lower()
+            types = {".jpeg": "image/jpeg", ".jpg": "image/jpeg", ".png": "image/png",
+                     ".svg": "image/svg+xml", ".webp": "image/webp"}
+            if name and ext in types and os.path.isfile(path):
+                with open(path, "rb") as fh:
+                    return self._send(200, fh.read(), types[ext])
+            return self._send(404, "not found")
+        if path.startswith("/api/events"):
             with db() as conn:
                 rows = conn.execute("SELECT device,epoch,uptime,boot,type,detail,rssi "
                                     "FROM events ORDER BY epoch, boot, uptime").fetchall()
@@ -299,16 +355,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"events": [dict(r) for r in rows],
                                                "devices": [dict(d) for d in devs]}),
                               "application/json; charset=utf-8")
-        if self.path.startswith("/table"):
+        if path.startswith("/table"):
             return self._send(200, render(), "text/html; charset=utf-8")
-        if self.path.startswith("/export.csv"):
+        if path.startswith("/export.csv"):
             with db() as conn:
                 rows = conn.execute("SELECT * FROM events ORDER BY epoch, boot, uptime").fetchall()
             csv = "epoch,uptime_s,boot,event,detail,rssi\n" + "".join(
                 f'{r["epoch"]},{r["uptime"]},{r["boot"]},{r["type"]},{r["detail"]},{r["rssi"]}\n'
                 for r in rows)
             return self._send(200, csv, "text/csv; charset=utf-8")
-        if self.path == "/health":
+        if path == "/health":
             return self._send(200, json.dumps({"ok": True}), "application/json")
         self._send(404, "not found")
 

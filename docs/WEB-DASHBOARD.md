@@ -159,18 +159,75 @@ leave the door speaking HTTP to nginx.
 
 ## 3. Read it
 
+The server splits its routes into a **public** half and a **private** half, so
+a reverse proxy can protect the part that matters without hiding the project
+entirely.
+
 ```mermaid
 flowchart LR
-    R["/"] --> RD["Dashboard<br/>charts and analysis"]
-    A["/api/events"] --> AD["JSON<br/>for your own tools"]
-    C["/export.csv"] --> CD["CSV<br/>spreadsheets, the portal"]
-    T["/table"] --> TD["Plain table<br/>no JavaScript"]
+    P["/"] --> PD["Project page<br/><i>public — no data</i>"]
+    I["/images/*"] --> ID["Photographs<br/><i>public</i>"]
+    H["/health"] --> HD["Uptime check<br/><i>public</i>"]
+    R["/dashboard"] --> RD["Analytics<br/><b>private</b>"]
+    A["/api/events"] --> AD["JSON log<br/><b>private</b>"]
+    C["/export.csv"] --> CD["Whole log as CSV<br/><b>private</b>"]
+    T["/table"] --> TD["Plain table<br/><b>private</b>"]
 
+    style PD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+    style ID fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+    style HD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
     style RD fill:#2A9D8F,stroke:#21867A,color:#ffffff
-    style AD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
-    style CD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
-    style TD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+    style AD fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style CD fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style TD fill:#2A9D8F,stroke:#21867A,color:#ffffff
 ```
+
+**Why bother splitting it.** A door log is a record of when somebody is home.
+Trips per day, first out, last out and the daily-rhythm strip together describe
+a household's routine precisely enough to tell a stranger when the house is
+reliably empty. That is worth a login. The project page is not.
+
+**The server does no authentication itself** — it is 400 lines of stdlib Python
+and has no business holding credentials. It only arranges the routes so your
+proxy can. See [protecting the private routes](#protecting-the-private-routes).
+
+### The public page
+
+<p align="center">
+  <img src="assets/screenshot-public.jpg" alt="The public project page: what PetDoor is, photographs of the build, how it works, and a sign-in link to the analytics" width="760">
+</p>
+
+Served at `/`. It explains what the door is, shows the build, and links to the
+analytics behind sign-in. No event data of any kind reaches it.
+
+### The analytics
+
+<p align="center">
+  <img src="assets/screenshot-analytics.png" alt="The analytics dashboard: trips a day, typical trip, longest trip, time outside, first and last out, and a daily rhythm strip" width="860">
+</p>
+
+Six numbers across the top, then the **daily rhythm** — one row per day, every
+trip drawn in place, night shaded. The pattern is the point: you can see the
+routine, and you can see the day it changed.
+
+<p align="center">
+  <img src="assets/screenshot-analytics-charts.png" alt="Trip duration histogram, trips per day, time of day, and the beacon signal trend" width="860">
+</p>
+
+Then how long the trips actually are, how many per day, which hours are busy,
+and a **beacon-signal trend** — the strength at each return. A steady decline
+there is a flat battery, weeks before the door starts missing.
+
+> The screenshots above are generated from synthetic data, not from a real
+> household. That is deliberate: they are in a public repository, and the whole
+> reason the analytics sit behind a login is that this data describes when a
+> house is empty.
+
+**Times are shown in the viewer's local timezone.** The door uploads UTC and the
+server stores UTC; only the display is local. Every chart here answers a
+question about a human day, and a UTC day is the wrong day for anyone who does
+not live on one — at UTC-7 an evening outing at 18:38 would otherwise report as
+"01:38" and land on the following row.
 
 The dashboard shows daily rhythm, how long your pet stays out, trips per day,
 time of day, and a beacon-signal trend that warns of a flat battery before it
@@ -182,6 +239,93 @@ health check: a reboot count climbing between uploads is a power problem, and a
 door that has not been heard from in hours is off, off the network, or failing
 to upload. It says so rather than leaving you to notice. It refreshes itself once a minute, which is plenty — the door
 uploads in bursts, not continuously.
+
+---
+
+## Protecting the private routes
+
+The split is only worth anything if something enforces it. The server listens on
+localhost; your proxy decides who reaches which path.
+
+Whatever you use, the rule is the same shape:
+
+| Path | Who |
+|---|---|
+| `/`, `/images/*`, `/health` | anyone |
+| `/dashboard`, `/api/*`, `/table`, `/export.csv` | you |
+| `/ingest` | the door — POST only, HMAC-signed, **never** behind the login |
+
+**`/ingest` must stay outside the login.** The door signs its uploads with the
+shared key and cannot complete a browser sign-in flow. Put it behind SSO and
+uploads fail silently with a redirect the firmware records as an HTTP error.
+
+### Caddy
+
+```caddyfile
+petdoor.example.com {
+    # Private: everything derived from the log
+    @private path /dashboard* /api/* /table* /export.csv*
+    basic_auth @private {
+        you $2a$14$...        # caddy hash-password
+    }
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+With an identity provider, replace `basic_auth` with your `forward_auth` block
+against the same `@private` matcher — the matcher is the part that matters.
+
+### nginx
+
+```nginx
+server {
+    server_name petdoor.example.com;
+
+    location ~ ^/(dashboard|api|table|export\.csv) {
+        auth_basic           "PetDoor";
+        auth_basic_user_file /etc/nginx/petdoor.htpasswd;
+        proxy_pass           http://127.0.0.1:8080;
+    }
+
+    location / {                       # public page, images, health, ingest
+        proxy_pass http://127.0.0.1:8080;
+    }
+}
+```
+
+`htpasswd -c /etc/nginx/petdoor.htpasswd you` creates the password file.
+
+### Apache
+
+```apache
+<Location "/dashboard">
+    AuthType Basic
+    AuthName "PetDoor"
+    AuthUserFile /etc/apache2/petdoor.htpasswd
+    Require valid-user
+</Location>
+# repeat for /api, /table, /export.csv
+ProxyPass        / http://127.0.0.1:8080/
+ProxyPassReverse / http://127.0.0.1:8080/
+```
+
+### Checking it
+
+```bash
+curl -o /dev/null -w '%{http_code}\n' https://petdoor.example.com/            # 200
+curl -o /dev/null -w '%{http_code}\n' https://petdoor.example.com/health      # 200
+curl -o /dev/null -w '%{http_code}\n' https://petdoor.example.com/dashboard   # 401
+curl -o /dev/null -w '%{http_code}\n' https://petdoor.example.com/api/events  # 401
+```
+
+If `/api/events` returns 200 without a credential, your rule is matching the
+page but not the data behind it, and the analytics are protected in appearance
+only. That is the check worth running after any proxy change.
+
+### If you would rather not publish anything
+
+Put the whole host behind the login. The public page is a convenience, not a
+requirement, and nothing in the door depends on it.
 
 ---
 

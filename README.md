@@ -628,7 +628,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all of them.
 - [Coop / pet door conversion](docs/COOP-CONVERSION.md) — wiring relays into a door you already own
 - [Diagnostics](docs/DIAGNOSTICS.md) — connecting to the serial console, every command, and what the output means
 - [Log server](docs/LOG-SERVER.md) — *optional* — collect history on a machine of your own
-- [Web dashboard](docs/WEB-DASHBOARD.md) — *optional* — self-host the charts on a Pi or a VM
+- [Web dashboard](docs/WEB-DASHBOARD.md) — *optional* — self-host the charts on a Pi or a VM, with a public project page and the analytics behind a login
 - [Portal](docs/PORTAL.md) — *optional* — the same charts, hosted, with nothing to run
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — when it does not work
 - [Safety](docs/SAFETY.md) — read before connecting a motor

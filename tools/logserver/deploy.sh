@@ -36,7 +36,14 @@ echo "ok — $(ssh "$TARGET" 'python3 -V; echo "as $(whoami) on $(hostname)"' | 
 
 say "Copying files to $REMOTE_DIR"
 ssh "$TARGET" "sudo mkdir -p $REMOTE_DIR && sudo chown \$(whoami) $REMOTE_DIR"
-scp -q "$here/petdoor-logserver.py" "$here/dashboard.html" "$TARGET:$REMOTE_DIR/"
+scp -q "$here/petdoor-logserver.py" "$here/dashboard.html" "$here/public.html" "$TARGET:$REMOTE_DIR/"
+
+# The public page shows photographs of the build. They live at the repo root,
+# so copy them across if they are there; the page degrades to text without them.
+if [ -d "$here/../../images" ]; then
+  ssh "$TARGET" "mkdir -p $REMOTE_DIR/images"
+  scp -q "$here"/../../images/*.jpeg "$TARGET:$REMOTE_DIR/images/" 2>/dev/null || true
+fi
 ssh "$TARGET" "chmod +x $REMOTE_DIR/petdoor-logserver.py"
 
 say "Creating the service"

@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PetDoor</title>
+<meta name="description" content="Open a pet door when your animal walks up to it, and close it again once they have gone. Open source, ESP32, no cloud.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --ground:#FAFBFC; --panel:#FFFFFF; --sunk:#F1F4F7;
+    --ink:#17212B; --muted:#5C6B7A; --line:#DFE5EB;
+    --in:#2A9D8F; --in-soft:#2A9D8F1A; --out:#E9A23B;
+    --shadow:0 1px 2px #17212B0F, 0 8px 24px -12px #17212B24;
+    --radius:14px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
+      --ink:#E6EDF3; --muted:#93A4B4; --line:#26313C;
+      --in:#26937F; --in-soft:#26937F2B; --out:#BE8129;
+      --shadow:0 1px 2px #0008, 0 10px 30px -14px #000A;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
+    --ink:#E6EDF3; --muted:#93A4B4; --line:#26313C;
+    --in:#26937F; --in-soft:#26937F2B; --out:#BE8129;
+    --shadow:0 1px 2px #0008, 0 10px 30px -14px #000A;
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"IBM Plex Sans",ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    line-height:1.6; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1020px; margin:0 auto; padding-inline:20px; padding-block:0}
+  a{color:var(--in)}
+
+  header{padding-block:56px 40px; border-bottom:1px solid var(--line)}
+  .brand{display:flex; align-items:center; gap:16px; margin-bottom:26px}
+  .brand svg{flex:0 0 auto}
+  .brand h1{margin:0; font-size:clamp(30px,6vw,44px); letter-spacing:-.02em; font-weight:700}
+  .tag{font-size:clamp(17px,2.4vw,21px); color:var(--muted); max-width:62ch; margin:0 0 26px}
+  .tag b{color:var(--ink); font-weight:600}
+
+  .cta{display:flex; flex-wrap:wrap; gap:12px}
+  .btn{
+    display:inline-flex; align-items:center; gap:9px; text-decoration:none;
+    padding:11px 18px; border-radius:10px; font-weight:600; font-size:15px;
+    border:1px solid var(--line); color:var(--ink); background:var(--panel);
+    box-shadow:var(--shadow);
+  }
+  .btn.primary{background:var(--in); border-color:var(--in); color:#fff}
+  .btn:focus-visible{outline:2px solid var(--in); outline-offset:2px}
+
+  section{padding-block:46px; border-bottom:1px solid var(--line)}
+  section:last-of-type{border-bottom:0}
+  h2{font-size:22px; margin:0 0 6px; letter-spacing:-.01em}
+  .lede{color:var(--muted); margin:0 0 26px; max-width:66ch}
+
+  .facts{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px}
+  .fact{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px}
+  .fact .n{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:25px; font-weight:500; color:var(--in)}
+  .fact .l{color:var(--muted); font-size:14px; margin-top:3px}
+
+  .shots{display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:16px}
+  figure{margin:0; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
+  figure img{display:block; width:100%; height:auto}
+  figcaption{padding:11px 14px; font-size:13.5px; color:var(--muted); border-top:1px solid var(--line)}
+  figcaption b{color:var(--ink); font-weight:600}
+
+  /* 215px, not 235: at the 1020px container four cards need (980-48)/4 = 233px
+     each, and a 235px minimum silently drops to three across, stranding the
+     fourth alone on its own row. */
+  .how{display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:16px; counter-reset:s}
+  .step{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:20px; position:relative}
+  .step::before{
+    counter-increment:s; content:counter(s);
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; font-weight:500;
+    color:var(--in); background:var(--in-soft); border-radius:6px;
+    padding:2px 8px; display:inline-block; margin-bottom:9px;
+  }
+  .step h3{margin:0 0 5px; font-size:16px}
+  .step p{margin:0; color:var(--muted); font-size:14.5px}
+
+  .note{
+    background:var(--sunk); border:1px solid var(--line); border-left:3px solid var(--out);
+    border-radius:10px; padding:16px 18px; color:var(--muted); font-size:14.5px;
+  }
+  .note b{color:var(--ink)}
+
+  footer{padding-block:34px 52px; color:var(--muted); font-size:14px}
+  footer a{color:var(--muted)}
+  code{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.92em;
+       background:var(--sunk); border:1px solid var(--line); border-radius:5px; padding:1px 5px}
+  @media (max-width:520px){ header{padding-block:38px 30px} }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <svg width="52" height="52" viewBox="0 0 256 256" role="img" aria-label="PetDoor logo">
+        <rect x="38" y="26" width="180" height="204" rx="18" fill="none" stroke="var(--in)" stroke-width="14"/>
+        <rect x="64" y="52" width="128" height="152" rx="8" fill="var(--in)" opacity=".10"/>
+        <path d="M64 52 L150 74 L150 182 L64 204 Z" fill="var(--in)" opacity=".28"/>
+        <path d="M64 52 L150 74 L150 182 L64 204" fill="none" stroke="var(--in)" stroke-width="7"
+              stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="40" cy="128" r="11" fill="var(--out)"/>
+        <path d="M62 104 a30 30 0 0 1 0 48" fill="none" stroke="var(--out)" stroke-width="7" stroke-linecap="round"/>
+        <path d="M78 92 a46 46 0 0 1 0 72" fill="none" stroke="var(--out)" stroke-width="7" stroke-linecap="round" opacity=".55"/>
+      </svg>
+      <h1>PetDoor</h1>
+    </div>
+
+    <p class="tag">
+      Opens a pet door when your animal walks up to it, and closes it again once
+      they have gone. <b>No cloud, no app, no subscription</b> — an ESP32 and a
+      Bluetooth beacon on the collar are the whole system.
+    </p>
+
+    <div class="cta">
+      <a class="btn primary" href="/dashboard">Door log &amp; analytics &rarr;</a>
+      <a class="btn" href="https://github.com/jchirayath/PetDoor">Source on GitHub</a>
+    </div>
+  </header>
+
+  <section>
+    <h2>What it is</h2>
+    <p class="lede">
+      An ESP32 listens continuously for a Bluetooth beacon on your pet's collar.
+      When the beacon has been convincingly close for a moment it pulses an OPEN
+      relay; when it has been convincingly gone for a while it pulses a CLOSE
+      relay. The door's own controller still owns the motor and its travel limits.
+    </p>
+    <div class="facts">
+      <div class="fact"><div class="n">~$80</div><div class="l">all in — door, board and cable</div></div>
+      <div class="fact"><div class="n">MIT</div><div class="l">open source, build it yourself</div></div>
+      <div class="fact"><div class="n">0</div><div class="l">cloud services required</div></div>
+      <div class="fact"><div class="n">~1&nbsp;m</div><div class="l">typical open range, tunable</div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The build</h2>
+    <p class="lede">
+      A commercial pet door converted by wiring two relay contacts across the
+      controller's existing buttons. The original panel, its buttons and its
+      timer all still work — the conversion adds a second way to press them.
+    </p>
+    <div class="shots">
+      <figure>
+        <img src="/images/FinalDoorClosed.jpeg" alt="The pet door installed in a patio door, flap closed" loading="lazy">
+        <figcaption><b>Closed</b> — the resting state</figcaption>
+      </figure>
+      <figure>
+        <img src="/images/DoorClosing.jpeg" alt="The pet door part-way through its travel" loading="lazy">
+        <figcaption><b>Travelling</b> — about 15 s end to end</figcaption>
+      </figure>
+      <figure>
+        <img src="/images/FinalDoorOpen.jpeg" alt="The pet door with the flap fully open" loading="lazy">
+        <figcaption><b>Open</b> — beacon within range</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>How it works</h2>
+    <p class="lede">Four stages, each fixing a different failure mode.</p>
+    <div class="how">
+      <div class="step">
+        <h3>Listen</h3>
+        <p>The radio reports every advertisement, not just the first — roughly two
+           readings a second from the collar beacon.</p>
+      </div>
+      <div class="step">
+        <h3>Filter</h3>
+        <p>A median filter kills multipath spikes, then smoothing removes what is
+           left. It runs twice: fast for opening, slow for closing.</p>
+      </div>
+      <div class="step">
+        <h3>Decide</h3>
+        <p>Two thresholds with a dead band between them, so the door never flaps
+           at the boundary, plus dwell timers in both directions.</p>
+      </div>
+      <div class="step">
+        <h3>Act</h3>
+        <p>A momentary relay pulse — the same as someone pressing the button. The
+           door's own controller runs the motor to its limits.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The log</h2>
+    <p class="lede">
+      Every open, close, boot and lost-signal event is recorded on the door
+      itself and optionally uploaded here, signed with a shared key. The
+      dashboard turns that into trip durations, daily rhythm and a beacon
+      battery trend.
+    </p>
+    <div class="note">
+      <b>The analytics are private.</b> This page is public; the door log and
+      everything derived from it sits behind sign-in, because when a door opens
+      and closes says a great deal about when a house is occupied. The door
+      itself never needs this server — it keeps its own rolling log and works
+      exactly the same with no network at all.
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      <a href="https://github.com/jchirayath/PetDoor">github.com/jchirayath/PetDoor</a>
+      · MIT licensed · Built with an ESP32, a beacon and a coop door.
+    </p>
+    <p>
+      Not a security device. Bluetooth advertisements are unauthenticated, so the
+      door opens for anything broadcasting the beacon's address. Keep a real lock
+      on anything that matters.
+    </p>
+  </footer>
+
+</div>
+</body>
+</html>
