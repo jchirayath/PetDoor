@@ -152,6 +152,40 @@ otherwise:
 **With no key configured, the door refuses all commands** and the server refuses
 to send any. Log uploads can survive having no key; taking orders cannot.
 
+### …and bound to the request that asked for it
+
+A signature alone proves the server *once said* these bytes. It does not prove
+it said them **now**, to **this** request — and over plain HTTP that gap is an
+attack: record a reply carrying `door open`, play it back whenever you like, and
+the signature still checks out.
+
+So the door sends a fresh random **nonce** with every upload and folds it into
+the signature it expects back:
+
+```
+  signed material = timestamp + "\n" + nonce + "\n" + body
+```
+
+A recorded reply then verifies against the wrong material and is rejected:
+
+```
+[cmd] reply ignored: BAD SIGNATURE — the server's key differs, or
+[cmd] something on the path is trying to reconfigure this door
+```
+
+The nonce is burned once a reply has been judged, so one upload authorises at
+most one reply. A reply arriving with no upload outstanding is refused before
+the signature is even checked.
+
+This repairs an asymmetry: the **upload** direction was always replay-protected,
+because the server rejects timestamps outside `CLOCK_SKEW_S`. The reply
+direction had no equivalent until the nonce.
+
+> **Both halves must be updated together.** A door that sends no nonce is
+> running firmware from before this existed, and the server withholds commands
+> rather than sending a reply that door would reject anyway — it says so in the
+> log.
+
 The OTA password is still what guards an actual firmware push. This guards the
 trigger.
 

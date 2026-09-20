@@ -29,6 +29,30 @@ QueueHandle_t g_cmdQueue = nullptr;
 // Reported on the NEXT upload, so the server can see what became of what it
 // sent rather than assuming delivery meant application.
 char g_ackText[96] = {0};
+
+// A fresh random value sent with every upload and folded into the signature we
+// expect on the reply. Without it the HMAC proves only that the SERVER once
+// said these bytes — not that it said them just now, to this request.
+//
+// That distinction matters because uploads are plain HTTP by design. Anyone on
+// the path can record a reply carrying `door open` or `ota` and play it back at
+// a moment of their choosing; the signature would still be valid. Binding the
+// reply to a value the attacker cannot predict and the door has just invented
+// makes an old reply verify against the wrong material and fail.
+//
+// Note the asymmetry this repairs: the upload direction was already protected,
+// because the server rejects timestamps outside its skew window. The reply
+// direction had no equivalent.
+char g_nonce[33] = {0};
+
+void newNonce() {
+  static const char hexd[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i += 8) {
+    const uint32_t r = esp_random();   // hardware RNG; the radio is up here
+    for (int b = 0; b < 8; b++) g_nonce[i + b] = hexd[(r >> (28 - 4 * b)) & 0xF];
+  }
+  g_nonce[32] = '\0';
+}
 #endif
 volatile bool g_otaOpen = false;
 uint32_t g_otaOpenedMs = 0;
@@ -179,6 +203,12 @@ void enqueueCommands(const String &body) {
 // path between door and server: uploads are plain HTTP on purpose, because a
 // TLS handshake costs this chip more heap than it has.
 bool responseTrusted(const String &body, const String &ts, const String &sig) {
+  if (g_nonce[0] == '\0') {
+    // No outstanding nonce means no upload is waiting on a reply, so anything
+    // arriving now is unsolicited by definition.
+    Serial.println(F("[cmd] reply ignored: no request outstanding"));
+    return false;
+  }
   if (LOG_SHARED_KEY[0] == '\0') {
     // No key means no way to tell the server from anyone else. Log uploads can
     // survive that; taking orders cannot.
@@ -189,7 +219,10 @@ bool responseTrusted(const String &body, const String &ts, const String &sig) {
     Serial.println(F("[cmd] reply ignored: unsigned"));
     return false;
   }
-  const String expect = signBody(body, LOG_SHARED_KEY, ts);
+  // Signed material is  ts + "\n" + nonce + "\n" + body.  signBody() puts a
+  // newline after its `timestamp` argument, so passing ts+"\n"+nonce yields
+  // exactly that, and matches what the server computes.
+  const String expect = signBody(body, LOG_SHARED_KEY, ts + "\n" + String(g_nonce));
   if (!expect.length()) return false;
   // Length-constant compare, so a wrong signature cannot be narrowed down by
   // timing how long the rejection took.
@@ -281,6 +314,10 @@ bool post(const String &body) {
   // Tells the server this build can accept commands, so it can warn about a
   // door running older firmware that will never collect what it queues.
   http.addHeader("X-PetDoor-Remote", "1");
+  // A new one for every upload: a nonce reused is a nonce that can be replayed
+  // against.
+  newNonce();
+  http.addHeader("X-PetDoor-Nonce", g_nonce);
   const char *wanted[] = {"X-PetDoor-Timestamp", "X-PetDoor-Signature"};
   http.collectHeaders(wanted, 2);
 #endif
@@ -300,6 +337,9 @@ bool post(const String &body) {
       enqueueCommands(reply);
     }
   }
+  // Burn the nonce whatever happened. One upload may authorise at most one
+  // reply; leaving it live would let a second, later reply reuse the binding.
+  g_nonce[0] = '\0';
 #endif
 
   http.end();
