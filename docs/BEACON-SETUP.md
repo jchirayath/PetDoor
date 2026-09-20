@@ -2,6 +2,9 @@
 
 Finding your beacon's address and, if you want to, configuring it.
 
+For the hardware itself — which beacon to buy, what the settings do, and why a
+consumer tracker will not work — see [BEACON-MINEW.md](BEACON-MINEW.md).
+
 The reference build uses a [Minew](https://www.minew.com/) beacon, but nothing
 here is Minew-specific except the vendor app. Any beacon with a fixed address
 works — see [HARDWARE.md](HARDWARE.md#the-beacon).

@@ -55,6 +55,7 @@
     box-shadow:var(--shadow);
   }
   .btn.primary{background:var(--in); border-color:var(--in); color:#fff}
+  .btn.quiet{background:transparent; box-shadow:none; color:var(--muted)}
   .btn:focus-visible{outline:2px solid var(--in); outline-offset:2px}
 
   section{padding-block:46px; border-bottom:1px solid var(--line)}
@@ -126,8 +127,9 @@
     </p>
 
     <div class="cta">
-      <a class="btn primary" href="/dashboard">Door log &amp; analytics &rarr;</a>
-      <a class="btn" href="https://github.com/jchirayath/PetDoor">Source on GitHub</a>
+      <a class="btn primary" href="/demo">See the dashboard &rarr;</a>
+      <a class="btn" href="https://github.com/jchirayath/PetDoor">Build it yourself</a>
+      <a class="btn quiet" href="/dashboard">Sign in</a>
     </div>
   </header>
 
@@ -198,27 +200,100 @@
   </section>
 
   <section>
+    <h2>What the collar wears</h2>
+    <p class="lede">
+      A <b>Minew BLE beacon</b> — a coin-cell tag about the size of a large
+      button, roughly $12. Not an AirTag, and the reason matters.
+    </p>
+    <div class="facts">
+      <div class="fact"><div class="n">349&nbsp;ms</div><div class="l">typical gap between readings — Minew</div></div>
+      <div class="fact"><div class="n">5,140&nbsp;ms</div><div class="l">typical gap — AirTag, at two feet</div></div>
+      <div class="fact"><div class="n">4</div><div class="l">addresses one AirTag used in two hours</div></div>
+      <div class="fact"><div class="n">months</div><div class="l">battery life on a coin cell</div></div>
+    </div>
+    <p class="lede" style="margin-top:22px">
+      Consumer trackers rotate their Bluetooth address on purpose, so there is
+      nothing stable to match against, and they advertise far too slowly — the
+      AirTag's <i>typical</i> gap already exceeds the three seconds after which a
+      reading stops counting as live. A purpose-built beacon does the opposite:
+      a fixed address, printed on the case, ten readings a second.
+    </p>
+    <p class="lede">
+      <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/BEACON-MINEW.md">Full beacon guide &rarr;</a>
+    </p>
+  </section>
+
+  <section>
     <h2>The log</h2>
     <p class="lede">
       Every open, close, boot and lost-signal event is recorded on the door
-      itself and optionally uploaded here, signed with a shared key. The
-      dashboard turns that into trip durations, daily rhythm and a beacon
-      battery trend.
+      itself. Optionally it uploads them here, signed with a shared key, and the
+      dashboard turns that into trip durations, daily rhythm, and a beacon
+      battery trend that warns you weeks before the cell dies.
     </p>
+    <figure style="margin-bottom:22px">
+      <a href="/demo"><img src="/images/dashboard-sample.png" alt="The PetDoor dashboard: trips a day, typical trip, longest trip, time outside, and a daily rhythm strip"></a>
+      <figcaption><b>Sample dashboard</b> — synthetic data. <a href="/demo">Open the live sample &rarr;</a></figcaption>
+    </figure>
     <div class="note">
-      <b>The analytics are private.</b> This page is public; the door log and
-      everything derived from it sits behind sign-in, because when a door opens
-      and closes says a great deal about when a house is occupied. The door
-      itself never needs this server — it keeps its own rolling log and works
-      exactly the same with no network at all.
+      <b>The real analytics are private.</b> This page and the sample are public;
+      the actual door log sits behind sign-in, because when a door opens and
+      closes says a great deal about when a house is occupied and when it is
+      empty. The door never needs this server at all — it keeps its own rolling
+      log and behaves identically with no network.
+    </div>
+  </section>
+
+  <section>
+    <h2>What it costs</h2>
+    <p class="lede">About <b>$80</b> all in, and the door is most of it.</p>
+    <div class="facts">
+      <div class="fact"><div class="n">$50–60</div><div class="l">automatic pet or coop door</div></div>
+      <div class="fact"><div class="n">$15–20</div><div class="l">ESP32 board with relays</div></div>
+      <div class="fact"><div class="n">$10–15</div><div class="l">BLE beacon for the collar</div></div>
+      <div class="fact"><div class="n">$8–10</div><div class="l">USB-to-TTL adapter, once</div></div>
+    </div>
+    <p class="lede" style="margin-top:22px">
+      Already own a motorised door? Then it is the board and the beacon — around
+      thirty dollars to make a door you already have open for one specific animal.
+    </p>
+  </section>
+
+  <section>
+    <h2>Worth knowing before you build it</h2>
+    <p class="lede">The honest limits, stated up front.</p>
+    <div class="how">
+      <div class="step" style="counter-increment:none">
+        <h3>It is not a lock</h3>
+        <p>Bluetooth advertisements are unauthenticated. The door opens for
+           anything broadcasting your beacon's address, and reading that address
+           takes a free phone app. Fine against weather, rodents and the
+           neighbour's cat. Not a security barrier.</p>
+      </div>
+      <div class="step" style="counter-increment:none">
+        <h3>The animal must wear it</h3>
+        <p>No beacon, no door. That rules out anything that will not keep a
+           collar on, and it means a flat cell stops the door opening — though
+           it fails safe, closed, never on top of an animal.</p>
+      </div>
+      <div class="step" style="counter-increment:none">
+        <h3>You are wiring a motor</h3>
+        <p>The door's own controller keeps its limits and current protection;
+           this only presses its buttons. But you are still working on a door an
+           animal walks through. The safety guide is not optional reading.</p>
+      </div>
     </div>
   </section>
 
   <footer>
     <p>
-      <a href="https://github.com/jchirayath/PetDoor">github.com/jchirayath/PetDoor</a>
-      · MIT licensed · Built with an ESP32, a beacon and a coop door.
+      <a href="https://github.com/jchirayath/PetDoor">Source &amp; full documentation</a> ·
+      <a href="https://github.com/jchirayath/PetDoor/wiki">Wiki</a> ·
+      <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/COOP-CONVERSION.md">Build guide</a> ·
+      <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/SAFETY.md">Safety</a> ·
+      <a href="/demo">Sample dashboard</a>
     </p>
+    <p>MIT licensed. Built with an ESP32, a beacon and a coop door.</p>
     <p>
       Not a security device. Bluetooth advertisements are unauthenticated, so the
       door opens for anything broadcasting the beacon's address. Keep a real lock

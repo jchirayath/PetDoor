@@ -477,7 +477,7 @@ thresholds.
 | Part | Notes |
 |---|---|
 | ESP32 dev board | Classic ESP32 (WROOM). Newer S3/C3/C6 also build. |
-| BLE beacon | A [Minew](https://www.minew.com/) beacon is the reference. Any beacon with a fixed MAC works. |
+| BLE beacon | A [Minew](https://www.minew.com/) beacon is the reference. Any beacon with a fixed MAC works — see [docs/BEACON-MINEW.md](docs/BEACON-MINEW.md). |
 | 2-channel relay module | Or two MOSFET drivers. Must be rated for your door motor. |
 | Door motor + controller | Whatever your coop door already uses. |
 | 5 V supply | Sized for the ESP32 *and* the relay coils. |
@@ -628,6 +628,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all of them.
 - [Coop / pet door conversion](docs/COOP-CONVERSION.md) — wiring relays into a door you already own
 - [Diagnostics](docs/DIAGNOSTICS.md) — connecting to the serial console, every command, and what the output means
 - [Log server](docs/LOG-SERVER.md) — *optional* — collect history on a machine of your own
+- [The beacon](docs/BEACON-MINEW.md) — which tag to buy, how to set it, and why not an AirTag
 - [Web dashboard](docs/WEB-DASHBOARD.md) — *optional* — self-host the charts on a Pi or a VM, with a public project page and the analytics behind a login
 - [Portal](docs/PORTAL.md) — *optional* — the same charts, hosted, with nothing to run
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — when it does not work
