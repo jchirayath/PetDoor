@@ -200,6 +200,23 @@ proxy can. See [protecting the private routes](#protecting-the-private-routes).
 Served at `/`. It explains what the door is, shows the build, and links to the
 analytics behind sign-in. No event data of any kind reaches it.
 
+### The sample dashboard
+
+<p align="center">
+  <img src="assets/screenshot-demo.png" alt="The sample dashboard, marked as a demonstration, showing synthetic data" width="860">
+</p>
+
+Served at `/demo`, and **public**. The sample data is baked into the page, so it
+never touches `/api/events` — there is no route from the demo to any real log.
+It exists so somebody deciding whether to build one of these can see what they
+would get, without you having to expose your own household to show them.
+
+Regenerate it whenever the dashboard changes, so the two do not drift:
+
+```bash
+tools/logserver/make-demo.py        # rebuilds demo.html from dashboard.html
+```
+
 ### The analytics
 
 <p align="center">

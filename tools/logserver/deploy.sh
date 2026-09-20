@@ -36,7 +36,8 @@ echo "ok — $(ssh "$TARGET" 'python3 -V; echo "as $(whoami) on $(hostname)"' | 
 
 say "Copying files to $REMOTE_DIR"
 ssh "$TARGET" "sudo mkdir -p $REMOTE_DIR && sudo chown \$(whoami) $REMOTE_DIR"
-scp -q "$here/petdoor-logserver.py" "$here/dashboard.html" "$here/public.html" "$TARGET:$REMOTE_DIR/"
+scp -q "$here/petdoor-logserver.py" "$here/dashboard.html" "$here/public.html" \
+       "$here/demo.html" "$TARGET:$REMOTE_DIR/"
 
 # The public page shows photographs of the build. They live at the repo root,
 # so copy them across if they are there; the page degrades to text without them.

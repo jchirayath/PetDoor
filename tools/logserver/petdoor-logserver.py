@@ -293,6 +293,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     # close" is a detailed record of when a house is occupied and empty.
     #
     #   PUBLIC   /            project page, no data
+    #            /demo        sample dashboard, synthetic data baked in
     #            /images/*    photographs used by that page
     #            /health      so uptime monitoring does not need a credential
     #
@@ -329,6 +330,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if sent is not None:
                 return sent
             return self._send(200, render(), "text/html; charset=utf-8")
+        if path in ("/demo", "/demo.html"):
+            # PUBLIC. Self-contained: the sample data is baked into the page, so
+            # it never touches /api/events and can be shown to anyone.
+            sent = self._serve_file("demo.html", "text/html; charset=utf-8")
+            if sent is not None:
+                return sent
+            return self._send(404, "no sample page deployed")
         if path in ("/dashboard", "/dashboard.html"):
             sent = self._serve_file("dashboard.html", "text/html; charset=utf-8")
             if sent is not None:
