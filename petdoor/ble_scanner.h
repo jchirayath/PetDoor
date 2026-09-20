@@ -76,6 +76,10 @@ void clearStoredTiming();
 uint32_t loadStoredDirectionGap();
 void storeDirectionGap(uint32_t ms);
 
+// Relay pulse width. 0 means "nothing saved, use the compiled-in default".
+uint32_t loadStoredPulseMs();
+void storePulseMs(uint32_t ms);
+
 // "Bluedroid" or "NimBLE" — which host stack this build is using. Reported in
 // the boot banner and in `s`, because it changes the RF code path and is the
 // first thing to state in a bug report.

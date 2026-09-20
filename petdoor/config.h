@@ -525,3 +525,49 @@
 #ifndef ALLOW_MANUAL_SERIAL_CONTROL
 #define ALLOW_MANUAL_SERIAL_CONTROL 1
 #endif
+
+// How long YOUR door takes to travel from fully open to fully closed, in ms.
+// 0 means "not measured" and disables the checks below.
+//
+// The firmware never waits for this — it has no position feedback and cannot
+// know when travel actually finishes. It is here because two other settings are
+// only sensible in relation to it, and getting them wrong produces a door that
+// visibly starts moving and then stops partway:
+//
+//   MIN_ACTUATION_INTERVAL_MS  must be >= travel time, or the firmware can
+//                              command a reversal while the door is still
+//                              moving. Most controllers treat a second command
+//                              mid-travel as "stop".
+//   RELAY_PULSE_MS             only needs to exceed travel time if your motor
+//                              has no limit switches and you are driving it
+//                              directly. See docs/WIRING.md.
+//
+// Measure it with a stopwatch: `o`, wait for it to settle, `x`, and time the
+// close. The reference build measures ~15 s.
+#ifndef DOOR_TRAVEL_MS
+#define DOOR_TRAVEL_MS 0
+#endif
+
+// How long a manual `o` keeps the door open before automatic control resumes.
+//
+// Without this, `o` is a single pulse and nothing more: the control task runs a
+// few milliseconds later, sees an open door with no beacon in range, and closes
+// it again. The door appears to "start opening and then stop", which is not a
+// relay fault or a beacon fault — it is the firmware doing exactly what it was
+// told. Anyone wiring, testing, or propping the door open to clean the coop
+// hits this immediately.
+//
+// The hold suppresses automatic CLOSING only. Automatic opening is never
+// blocked, so a beacon arriving during a hold still finds an open door, and a
+// manual `x` cannot strand an animal outside — proximity can always reopen.
+// That asymmetry is the same one the whole project is built on: an open door is
+// the safe failure.
+//
+// Cleared early by `x`, or by `O` (capital) to hand control straight back.
+// Deliberately NOT persisted to NVS: a power cut should always come back under
+// automatic control, never stuck open because of a command typed days ago.
+//
+// 0 disables the hold entirely and restores the old single-pulse behaviour.
+#ifndef MANUAL_HOLD_MS
+#define MANUAL_HOLD_MS 300000
+#endif

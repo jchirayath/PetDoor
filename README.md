@@ -419,14 +419,19 @@ You need this to get the firmware onto the board and to reach the serial
 console. A **CP2102** module is the common choice. Wire four pins:
 
 ```
-   adapter GND  ->  board GND
-   adapter TX   ->  board RX     (crossed)
-   adapter RX   ->  board TX     (crossed)
-   adapter 5V   ->  board 5V     only if the board is not otherwise powered
+   adapter GND  ->  board GND          (black,  mandatory)
+   adapter TXD  ->  board RX / GPIO3   (green,  crossed)
+   adapter RXD  ->  board TX / GPIO1   (white,  crossed)
+   adapter VCC  ->  board 5V           (red, ONLY if not otherwise powered)
 ```
 
 **TX and RX cross over.** This is the classic mistake: TX-to-TX gives you a
 silent port and no error message.
+
+Colours are the usual CP2102 convention, but they vary by manufacturer — trust
+the silkscreen next to the header over the wire colour. If the console ever goes
+quiet, [WIRING.md](docs/WIRING.md#the-usb-to-ttl-link) has a loopback test that
+tells you in seconds whether the adapter or the board is at fault.
 
 > **Strongly recommended:** also wire `DTR -> IO0` and `RTS -> EN`. Without
 > them, every single firmware upload needs a manual button sequence — hold IO0,

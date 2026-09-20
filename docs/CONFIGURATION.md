@@ -296,7 +296,7 @@ anything here.**
 | `PIN_RELAY_CLOSE` | `17` | GPIO pulsed to close. |
 | `PIN_STATUS_LED` | `23` | Status LED, active high. |
 | `RELAY_ACTIVE_LOW` | `0` | `1` for the common blue relay boards, whose coil energises when the input is pulled to GND. `0` for active-high boards and MOSFET drivers. **Getting this wrong means the door runs backwards or runs constantly.** |
-| `RELAY_PULSE_MS` | `200` | Momentary pulse length. Raise only if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
+| `RELAY_PULSE_MS` | `200` | Momentary pulse length — how long the relay stays closed. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. Raise it if the relay clicks but the door does not move, or if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
 | `MIN_ACTUATION_INTERVAL_MS` | `5000` | Minimum gap before the door may **close** again. Protects the motor from thrash. **Opening is never rate-limited** — delaying an open is the one direction that can strand an animal outside a door it just watched close. |
 | `DIRECTION_CHANGE_GAP_MS` | `250` | Dead time before asserting a relay, with the opposite one released. Both relays energised at once is a short across the motor's direction contacts. |
 | `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. |
@@ -426,6 +426,8 @@ The event log is unaffected: it lives in NVS and never needed a network. That is
 | `DISCOVER_DUMP_INTERVAL_MS` | `2000` | How often discovery mode prints the table. |
 | `CALIBRATE_INTERVAL_MS` | `500` | How often calibration mode prints a reading. |
 | `ALLOW_MANUAL_SERIAL_CONTROL` | `1` | Allow `o` / `x` to drive the relays directly. Invaluable while wiring. **Set to `0` for an unattended deployment** — these commands bypass the proximity logic, the lockout *and* the boot grace window. |
+| `MANUAL_HOLD_MS` | `300000` | How long a manual `o` keeps the door open before automatic control resumes. Suppresses automatic **closing** only — the beacon can always still open it. `0` restores the old single-pulse behaviour. Cleared by `x` or `O`. Never persisted: a reboot always returns to automatic. |
+| `DOOR_TRAVEL_MS` | `0` | How long your door takes to travel, measured with a stopwatch. `0` = not measured. The firmware never waits for it — it is used to check that `MIN_ACTUATION_INTERVAL_MS` is not shorter than the travel, which would let a reversing command land mid-travel and stop the door partway. See [WIRING.md](WIRING.md#measure-your-doors-travel-time). |
 
 ---
 

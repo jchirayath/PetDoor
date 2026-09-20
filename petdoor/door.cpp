@@ -38,7 +38,7 @@ void DoorController::pulse(uint8_t pin) {
   delay(directionGapMs_);
 
   digitalWrite(pin, RELAY_ASSERT);
-  delay(RELAY_PULSE_MS);
+  delay(pulseMs_);
   digitalWrite(pin, RELAY_RELEASE);
 }
 

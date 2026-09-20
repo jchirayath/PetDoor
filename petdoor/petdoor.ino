@@ -132,6 +132,23 @@ bool g_timingStored = false;
 bool g_filterStored = false;
 bool g_fastFilterStored = false;
 
+// Deadline for the manual-open hold, 0 when inactive. Not persisted: automatic
+// control must always be what a reboot comes back to.
+uint32_t g_manualHoldUntilMs = 0;
+
+// Signed delta, not `nowMs < g_manualHoldUntilMs` — the naive comparison ends
+// the hold 49 days early or late around the millis() wrap. Same trap as
+// ProximityTracker::sampleAgeMs(); see the comment there.
+bool manualHoldActive(uint32_t nowMs) {
+  if (g_manualHoldUntilMs == 0) return false;
+  return static_cast<int32_t>(g_manualHoldUntilMs - nowMs) > 0;
+}
+
+uint32_t manualHoldRemainingMs(uint32_t nowMs) {
+  if (!manualHoldActive(nowMs)) return 0;
+  return static_cast<uint32_t>(static_cast<int32_t>(g_manualHoldUntilMs - nowMs));
+}
+
 String fmt1(float v) {
   if (v < 0.0f) return String("?");
   return String(v, 1);
@@ -148,6 +165,22 @@ void printBanner() {
   Serial.println(BleScanner::describeTarget());
   Serial.printf("  open / close  : GPIO %d / GPIO %d (active %s)\r\n", PIN_RELAY_OPEN,
                 PIN_RELAY_CLOSE, RELAY_ACTIVE_LOW ? "LOW" : "HIGH");
+  Serial.printf("  relay pulse   : %lu ms\r\n",
+                static_cast<unsigned long>(g_door.pulseMs()));
+#if DOOR_TRAVEL_MS > 0
+  Serial.printf("  door travel   : %lu ms (measured, configured)\r\n",
+                static_cast<unsigned long>(DOOR_TRAVEL_MS));
+  // Warned about at boot rather than static_assert'ed, because the lockout is
+  // runtime-adjustable and can be changed to a bad value long after compiling.
+  if (g_door.minIntervalMs() < DOOR_TRAVEL_MS) {
+    Serial.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
+                  static_cast<unsigned long>(g_door.minIntervalMs()),
+                  static_cast<unsigned long>(DOOR_TRAVEL_MS));
+    Serial.println(F("  !! A reversing command can land mid-travel; most controllers"));
+    Serial.println(F("  !! read that as STOP, leaving the door parked half open."));
+    Serial.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
+  }
+#endif
   Serial.printf("  status LED    : GPIO %d\r\n", PIN_STATUS_LED);
   Serial.printf("  thresholds    : open at >= %d dBm, close at <= %d dBm (%s)\r\n",
                 g_tracker.enterDbm(), g_tracker.exitDbm(),
@@ -203,8 +236,9 @@ void printHelp() {
   Serial.println(F("  !  flash-mode help (this chip needs the IO0/EN buttons)"));
 #endif
 #if ALLOW_MANUAL_SERIAL_CONTROL
-  Serial.println(F("  o  pulse the OPEN relay now (bypasses proximity logic)"));
-  Serial.println(F("  x  pulse the CLOSE relay now (bypasses proximity logic)"));
+  Serial.println(F("  o  pulse the OPEN relay now, and hold it open (see 'O')"));
+  Serial.println(F("  x  pulse the CLOSE relay now, and clear any hold"));
+  Serial.println(F("  O  clear the manual hold, handing control back to the beacon"));
 #endif
   Serial.println(F("status LED:"));
   Serial.println(F("  solid        door last OPENED"));
@@ -282,6 +316,15 @@ void printStatus(uint32_t nowMs) {
   Serial.printf("  worst gap    : %lu ms between samples%s\r\n",
                 static_cast<unsigned long>(g_tracker.maxGapMs()),
                 g_tracker.maxGapMs() > SAMPLE_MAX_AGE_MS ? "  << EXCEEDS SAMPLE_MAX_AGE_MS" : "");
+  Serial.printf("  relay pulse  : %lu ms\r\n",
+                static_cast<unsigned long>(g_door.pulseMs()));
+  {
+    const uint32_t heldFor = manualHoldRemainingMs(millis());
+    if (heldFor > 0) {
+      Serial.printf("  manual hold  : %lu s left — automatic CLOSING paused ('O' to clear)\r\n",
+                    static_cast<unsigned long>(heldFor / 1000));
+    }
+  }
   Serial.printf("  actuations   : %lu open, %lu close (%lu locked out, %lu in boot grace)\r\n",
                 static_cast<unsigned long>(g_door.openCount()),
                 static_cast<unsigned long>(g_door.closeCount()),
@@ -569,6 +612,8 @@ void printTimingMenu() {
                 static_cast<unsigned long>(g_door.minIntervalMs()));
   Serial.printf("  interlock gap: %5lu ms before any relay fires\r\n",
                 static_cast<unsigned long>(g_door.directionGapMs()));
+  Serial.printf("  relay pulse  : %5lu ms held closed (the \"button press\")\r\n",
+                static_cast<unsigned long>(g_door.pulseMs()));
   Serial.printf("  source       : %s\r\n", g_timingStored ? "saved on device" : "compiled in");
   Serial.println();
   Serial.printf("  MEASURED worst gap between samples: %lu ms\r\n",
@@ -580,6 +625,9 @@ void printTimingMenu() {
   Serial.println(F("    fast             1000 / 3000 / 2000  (responsive)"));
   Serial.println(F("    safe             1500 / 15000 / 5000 (the default)"));
   Serial.println(F("    gap 250          relay interlock dead time, ms (min 100)"));
+  Serial.println(F("    pulse 200        how long the relay stays closed, ms (50-10000)"));
+  Serial.println(F("      raise this if the relay clicks but the door does not move:"));
+  Serial.println(F("      many controllers debounce their button and ignore a short tap"));
   Serial.println(F("    clear            forget saved values"));
   Serial.println(F("    q                cancel"));
   Serial.println(F("  (live output is paused while this menu is open)"));
@@ -637,6 +685,8 @@ void processTimingLine(char *line) {
     BleScanner::clearStoredTiming();
     g_tracker.setDwell(ENTER_CONFIRM_MS, EXIT_CONFIRM_MS);
     g_door.setMinIntervalMs(MIN_ACTUATION_INTERVAL_MS);
+    g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
+    g_door.setPulseMs(RELAY_PULSE_MS);
     g_timingStored = false;
     Serial.println(F("\r\n[dwell] reverted to the compiled-in defaults."));
     g_entry = ENTRY_NONE;
@@ -660,6 +710,30 @@ void processTimingLine(char *line) {
     g_timingStored = true;
     Serial.printf("\r\n[dwell] interlock gap now %lu ms (saved on device).\r\n",
                   static_cast<unsigned long>(ms));
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "pulse ", 6) == 0) {
+    uint32_t ms = 0;
+    if (!parseBoundedMs(line + 6, DoorController::kMinPulseMs, DoorController::kMaxPulseMs,
+                        ms) ||
+        !g_door.setPulseMs(ms)) {
+      Serial.printf("\r\n[dwell] rejected: relay pulse must be %lu-%lu ms.\r\n",
+                    static_cast<unsigned long>(DoorController::kMinPulseMs),
+                    static_cast<unsigned long>(DoorController::kMaxPulseMs));
+      printTimingMenu();
+      return;
+    }
+    BleScanner::storePulseMs(ms);
+    g_timingStored = true;
+    Serial.printf("\r\n[dwell] relay pulse now %lu ms (saved on device).\r\n",
+                  static_cast<unsigned long>(ms));
+    Serial.println(F("[dwell] test it with 'o' and 'x' before trusting it to the door."));
+    if (ms >= 2000) {
+      Serial.printf("[dwell] note: the control task is blocked for the whole %lu ms — no\r\n",
+                    static_cast<unsigned long>(ms));
+      Serial.println(F("[dwell] samples drained and no reversing mid-travel. See WIRING.md."));
+    }
     g_entry = ENTRY_NONE;
     return;
   }
@@ -983,10 +1057,28 @@ void handleSerial(uint32_t nowMs) {
       case 'o':
         Serial.println(F("[cmd] forcing OPEN"));
         g_door.forcePulseOpen();
+        if (MANUAL_HOLD_MS > 0) {
+          g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
+          if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;  // 0 means "off"
+          Serial.printf("[cmd] holding open for %lu s — automatic closing is paused.\r\n",
+                        static_cast<unsigned long>(MANUAL_HOLD_MS / 1000));
+          Serial.println(F("[cmd] 'x' closes now, 'O' hands control back immediately."));
+        }
         break;
       case 'x':
         Serial.println(F("[cmd] forcing CLOSE"));
+        // Clearing the hold here is what makes `x` mean "I am done" rather than
+        // "close it, and then let the hold quietly keep it from closing again".
+        g_manualHoldUntilMs = 0;
         g_door.forcePulseClose();
+        break;
+      case 'O':
+        if (g_manualHoldUntilMs != 0) {
+          g_manualHoldUntilMs = 0;
+          Serial.println(F("[cmd] manual hold cleared; automatic control resumed."));
+        } else {
+          Serial.println(F("[cmd] no manual hold was active."));
+        }
         break;
 #endif
       default:
@@ -1056,6 +1148,12 @@ void driveDoor(uint32_t nowMs) {
   // The resulting state change is announced by reportTransitions(), which also
   // covers the manual `o` / `x` pulses. Reporting in one place keeps a single
   // line per change rather than one here and another there.
+  // A manual hold suppresses automatic CLOSING only. Opening is never blocked:
+  // if the beacon turns up mid-hold the door is already open, and a manual `x`
+  // must never be able to keep the door shut against an animal walking up to
+  // it. Holding open is the safe failure; holding closed is not.
+  if (!g_tracker.isPresent() && manualHoldActive(nowMs)) return;
+
   const ActuationResult r = g_tracker.isPresent() ? g_door.requestOpen(nowMs)
                                                  : g_door.requestClose(nowMs);
   // ACT_ALREADY is the normal steady state and would swamp the log; the other
@@ -1226,6 +1324,10 @@ void setup() {
     if (BleScanner::loadStoredTiming(en, ex, lk) && lk < ex) {
       g_tracker.setDwell(en, ex);
       g_door.setMinIntervalMs(lk);
+      g_timingStored = true;
+    }
+    const uint32_t savedPulse = BleScanner::loadStoredPulseMs();
+    if (savedPulse != 0 && g_door.setPulseMs(savedPulse)) {
       g_timingStored = true;
     }
     const uint32_t gap = BleScanner::loadStoredDirectionGap();
