@@ -437,6 +437,49 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #endif
 
+// Accept configuration and commands from the log server, carried back in its
+// reply to an upload. Off is the old behaviour: the door talks, never listens.
+//
+// WHY THIS EXISTS. Once a door is screwed to a wall the serial console is gone,
+// and the OTA window could only ever be opened by pressing `p` ON THAT CONSOLE.
+// So the one feature meant to remove physical access could not itself be
+// reached without it. This closes that loop: the door already contacts the
+// server every few minutes, so the reply is a channel that already exists.
+//
+// WHAT IT CANNOT CHANGE, and this is deliberate: the WiFi credentials, the log
+// endpoint, the shared key and the OTA password. Those four are the lifeline
+// the channel itself depends on. A remote command that broke any of them would
+// take the door offline permanently, with no way back except a ladder and a
+// USB cable. Everything else about the door's behaviour is fair game.
+//
+// Every reply must be signed with LOG_SHARED_KEY or it is ignored. Uploads go
+// over plain HTTP by design (TLS costs this chip more heap than it has), so
+// without a signature anyone on the path could raise the door's radio at will,
+// or worse, retune it.
+#ifndef REMOTE_CONFIG
+#define REMOTE_CONFIG 1
+#endif
+
+// Most commands accepted from one reply. A queue rather than immediate
+// application because the reply arrives on the WiFi task and the door is owned
+// by the control task — see invariant 9.
+#ifndef REMOTE_CMD_QUEUE_DEPTH
+#define REMOTE_CMD_QUEUE_DEPTH 12
+#endif
+
+// How long to wait before a restart a remote command asked for. Long enough
+// for the acknowledgement to be uploaded first — the ack lives in RAM, so
+// rebooting immediately would lose it and the server could not tell "applied"
+// from "never arrived".
+#ifndef REMOTE_RESTART_DELAY_MS
+#define REMOTE_RESTART_DELAY_MS 20000
+#endif
+
+// Longest single command line accepted. A MAC list is the long one.
+#ifndef REMOTE_CMD_MAX_LEN
+#define REMOTE_CMD_MAX_LEN 128
+#endif
+
 // How long an over-the-air update window stays open before the radio is handed
 // back to BLE. Long enough to start an upload, short enough that forgetting to
 // close it is not a problem.

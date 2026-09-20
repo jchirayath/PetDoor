@@ -346,6 +346,23 @@ requirement, and nothing in the door depends on it.
 
 ---
 
+## Managing a door you can no longer reach
+
+Once the door is installed the serial console is gone, and with it the only way
+to open an OTA window or change a threshold. The server's reply to an upload
+doubles as a command channel that closes that loop — signed with the same key,
+and unable to change the WiFi, endpoint or key it depends on.
+
+```bash
+python3 petdoor-logserver.py --queue pulse 500
+python3 petdoor-logserver.py --queue ota        # then push firmware
+python3 petdoor-logserver.py --commands         # queued / delivered / acknowledged
+```
+
+Full command set and the reasoning: **[REMOTE-CONFIG.md](REMOTE-CONFIG.md)**.
+
+---
+
 ## Managing the shared key
 
 ```bash

@@ -629,6 +629,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all of them.
 - [Diagnostics](docs/DIAGNOSTICS.md) — connecting to the serial console, every command, and what the output means
 - [Log server](docs/LOG-SERVER.md) — *optional* — collect history on a machine of your own
 - [The beacon](docs/BEACON-MINEW.md) — which tag to buy, how to set it, and why not an AirTag
+- [Remote management](docs/REMOTE-CONFIG.md) — change settings and push firmware on a door you can no longer reach
 - [Web dashboard](docs/WEB-DASHBOARD.md) — *optional* — self-host the charts on a Pi or a VM, with a public project page and the analytics behind a login
 - [Portal](docs/PORTAL.md) — *optional* — the same charts, hosted, with nothing to run
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — when it does not work
