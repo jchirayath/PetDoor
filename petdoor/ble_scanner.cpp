@@ -608,6 +608,21 @@ uint32_t loadStoredDirectionGap() {
   return g;
 }
 
+uint32_t loadStoredPulseMs() {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return 0;
+  const uint32_t p = prefs.getUInt("pulseMs", 0);
+  prefs.end();
+  return p;
+}
+
+void storePulseMs(uint32_t ms) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUInt("pulseMs", ms);
+  prefs.end();
+}
+
 void storeDirectionGap(uint32_t ms) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
@@ -622,6 +637,7 @@ void clearStoredTiming() {
   prefs.remove("dwellExit");
   prefs.remove("lockout");
   prefs.remove("dirGap");
+  prefs.remove("pulseMs");
   prefs.end();
 }
 

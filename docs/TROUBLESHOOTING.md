@@ -208,6 +208,99 @@ signal wires, or swap `PIN_RELAY_OPEN` and `PIN_RELAY_CLOSE`.
 Confirm with the bench test in
 [WIRING.md](WIRING.md#bench-test-procedure) before reconnecting the motor.
 
+## The relay clicks but the door does not move
+
+The firmware is doing its job — you can hear the coil — and nothing happens
+downstream. Work through this in order; each step rules something out.
+
+**1. Does a manual short move the door?** With the relay module powered, bridge
+`COM` and `NO` on that channel with a wire or a screwdriver blade. If the door
+moves, the wiring from the relay to your controller is good and the controller
+is fine. If it does *not* move, the fault is downstream — check the crimps and
+that you are on the controller's button terminals.
+
+Note what this does **not** prove. A hand-made short lasts a second or more; the
+firmware's pulse is 200 ms. So a successful manual bridge is equally consistent
+with "the contacts never close" and "the pulse is too short". The next two steps
+separate them.
+
+**1a. If the hand-short works but the relay never does — suspect the contacts.**
+This is the single most likely cause, and it is a property of the relay module
+rather than anything in this firmware.
+
+Your door controller's button input is a **dry circuit**: a few milliamps at low
+voltage, sometimes microamps. The common blue relay boards use silver-alloy
+contacts rated 10 A at 250 V. Those contacts grow a thin oxide film in normal
+use. At mains current the film is punched through instantly and you never know
+it is there. At button-input current there is not enough energy to break
+through, so the contact reads open — or flickers — while the relay is
+mechanically closed and clicking healthily.
+
+A finger works because it is a different kind of contact: far larger area, much
+higher pressure, and it wipes across the metal as it lands.
+
+The symptoms are distinctive:
+
+- A clean single *click* from the relay, no buzzing (so the coil is fine)
+- Continuity across `COM`/`NO` that **flickers** during a long pulse
+- The door moving on some actuations and not others, with nothing changed
+- Getting *worse* over a session, as switching cycles build up more film
+- Pulse length appearing to matter, then not — each test is really a coin flip
+
+Confirm it by metering `COM`–`NO` during a `pulse 3000`. Mechanically the relay
+is closed for three seconds; if the meter disagrees, the contacts are the fault.
+
+**The fix is a different switching part, not a firmware setting:**
+
+1. **An optocoupler** (PC817 or similar) across the button terminals. No
+   contacts at all, so there is nothing to oxidise. This is the correct part for
+   switching a logic-level input and costs well under a dollar.
+2. **A signal relay with gold-plated or bifurcated contacts**, explicitly rated
+   for "dry circuit" or "low level" switching. The 10 A power relays sold on the
+   usual modules are the wrong tool for this job.
+3. **A small MOSFET**, if the button circuit is DC and you can establish its
+   polarity.
+
+As a free stopgap, move the load to the module's **other channel** — fewer
+operations means less film, and if that channel works reliably it confirms the
+diagnosis outright.
+
+**2. Lengthen the pulse.** Many door controllers debounce their button input and
+will ignore a tap shorter than 300–500 ms as electrical noise. This costs
+nothing to try and needs no reflash:
+
+```
+w
+pulse 1000
+```
+
+Then `o` and `x`. If the door now moves, that was it — walk the value back down
+until it stops working and leave yourself margin. The setting is saved on the
+device.
+
+**3. If a long pulse still does nothing, meter the contacts.** Set `pulse 3000`
+so the closure is easy to catch, put a meter on continuity across `COM` and
+`NO`, and type `o`. You should see it close for three seconds.
+
+- **No continuity at any point** — the coil is clicking but the contacts are not
+  making. Either the module is faulty, or the coil is not fully pulling in
+  because the 5 V rail sags when it energises. Try a separate supply for the
+  relay module; a coil draws 60–90 mA and a shared supply that also feeds the
+  ESP32's radio peaks can brown out.
+- **Continuity is present but the door still does not move** — the contact is
+  good and the controller is not responding to it. Check you are across the
+  button and not, say, across a limit switch or an interlock input.
+
+**4. Check you are on `NO`, not `NC`.** Meter `COM`–`NO` with the relay idle: it
+must read **open**. If it reads closed you are on `NC`, the controller has seen
+its button held down since power-on, and the pulse is inverted. See
+[WIRING.md](WIRING.md#which-output-terminals-to-use).
+
+> If the fix was a longer pulse and your motor has no limit switches, read
+> [the held-contact warning](WIRING.md#momentary-pulse-vs-held-contact) — the
+> control task is blocked for the whole pulse, and a direct-drive motor keeps
+> pulling whether or not the door reached its stop.
+
 ## Both relays click when only one should
 
 Should be impossible — `pulse()` always releases the opposite relay and waits

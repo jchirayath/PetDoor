@@ -88,6 +88,28 @@ class DoorController {
     return true;
   }
 
+  // How long each relay is held closed — the length of the "button press" the
+  // door controller sees. Runtime-adjustable because the right value is a
+  // property of YOUR controller, not of this firmware: one that debounces its
+  // button over 300 ms ignores the 200 ms default entirely, and the symptom is
+  // a relay that clicks while the door does not move. Finding that by
+  // reflashing one guess at a time is miserable.
+  //
+  // Floor: a mechanical relay needs ~5–15 ms just to pull in, so anything under
+  // 50 ms risks the contacts never properly closing.
+  // Ceiling: pulse() sits in delay() for this long with the control task
+  // blocked — no samples drained, no presence re-evaluated, and the door cannot
+  // be told to reverse mid-travel. 10 s is generous for a held-contact motor
+  // and still short of wedging the console. See docs/WIRING.md.
+  static constexpr uint32_t kMinPulseMs = 50;
+  static constexpr uint32_t kMaxPulseMs = 10000;
+  uint32_t pulseMs() const { return pulseMs_; }
+  bool setPulseMs(uint32_t ms) {
+    if (ms < kMinPulseMs || ms > kMaxPulseMs) return false;
+    pulseMs_ = ms;
+    return true;
+  }
+
   static const char *stateName(DoorState s);
   static const char *resultName(ActuationResult r);
 
@@ -102,6 +124,7 @@ class DoorController {
   ActuationSource lastSource_ = SRC_BEACON;
   uint32_t minIntervalMs_ = MIN_ACTUATION_INTERVAL_MS;
   uint32_t directionGapMs_ = DIRECTION_CHANGE_GAP_MS;
+  uint32_t pulseMs_ = RELAY_PULSE_MS;
   uint32_t openCount_ = 0;
   uint32_t closeCount_ = 0;
   uint32_t lockedOutCount_ = 0;

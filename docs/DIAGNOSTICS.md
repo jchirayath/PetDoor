@@ -218,8 +218,32 @@ Type a single character. No Enter needed; newlines are ignored.
 | `m` | Edit the beacon MAC list, saved on the device |
 | `t` | Edit the open/close thresholds, saved on the device |
 | `w` | Edit dwell times and the actuation lockout, saved on the device |
+| `O` | Clear a manual hold, handing the door back to the beacon |
 | `f` | Edit both filter shapes — the slow close filter and the fast open filter — saved on the device |
 | `!` | Reboot into flash mode — no IO0/EN buttons needed |
+
+### `o` holds the door open
+
+`o` pulses the OPEN relay **and** suspends automatic closing for
+`MANUAL_HOLD_MS` (5 minutes by default). Without that hold, `o` is a single
+pulse: the control task runs milliseconds later, sees an open door with no
+beacon in range, and closes it again — so the door visibly starts moving and
+then stops. That is not a relay fault, and it made bench testing extremely
+confusing before the hold existed.
+
+```
+[cmd] forcing OPEN
+[cmd] holding open for 300 s — automatic closing is paused.
+[cmd] 'x' closes now, 'O' hands control back immediately.
+```
+
+`s` shows the remaining time while a hold is active. `x` closes and clears it;
+`O` clears it without moving the door.
+
+The hold suppresses automatic **closing only** — a beacon arriving during a hold
+still finds an open door, and `x` can never keep the door shut against an animal
+walking up to it. It is not saved to NVS, so a reboot always returns to
+automatic control.
 
 `o` and `x` are compiled out when `ALLOW_MANUAL_SERIAL_CONTROL` is `0`. If `h`
 does not list them, that is why. They bypass the proximity logic, the actuation
@@ -378,6 +402,7 @@ animal.
   close after  : 15000 ms far
   min interval :  2000 ms between actuations (CLOSING only)
   interlock gap:   250 ms before any relay fires
+  relay pulse  :   200 ms held closed (the "button press")
 
   MEASURED worst gap between samples: 931 ms
   A close dwell at or below that WILL close on a routine
@@ -390,7 +415,14 @@ animal.
 | `safe` | 1500 / 15000 / 5000 — the shipped default |
 | `500,15000,2000` | open ms, close ms, lockout ms |
 | `gap 250` | relay interlock dead time (minimum 100 ms) |
+| `pulse 200` | how long the relay stays closed, 50–10000 ms |
 | `clear` | back to compiled-in defaults |
+
+`pulse` is the one to reach for when **the relay clicks but the door does not
+move**: many controllers debounce their button and ignore a tap shorter than
+300–500 ms. Try `pulse 1000`, test with `o` and `x`, then walk it back down.
+Full procedure in
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-relay-clicks-but-the-door-does-not-move).
 
 **The menu prints your measured worst sample gap right above the input**, which
 is the number that matters: a close dwell below it will close the door on a

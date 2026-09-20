@@ -150,6 +150,34 @@ that runs continuously, or one that starts the instant you apply power, or both
 — the failure [SAFETY.md](SAFETY.md) exists to prevent. Nothing in the firmware
 can detect this or protect you from it; it is downstream of the ESP32 entirely.
 
+### Choosing a relay that can actually switch this
+
+The common blue 10 A relay modules are a poor match for a door controller's
+button input, and the failure is subtle enough to waste an evening.
+
+A button input is a **dry circuit** — a few milliamps at low voltage. Power
+relay contacts grow a thin oxide film, and at mains current it is punched
+through instantly and never noticed. At button-input current there is not enough
+energy to break through, so the contact flickers or reads open while the relay
+clicks away perfectly. It gets worse with use, and it looks exactly like a
+pulse-length or wiring problem.
+
+The tell: **a hand-short across `COM`/`NO` works every time, the relay does
+not.** Same terminals, same wires, same controller — only the thing closing the
+circuit differs.
+
+Prefer, in order:
+
+1. An **optocoupler** (PC817 or similar). No contacts, nothing to oxidise, and
+   the right part for a logic-level input.
+2. A **signal relay with gold-plated or bifurcated contacts**, rated for "dry
+   circuit" or "low level" switching.
+3. A **MOSFET**, if the button circuit is DC and its polarity is known.
+
+A 10 A module will often work at first and degrade over weeks. If your door
+becomes unreliable after working fine, this is the first thing to suspect — see
+[TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-relay-clicks-but-the-door-does-not-move).
+
 ### These are dry contacts
 
 The relay contacts are an isolated switch. They do **not** supply power — they
@@ -169,10 +197,83 @@ output terminals** — see
 
 ---
 
+## The USB-to-TTL link
+
+Boards without a USB socket are programmed through a TTL header, and that link
+is also your only way to reach the console. It is four wires, and two of them
+catch people out.
+
+Most CP2102 modules ship with four coloured flying leads:
+
+| Wire | Adapter pin | Goes to | Notes |
+|---|---|---|---|
+| Black | `GND` | ESP32 `GND` | **Mandatory.** Without it the data lines have no reference. |
+| Green | `TXD` | ESP32 `RX0` / `GPIO3` | Adapter talks → board listens |
+| White | `RXD` | ESP32 `TX0` / `GPIO1` | Board talks → adapter listens |
+| Red | `VCC` | **leave disconnected** if the board has its own supply | See below |
+
+**Trust the silkscreen, not the colours.** Manufacturers vary, and clones are
+often mislabelled. Your adapter has `GND / VCC / TXD / RXD` printed beside the
+header — that is authoritative. The colours above are only the common
+convention.
+
+**TX and RX cross over.** `TXD` is the adapter *transmitting*, so it lands on
+the pin where the ESP32 *receives*. Wiring TX→TX gives you a port that opens
+cleanly and never produces a single byte, with no error anywhere.
+
+**Leave the red VCC lead disconnected when the board is powered separately.**
+Two supplies fighting is the mild version of that mistake. The severe version is
+a 5 V adapter lead landing on a `3V3` pin, which destroys the board.
+
+### Testing the link without the ESP32
+
+When the console goes silent, the first question is whether the adapter is even
+working. This settles it in seconds and needs no test equipment:
+
+1. Unplug green and white from the ESP32
+2. Touch their two ends together — TXD shorted to RXD
+3. Send anything and see whether it comes back
+
+Anything you type must echo back byte for byte, because it is going out of the
+adapter and straight back in. The ESP32 is not involved at all.
+
+- **Bytes return** → adapter, cable, driver and software are all fine. The fault
+  is the ESP32 side: its power, or the last few centimetres of wire.
+- **Nothing returns** → the adapter, its USB cable, or the leads are at fault,
+  and the ESP32 may be perfectly healthy and simply unreachable.
+
+That second case is worth knowing about, because a board that is running fine
+but unreachable looks identical to a dead one from the terminal.
+
+### When the port is there but silent
+
+A live device node proves nothing about the ESP32. On most adapters the USB
+bridge chip is powered from USB, so `/dev/cu.usbserial-*` appears whether or not
+the board on the other end has power at all.
+
+Silence with a healthy port usually means, in rough order:
+
+1. **TX and RX swapped.** By far the most common, and it produces exactly this.
+2. **A lead unplugged or not seated.** Dupont housings look connected while
+   making no contact.
+3. **No common ground.** The black lead is not optional.
+4. **The board has no power.** Check its power LED before anything else — it
+   takes two seconds and rules out half the possibilities.
+
+Only after those is it worth suspecting the adapter.
+
+> Two extra wires — `DTR → IO0` and `RTS → EN` — buy hands-free flashing and
+> remove the manual button dance entirely. See
+> [DIAGNOSTICS.md](DIAGNOSTICS.md#which-chips-can-skip-the-buttons).
+
+---
+
 ## Momentary pulse vs held contact
 
 The firmware pulses each relay for `RELAY_PULSE_MS` (200 ms default) and then
-releases it. This matches a door controller that has **separate OPEN and CLOSE
+releases it. That value is **adjustable at runtime** — `w` then `pulse 500` in
+the console, saved on the device — because the right length is a property of
+your door controller, not of this firmware. This matches a door controller that has **separate OPEN and CLOSE
 momentary inputs** — press to start, the controller runs the motor to its own
 limit switches and stops. This is the arrangement PetDoor is designed for, and
 the one that puts the stopping logic in hardware where it belongs.
@@ -183,8 +284,9 @@ have two options:
 1. **Preferred:** put a proper motor controller between PetDoor and the motor —
    one with limit switches and a current limit. PetDoor then only ever sends the
    momentary "go" signal, and the controller decides when to stop.
-2. **If you must drive the motor directly:** raise `RELAY_PULSE_MS` to slightly
-   longer than the door's full travel time.
+2. **If you must drive the motor directly:** raise the pulse to slightly longer
+   than the door's full travel time — `w` then `pulse 4000`, or set
+   `RELAY_PULSE_MS` in `secrets.h` so it survives an NVS wipe.
 
    ```c
    #define RELAY_PULSE_MS 4000   // door takes ~3.5 s to travel
@@ -199,6 +301,40 @@ have two options:
    direct-drive motor and no limit switches, the motor also keeps pulling for
    the full `RELAY_PULSE_MS` whether or not the door reached its stop. Read
    [SAFETY.md](SAFETY.md) again before choosing this.
+
+---
+
+## Measure your door's travel time
+
+Time a full open and a full close with a stopwatch. It takes a minute and two
+other settings only make sense against it.
+
+```
+o        wait for it to come to rest, timing from the relay click
+x        time the close the same way
+```
+
+The reference build measures about **15 s** each way. Record it as
+`DOOR_TRAVEL_MS`; the boot banner then checks the relationship for you.
+
+**`MIN_ACTUATION_INTERVAL_MS` must be at least the travel time.** If it is
+shorter, the firmware can issue a reversing command while the door is still
+moving, and most controllers read a second command mid-travel as *stop* — so the
+door creeps partway and halts. With a 15 s door and the 2000 ms default, a close
+can land 13 seconds before the open has finished.
+
+The firmware never waits for travel to complete. It has no position feedback and
+cannot know when the door arrives; it only knows what it commanded. That is why
+this is a setting you measure rather than something it can work out.
+
+If you set `DOOR_TRAVEL_MS` and the lockout is too short, the banner says so:
+
+```
+door travel   : 15000 ms (measured, configured)
+!! min interval (2000 ms) is SHORTER than door travel (15000 ms).
+!! A reversing command can land mid-travel; most controllers
+!! read that as STOP, leaving the door parked half open.
+```
 
 ---
 
