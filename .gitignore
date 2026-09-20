@@ -32,3 +32,6 @@ build/
 
 # Claude Code local settings (shared settings.json IS committed)
 .claude/settings.local.json
+
+# Playwright MCP scratch output (screenshots are curated into docs/assets)
+.playwright-mcp/

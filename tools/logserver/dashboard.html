@@ -268,10 +268,20 @@ let events=[], selected=null;
 
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,"0");
-const fmtClock=e=>{const d=new Date(e*1000);return pad(d.getUTCHours())+":"+pad(d.getUTCMinutes())};
-const fmtDate=e=>{const d=new Date(e*1000);return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate())};
+/* Everything below renders in the VIEWER'S local time, not UTC.
+
+   The door uploads UTC epochs, and showing them as UTC is tempting because it
+   needs no configuration. But every chart on this page answers a question about
+   a human day — when he first goes out, what the daily rhythm looks like, which
+   hours are busy — and a UTC day is the wrong day for anyone who does not live
+   on it. At UTC-7 an evening outing at 18:38 reports as "01:38" and lands on
+   the following row, so the evening walk shows up as tomorrow's dawn.
+
+   Local time is what the reader means by "a day", so use it consistently. */
+const fmtClock=e=>{const d=new Date(e*1000);return pad(d.getHours())+":"+pad(d.getMinutes())};
+const fmtDate=e=>{const d=new Date(e*1000);return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
 const dayKey=e=>fmtDate(e);
-const secsIntoDay=e=>{const d=new Date(e*1000);return d.getUTCHours()*3600+d.getUTCMinutes()*60+d.getUTCSeconds()};
+const secsIntoDay=e=>{const d=new Date(e*1000);return d.getHours()*3600+d.getMinutes()*60+d.getSeconds()};
 function dur(s){if(s<60)return s+"s";const m=Math.round(s/60);if(m<60)return m+"m";const h=Math.floor(m/60);return h+"h "+pad(m%60)+"m";}
 
 function parseCsv(text){
@@ -295,13 +305,41 @@ function merge(incoming){
 }
 
 /* Pair each exit with the next return, so "outside" is a span not two dots. */
+/* A trip is "closed behind him, opened again when he came back".
+
+   The door cannot tell which side of it the animal is on — it has no direction
+   sensing, only proximity — so it CLOSES twice per round trip: once when he
+   leaves and again once he has come in and wandered off. Pairing every CLOSE
+   with the next OPEN therefore counts the time he spends INDOORS as a trip
+   outside, which is where "outside 22h a day" and multi-hour "trips" come from.
+
+   So alternate instead: the first CLOSE after an opening means he is out, and
+   the next OPEN means he is back. A second CLOSE while he is already counted as
+   home starts nothing. This is an inference, not a measurement — if an upload
+   is lost the parity can slip until the next quiet night resynchronises it. */
 function trips(){
-  const t=[],dated=events.filter(e=>e.epoch>0);
-  for(let i=0;i<dated.length;i++){
-    if(dated[i].type!=="CLOSE")continue;
-    const back=dated.slice(i+1).find(e=>e.type==="OPEN");
-    t.push({out:dated[i].epoch,in:back?back.epoch:null});
+  /* One round trip produces FOUR events, because the door reacts to the beacon
+     arriving and leaving on both legs of the journey:
+
+        OPEN   he is at the door, on his way out
+        CLOSE  he has gone — this is when he is outside      <- trip starts
+        OPEN   he is back at the door                        <- trip ends
+        CLOSE  he has wandered off indoors
+
+     So it is every OTHER close that begins a spell outside. Pairing each close
+     with the next open counts the indoor stretch as a trip too, which doubles
+     the trip count and produces "outside 22h a day". */
+  const t=[], dated=events.filter(e=>e.epoch>0);
+  let closes=0, since=null;
+  for(const e of dated){
+    if(e.type==="CLOSE"){
+      if(closes % 2 === 0) since=e.epoch;   // he has just left
+      closes++;
+    }else if(e.type==="OPEN" && since!==null){
+      t.push({out:since,in:e.epoch}); since=null;
+    }
   }
+  if(since!==null) t.push({out:since,in:null});   // still out right now
   return t;
 }
 
@@ -370,7 +408,7 @@ function renderHourly(){
   const t=trips();
   if(!t.length){$("hourly").innerHTML='<div class="empty">No trips yet</div>';return;}
   const h=Array.from({length:24},(_,i)=>({label:pad(i)+":00",tick:i%6===0?pad(i):"",v:0}));
-  for(const x of t) h[new Date(x.out*1000).getUTCHours()].v++;
+  for(const x of t) h[new Date(x.out*1000).getHours()].v++;
   bars("hourly",h,{color:"var(--out)",h:170,every:1,unit:" trips",
     label:d=>"trips starting "+d.label,aria:"Trips by hour of day"});
 }
@@ -449,7 +487,7 @@ function renderStrip(){
   days.forEach((d,i)=>{
     const y=T+i*rowH+rowH/2;
     const lbl=new Date(d+"T00:00:00Z");
-    g+=`<text x="${L-12}" y="${y+4}" text-anchor="end" font-size="11.5" fill="var(--ink-2)" font-family="IBM Plex Mono,monospace">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][lbl.getUTCDay()]} ${d.slice(5)}</text>`;
+    g+=`<text x="${L-12}" y="${y+4}" text-anchor="end" font-size="11.5" fill="var(--ink-2)" font-family="IBM Plex Mono,monospace">${["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][lbl.getDay()]} ${d.slice(5)}</text>`;
     g+=`<line x1="${L}" y1="${y}" x2="${L+plot}" y2="${y}" stroke="var(--line-2)" stroke-width="1"/>`;
     // outside spans
     for(const t of tr){
