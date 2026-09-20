@@ -87,7 +87,8 @@ BANNER = """
 </style>
 <div class="sample-bar">
   <b>This is a demonstration.</b> Every figure below comes from synthetic data &mdash;
-  no real household appears here.
+  no real household appears here. The dashboard is an <b>optional separate module</b>
+  you run yourself; the door works without it.
   <a href="/dashboard">Sign in to the live door &rarr;</a> &middot;
   <a href="/">About PetDoor</a>
 </div>"""

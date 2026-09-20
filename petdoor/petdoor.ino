@@ -136,6 +136,11 @@ bool g_fastFilterStored = false;
 // control must always be what a reboot comes back to.
 uint32_t g_manualHoldUntilMs = 0;
 
+// Deadline for a restart a remote command asked for, 0 when none is pending.
+// Deferred so the acknowledgement reaches the server before the reboot takes
+// it with it. Same signed-delta comparison as everywhere else in this file.
+uint32_t g_restartAtMs = 0;
+
 // Signed delta, not `nowMs < g_manualHoldUntilMs` — the naive comparison ends
 // the hold 49 days early or late around the millis() wrap. Same trap as
 // ProximityTracker::sampleAgeMs(); see the comment there.
@@ -1217,6 +1222,207 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
   }
 }
 
+#if REMOTE_CONFIG && PETDOOR_ENABLE_WIFI
+// Apply one command sent back by the log server.
+//
+// Runs on controlTask, never on the WiFi task, because these touch the tracker
+// and the door and those belong to one owner (invariant 9). Every setter used
+// here is the SAME one the serial console calls, so the validation that
+// protects a person at the keyboard protects the network path identically:
+// thresholds that do not form a hysteresis band, a lockout longer than the
+// close dwell, an open filter slower than the close filter — all still refused.
+//
+// Deliberately absent: anything touching WiFi, the endpoint, the shared key or
+// the OTA password. Those are what this channel runs on; a command that broke
+// one would strand the door with no way back. See REMOTE_CONFIG in config.h.
+bool applyRemoteCommand(const char *line, String &result) {
+  char buf[REMOTE_CMD_MAX_LEN];
+  strncpy(buf, line, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  char *verb = strtok(buf, " \t");
+  if (verb == nullptr) return false;
+  auto arg = []() { return strtok(nullptr, " \t"); };
+
+  if (strcmp(verb, "ota") == 0) {
+    WifiLogger::beginOtaWindow(g_tracker.isPresent());
+    result = "ota window requested";
+    return true;
+  }
+  if (strcmp(verb, "thresholds") == 0) {
+    const char *a = arg(), *b = arg();
+    if (!a || !b) { result = "thresholds needs <enter> <exit>"; return false; }
+    if (!g_tracker.setThresholds(atoi(a), atoi(b))) {
+      result = "thresholds rejected: enter must be above exit";
+      return false;
+    }
+    BleScanner::storeThresholds(g_tracker.enterDbm(), g_tracker.exitDbm());
+    g_thresholdsStored = true;
+    result = String("thresholds ") + g_tracker.enterDbm() + "/" + g_tracker.exitDbm();
+    return true;
+  }
+  if (strcmp(verb, "dwell") == 0) {
+    const char *a = arg(), *b = arg(), *c = arg();
+    if (!a || !b || !c) { result = "dwell needs <open> <close> <lockout>"; return false; }
+    const uint32_t en = strtoul(a, nullptr, 10), ex = strtoul(b, nullptr, 10),
+                   lk = strtoul(c, nullptr, 10);
+    if (!en || !ex || !lk) { result = "dwell values must be non-zero"; return false; }
+    if (lk >= ex) { result = "dwell rejected: lockout must be below the close dwell"; return false; }
+    g_tracker.setDwell(en, ex);
+    g_door.setMinIntervalMs(lk);
+    BleScanner::storeTiming(en, ex, lk);
+    g_timingStored = true;
+    result = String("dwell ") + en + "/" + ex + "/" + lk;
+    return true;
+  }
+  if (strcmp(verb, "gap") == 0) {
+    const char *a = arg();
+    if (!a || !g_door.setDirectionGapMs(strtoul(a, nullptr, 10))) {
+      result = "gap rejected (100-5000 ms)";
+      return false;
+    }
+    BleScanner::storeDirectionGap(g_door.directionGapMs());
+    g_timingStored = true;
+    result = String("gap ") + g_door.directionGapMs();
+    return true;
+  }
+  if (strcmp(verb, "pulse") == 0) {
+    const char *a = arg();
+    if (!a || !g_door.setPulseMs(strtoul(a, nullptr, 10))) {
+      result = "pulse rejected (50-10000 ms)";
+      return false;
+    }
+    BleScanner::storePulseMs(g_door.pulseMs());
+    g_timingStored = true;
+    result = String("pulse ") + g_door.pulseMs();
+    return true;
+  }
+  if (strcmp(verb, "filter") == 0 || strcmp(verb, "openfilter") == 0) {
+    const bool fast = (verb[0] == 'o');
+    const char *a = arg(), *b = arg();
+    if (!a || !b) { result = "filter needs <window> <alpha>"; return false; }
+    const long w = atol(a);
+    const float al = atof(b);
+    if (w < 1 || w > kMaxMedianWindow) { result = "filter window out of range"; return false; }
+    const bool ok = fast ? g_tracker.setFastFilter((uint8_t)w, al)
+                         : g_tracker.setFilter((uint8_t)w, al);
+    if (!ok) {
+      result = fast ? "open filter rejected: must not be slower than the close filter"
+                    : "filter rejected: window odd 3-15, alpha 0<a<=1";
+      return false;
+    }
+    if (fast) {
+      BleScanner::storeFastFilter(g_tracker.fastWindowSize(), g_tracker.fastAlpha());
+      g_fastFilterStored = true;
+      result = String("open filter ") + g_tracker.fastWindowSize() + "/" +
+               String(g_tracker.fastAlpha(), 2);
+    } else {
+      BleScanner::storeFilter(g_tracker.windowSize(), g_tracker.alpha());
+      g_filterStored = true;
+      // setFilter() may drag the open pair along to keep it the faster of the
+      // two; persist that too or a reboot would undo it.
+      BleScanner::storeFastFilter(g_tracker.fastWindowSize(), g_tracker.fastAlpha());
+      g_fastFilterStored = true;
+      result = String("filter ") + g_tracker.windowSize() + "/" +
+               String(g_tracker.alpha(), 2);
+    }
+    return true;
+  }
+  if (strcmp(verb, "macs") == 0) {
+    const char *a = strtok(nullptr, "");     // rest of the line, commas and all
+    if (!a) { result = "macs needs a comma-separated list"; return false; }
+    String list(a);
+    list.trim();
+    String err;
+    if (!BleScanner::storeTargetMacs(list.c_str(), err)) {
+      result = String("macs rejected: ") + err;
+      return false;
+    }
+    // A new list only takes effect after a restart: the BLE callback reads the
+    // live list on every advertisement, so swapping it underneath is a race.
+    //
+    // The restart is DEFERRED rather than immediate so the acknowledgement can
+    // be uploaded first — the ack lives in RAM, and rebooting now would lose
+    // it, leaving the server unable to tell "applied" from "never arrived".
+    g_restartAtMs = millis() + REMOTE_RESTART_DELAY_MS;
+    if (g_restartAtMs == 0) g_restartAtMs = 1;
+    WifiLogger::requestFlushNow();
+    result = String("macs saved (") + list + "); restarting to apply";
+    return true;
+  }
+  if (strcmp(verb, "door") == 0) {
+    const char *a = arg();
+    if (!a) { result = "door needs open or close"; return false; }
+    if (strcmp(a, "open") == 0) {
+      g_door.forcePulseOpen();
+      if (MANUAL_HOLD_MS > 0) {
+        g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
+        if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;
+      }
+      result = "door opened (held)";
+      return true;
+    }
+    if (strcmp(a, "close") == 0) {
+      g_manualHoldUntilMs = 0;
+      g_door.forcePulseClose();
+      result = "door closed";
+      return true;
+    }
+    if (strcmp(a, "auto") == 0) {
+      g_manualHoldUntilMs = 0;
+      result = "manual hold cleared";
+      return true;
+    }
+    result = "door takes open, close or auto";
+    return false;
+  }
+  if (strcmp(verb, "resetstats") == 0) {
+    g_tracker.reset();
+    result = "proximity stats reset";
+    return true;
+  }
+  if (strcmp(verb, "defaults") == 0) {
+    // The way back from a bad remote setting, without a ladder.
+    BleScanner::clearStoredThresholds();
+    BleScanner::clearStoredTiming();
+    BleScanner::clearStoredFilter();
+    BleScanner::clearStoredFastFilter();
+    g_tracker.setThresholds(RSSI_ENTER_DBM, RSSI_EXIT_DBM);
+    g_tracker.setDwell(ENTER_CONFIRM_MS, EXIT_CONFIRM_MS);
+    g_tracker.setFilter(RSSI_MEDIAN_WINDOW, RSSI_EWMA_ALPHA);
+    g_tracker.setFastFilter(RSSI_FAST_WINDOW, RSSI_FAST_ALPHA);
+    g_door.setMinIntervalMs(MIN_ACTUATION_INTERVAL_MS);
+    g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
+    g_door.setPulseMs(RELAY_PULSE_MS);
+    g_thresholdsStored = g_timingStored = g_filterStored = g_fastFilterStored = false;
+    result = "reverted to compiled-in defaults (beacon MACs kept)";
+    return true;
+  }
+  result = String("unknown command: ") + verb;
+  return false;
+}
+
+// Drain whatever the last upload brought back. Bounded per tick so a long
+// batch cannot hold up the door.
+void serviceRemoteCommands() {
+  char line[REMOTE_CMD_MAX_LEN];
+  int applied = 0, failed = 0;
+  String last;
+  for (int i = 0; i < 4 && WifiLogger::popCommand(line); i++) {
+    String result;
+    const bool ok = applyRemoteCommand(line, result);
+    Serial.printf("[cmd] %s -> %s\r\n", line, result.c_str());
+    if (ok) applied++; else failed++;
+    last = result;
+  }
+  if (applied || failed) {
+    String ack = String(applied) + " applied";
+    if (failed) ack += String(", ") + failed + " refused: " + last;
+    WifiLogger::setAck(ack.c_str());
+  }
+}
+#endif  // REMOTE_CONFIG && PETDOOR_ENABLE_WIFI
+
 void controlTask(void *) {
   for (;;) {
     // 1. Wait for a sample, or for the tick to expire — whichever comes first.
@@ -1237,6 +1443,23 @@ void controlTask(void *) {
     // 2. Re-evaluate presence. Must run even with no new samples — that is how
     //    a beacon that has gone silent gets noticed.
     g_tracker.update(now);
+
+#if REMOTE_CONFIG && PETDOOR_ENABLE_WIFI
+    // Anything the server sent back with the last upload. Applied here rather
+    // than on the WiFi task because the door has one owner.
+    serviceRemoteCommands();
+
+    // A remote change that needs a reboot (a new beacon list) asked for one.
+    // Wait for the uploader to go quiet first so the acknowledgement gets out,
+    // and never reboot with the door open on a present animal.
+    if (g_restartAtMs != 0 && static_cast<int32_t>(now - g_restartAtMs) >= 0 &&
+        !WifiLogger::busy()) {
+      Serial.println(F("[cmd] restarting to apply a new beacon list"));
+      Serial.flush();
+      delay(200);
+      ESP.restart();
+    }
+#endif
 
     // 3. Keep the radio alive.
     BleScanner::serviceWatchdog(now);

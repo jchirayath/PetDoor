@@ -20,6 +20,16 @@ uint32_t g_bootCount = 0;
 namespace {
 
 volatile bool g_otaRequested = false;
+
+#if REMOTE_CONFIG
+// Commands arrive on the WiFi task and are applied by the control task, which
+// is the only owner of the door and the tracker (invariant 9). This queue is
+// the handover, exactly as BLE samples cross the other way.
+QueueHandle_t g_cmdQueue = nullptr;
+// Reported on the NEXT upload, so the server can see what became of what it
+// sent rather than assuming delivery meant application.
+char g_ackText[96] = {0};
+#endif
 volatile bool g_otaOpen = false;
 uint32_t g_otaOpenedMs = 0;
 bool g_otaBegun = false;
@@ -134,6 +144,73 @@ String signBody(const String &body, const char *key, const String &timestamp) {
   return hex;
 }
 
+#if REMOTE_CONFIG
+// Split `body` on newlines and queue each non-empty, non-comment line.
+void enqueueCommands(const String &body) {
+  if (g_cmdQueue == nullptr) return;
+  int start = 0;
+  int queued = 0, dropped = 0;
+  while (start < static_cast<int>(body.length())) {
+    int nl = body.indexOf('\n', start);
+    if (nl < 0) nl = body.length();
+    String line = body.substring(start, nl);
+    line.trim();
+    start = nl + 1;
+    if (!line.length() || line.startsWith("#")) continue;
+    if (line.length() >= REMOTE_CMD_MAX_LEN) {
+      dropped++;
+      continue;
+    }
+    char buf[REMOTE_CMD_MAX_LEN] = {0};
+    strncpy(buf, line.c_str(), sizeof(buf) - 1);
+    if (xQueueSend(g_cmdQueue, buf, 0) == pdTRUE) queued++;
+    else dropped++;
+  }
+  if (queued || dropped) {
+    Serial.printf("[cmd] %d command(s) from the server%s\r\n", queued,
+                  dropped ? ", some dropped (queue full or line too long)" : "");
+  }
+}
+
+// The reply is only obeyed if it carries a valid signature over its own
+// timestamp and body, under the same key the upload was signed with.
+//
+// Without this the channel would be an open instruction to any device on the
+// path between door and server: uploads are plain HTTP on purpose, because a
+// TLS handshake costs this chip more heap than it has.
+bool responseTrusted(const String &body, const String &ts, const String &sig) {
+  if (LOG_SHARED_KEY[0] == '\0') {
+    // No key means no way to tell the server from anyone else. Log uploads can
+    // survive that; taking orders cannot.
+    Serial.println(F("[cmd] reply ignored: no LOG_SHARED_KEY, so it cannot be verified"));
+    return false;
+  }
+  if (!sig.length()) {
+    Serial.println(F("[cmd] reply ignored: unsigned"));
+    return false;
+  }
+  const String expect = signBody(body, LOG_SHARED_KEY, ts);
+  if (!expect.length()) return false;
+  // Length-constant compare, so a wrong signature cannot be narrowed down by
+  // timing how long the rejection took.
+  String got = sig;
+  got.trim();
+  got.toLowerCase();
+  if (got.length() != expect.length()) {
+    Serial.println(F("[cmd] reply ignored: signature malformed"));
+    return false;
+  }
+  uint8_t diff = 0;
+  for (size_t i = 0; i < expect.length(); i++) diff |= expect[i] ^ got[i];
+  if (diff) {
+    Serial.println(F("[cmd] reply ignored: BAD SIGNATURE — the server's key differs, or"));
+    Serial.println(F("[cmd] something on the path is trying to reconfigure this door"));
+    return false;
+  }
+  return true;
+}
+#endif  // REMOTE_CONFIG
+
 int g_lastHttpCode = 0;
 
 bool post(const String &body) {
@@ -196,13 +273,39 @@ bool post(const String &body) {
     if (sig.length()) http.addHeader("X-PetDoor-Signature", sig);
   }
 
+#if REMOTE_CONFIG
+  // What became of the commands from last time. Sent now rather than straight
+  // after applying them: by then the radio is down, and raising it again just
+  // to acknowledge would cost more BLE time than the acknowledgement is worth.
+  if (g_ackText[0] != '\0') http.addHeader("X-PetDoor-Ack", g_ackText);
+  // Tells the server this build can accept commands, so it can warn about a
+  // door running older firmware that will never collect what it queues.
+  http.addHeader("X-PetDoor-Remote", "1");
+  const char *wanted[] = {"X-PetDoor-Timestamp", "X-PetDoor-Signature"};
+  http.collectHeaders(wanted, 2);
+#endif
+
   const int code = http.POST(const_cast<uint8_t *>(
                                  reinterpret_cast<const uint8_t *>(body.c_str())),
                              body.length());
   g_lastHttpCode = code;
+
+#if REMOTE_CONFIG
+  if (code >= 200 && code < 300) {
+    g_ackText[0] = '\0';            // delivered — stop repeating it
+    const String reply = http.getString();
+    if (reply.length() &&
+        responseTrusted(reply, http.header("X-PetDoor-Timestamp"),
+                        http.header("X-PetDoor-Signature"))) {
+      enqueueCommands(reply);
+    }
+  }
+#endif
+
   http.end();
   return code >= 200 && code < 300;
 }
+
 
 void doFlush() {
   g_busy = true;
@@ -323,6 +426,11 @@ bool isEnabled() { return configured(); }
 void setBootCount(uint32_t n) { g_bootCount = n; }
 
 void begin() {
+#if REMOTE_CONFIG
+  if (g_cmdQueue == nullptr) {
+    g_cmdQueue = xQueueCreate(REMOTE_CMD_QUEUE_DEPTH, REMOTE_CMD_MAX_LEN);
+  }
+#endif
   if (!configured()) return;
   WiFi.mode(WIFI_OFF);  // explicit: nothing is radiating until we ask
   xTaskCreatePinnedToCore(uploaderTask, "petdoor-wifi", WIFI_TASK_STACK, nullptr, 1,
@@ -393,6 +501,18 @@ void beginOtaWindow(bool petPresent) {
 }
 
 void closeOtaWindow() { stopOta("closed by request"); }
+
+#if REMOTE_CONFIG
+bool popCommand(char *out) {
+  if (g_cmdQueue == nullptr) return false;
+  return xQueueReceive(g_cmdQueue, out, 0) == pdTRUE;
+}
+
+void setAck(const char *text) {
+  strncpy(g_ackText, text ? text : "", sizeof(g_ackText) - 1);
+  g_ackText[sizeof(g_ackText) - 1] = '\0';
+}
+#endif
 
 void printStatus(Stream &out) {
   if (!configured()) {

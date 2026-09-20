@@ -343,6 +343,10 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Give up associating after this long, so a missing access point cannot hold the radio. |
 | `OTA_PASSWORD` | `""` | Password for over-the-air firmware updates. **Empty disables OTA entirely** — without one, anyone on the network could reflash the door. |
 | `OTA_WINDOW_MS` | `300000` | How long an update window stays open before the radio is handed back to BLE. |
+| `REMOTE_CONFIG` | `1` | Accept configuration and commands from the log server, carried back in its reply to an upload. Every reply must be signed with `LOG_SHARED_KEY`. Cannot change WiFi, the endpoint, the key or the OTA password — see [REMOTE-CONFIG.md](REMOTE-CONFIG.md). |
+| `REMOTE_CMD_QUEUE_DEPTH` | `12` | Most commands accepted from one reply. |
+| `REMOTE_CMD_MAX_LEN` | `128` | Longest single command line. A MAC list is the long one. |
+| `REMOTE_RESTART_DELAY_MS` | `20000` | Delay before a restart a command asked for, so the acknowledgement is uploaded first. |
 | `NTP_SERVER` | `"pool.ntp.org"` | Used to set the clock, so log entries carry real timestamps. |
 
 ### Why uploads are deferred rather than immediate

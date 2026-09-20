@@ -224,11 +224,35 @@
   </section>
 
   <section>
-    <h2>The log</h2>
+    <h2>The log, and the optional dashboard</h2>
     <p class="lede">
-      Every open, close, boot and lost-signal event is recorded on the door
-      itself. Optionally it uploads them here, signed with a shared key, and the
-      dashboard turns that into trip durations, daily rhythm, and a beacon
+      <b>The door keeps its own log.</b> Every open, close, boot and lost-signal
+      event is recorded in the ESP32's own memory — the last 128, rolling the
+      oldest out so it cannot fill up. Read them over USB whenever you like.
+      That happens on every build, with no network, no server and no setup.
+    </p>
+    <div class="how" style="margin-bottom:26px">
+      <div class="step" style="counter-increment:none">
+        <h3>The door <span style="color:var(--in)">— required</span></h3>
+        <p>An ESP32 and a beacon. Opens and closes the door, keeps its own
+           rolling log, works entirely offline. This is the project.</p>
+      </div>
+      <div class="step" style="counter-increment:none">
+        <h3>The dashboard <span style="color:var(--muted)">— optional</span></h3>
+        <p>A <b>separate small program you run yourself</b>, on a Raspberry Pi or
+           any spare machine. The door uploads its log to it over your network,
+           signed with a shared key, and it turns months of events into the
+           charts below.</p>
+      </div>
+    </div>
+    <p class="lede">
+      The dashboard is a single file of stdlib Python and a SQLite database.
+      Nothing is hosted for you and nothing phones home — <b>the address it
+      uploads to is one you set, pointing at a machine you own.</b> Leave it
+      unset and the door never opens a network connection at all.
+    </p>
+    <p class="lede">
+      What it adds: trip durations, daily rhythm, trips per day, and a beacon
       battery trend that warns you weeks before the cell dies.
     </p>
     <figure style="margin-bottom:22px">

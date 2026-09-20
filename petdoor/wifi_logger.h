@@ -76,4 +76,18 @@ uint32_t stackFreeBytes();
 bool otaWindowOpen();
 void closeOtaWindow();
 
+#if REMOTE_CONFIG
+// Pop one command the server sent back with an upload, or false if none.
+//
+// Called by controlTask, never by the WiFi task: the door and the tracker are
+// owned by one task and configuration changes them, so the commands cross the
+// same way BLE samples do — through a queue, applied by their owner.
+// `out` must have room for REMOTE_CMD_MAX_LEN bytes.
+bool popCommand(char *out);
+
+// What to report on the next upload: a short human-readable result, so the
+// server can show whether a command was applied rather than just delivered.
+void setAck(const char *text);
+#endif
+
 }  // namespace WifiLogger

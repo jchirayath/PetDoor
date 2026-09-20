@@ -22,6 +22,7 @@ reverse proxy rather than asking the ESP32 to do TLS.
 """
 
 import argparse
+import datetime as dt
 from urllib.parse import urlparse
 import hashlib
 import hmac
@@ -78,6 +79,19 @@ def init_db():
         -- One row per door: what it is running and when it last called in.
         -- Reboots are the number the door itself counts, so a climbing value
         -- between uploads is a restart loop visible without a serial cable.
+        -- Commands queued for a door, delivered in the reply to its next
+        -- upload. The door polls us; we never connect to it, which is what
+        -- makes this work through NAT and without opening a port.
+        CREATE TABLE IF NOT EXISTS commands (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            device    TEXT NOT NULL,
+            command   TEXT NOT NULL,
+            queued    INTEGER NOT NULL,
+            delivered INTEGER,
+            ack       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS commands_pending
+            ON commands(device, delivered);
         CREATE TABLE IF NOT EXISTS devices (
             device   TEXT PRIMARY KEY,
             version  TEXT,
@@ -87,6 +101,61 @@ def init_db():
             last_ip  TEXT
         );
         """)
+
+
+# Commands the door refuses to take from us, listed here so the server never
+# even offers them. The door enforces this itself — it has to, since anyone
+# could run a server — but sending one would be a bug worth catching early.
+#
+# Each of these is part of the channel this command runs over. Change the WiFi
+# credentials, the endpoint, the key or the OTA password remotely and the door
+# stops being reachable, permanently, with no way back but physical access.
+FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
+
+VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
+               "openfilter", "macs", "door", "resetstats", "defaults")
+
+
+def queue_command(device, command):
+    """Queue one command line. Returns (ok, message)."""
+    command = command.strip()
+    if not command:
+        return False, "empty command"
+    verb = command.split()[0].lower()
+    if verb in FORBIDDEN:
+        return False, (f"'{verb}' is not remotely settable — it is part of the "
+                       "channel this command travels over")
+    if verb not in VALID_VERBS:
+        return False, f"unknown command '{verb}'; known: {', '.join(VALID_VERBS)}"
+    with db() as conn:
+        conn.execute("INSERT INTO commands(device,command,queued) VALUES(?,?,?)",
+                     (device, command, int(time.time())))
+    return True, f"queued for {device}: {command}"
+
+
+def pending_commands(device):
+    with db() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT id,command FROM commands WHERE device=? AND delivered IS NULL "
+            "ORDER BY id", (device,))]
+
+
+def mark_delivered(ids):
+    if not ids:
+        return
+    with db() as conn:
+        conn.executemany("UPDATE commands SET delivered=? WHERE id=?",
+                         [(int(time.time()), i) for i in ids])
+
+
+def record_ack(device, text):
+    """Attach the door's report to the most recently delivered commands."""
+    if not text:
+        return
+    with db() as conn:
+        conn.execute(
+            "UPDATE commands SET ack=? WHERE device=? AND delivered IS NOT NULL "
+            "AND ack IS NULL", (text[:200], device))
 
 
 def get_key():
@@ -402,6 +471,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
         note_device(device, version, build, boots, self.client_address[0])
         self.log_message("%s v%s boot#%d: %d events, %d new (%s)",
                          device, version or "?", boots, len(rows), added, reason)
+
+        # What the door made of whatever we sent it last time.
+        record_ack(device, self.headers.get("X-PetDoor-Ack"))
+
+        # ------------------------------------------------------------------
+        # The reply is the only channel we have to a door behind NAT: it calls
+        # us, we never call it. So anything queued rides back on this response.
+        #
+        # It is SIGNED with the same key the upload was, because uploads are
+        # plain HTTP by design — a TLS handshake costs the ESP32 more heap than
+        # it has. Without a signature, anyone on the path could retune the door
+        # or raise its radio at will. The door verifies before obeying, and
+        # ignores the reply entirely when no key is configured.
+        #
+        # A door running firmware without REMOTE_CONFIG never sends
+        # X-PetDoor-Remote and never reads this; queued commands simply wait,
+        # which is why --commands shows whether a door is listening.
+        # ------------------------------------------------------------------
+        listening = self.headers.get("X-PetDoor-Remote") == "1"
+        pend = pending_commands(device) if listening else []
+        key = get_key()
+
+        if pend and not key:
+            # Refuse rather than send orders nobody can authenticate.
+            self.log_message("%s: %d command(s) withheld — no shared key to sign with",
+                             device, len(pend))
+            pend = []
+
+        if pend:
+            reply = "".join(c["command"] + "\n" for c in pend)
+            mark_delivered([c["id"] for c in pend])
+            self.log_message("%s: sent %d command(s)", device, len(pend))
+            ts = str(int(time.time()))
+            sig = hmac.new(key.encode(), (ts + "\n").encode() + reply.encode(),
+                           hashlib.sha256).hexdigest()
+            body_b = reply.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body_b)))
+            self.send_header("X-PetDoor-Timestamp", ts)
+            self.send_header("X-PetDoor-Signature", sig)
+            self.end_headers()
+            return self.wfile.write(body_b)
+
         return self._send(200, json.dumps({"received": len(rows), "new": added}) + "\n",
                           "application/json")
 
@@ -420,6 +533,15 @@ def main():
     ap.add_argument("--rotate-key", action="store_true", help="issue a new key")
     ap.add_argument("--set-key", metavar="KEY", help="set a specific key")
     ap.add_argument("--no-key", action="store_true", help="accept unsigned uploads")
+    ap.add_argument("--queue", nargs="+", metavar="WORD",
+                    help="queue a command for the door, delivered on its next upload "
+                         "(e.g. --queue pulse 500)")
+    ap.add_argument("--device", default=None,
+                    help="which door to queue for (default: the only one known)")
+    ap.add_argument("--commands", action="store_true",
+                    help="show queued, delivered and acknowledged commands")
+    ap.add_argument("--clear-commands", action="store_true",
+                    help="drop commands that have not been delivered yet")
     args = ap.parse_args()
 
     init_db()
@@ -432,6 +554,51 @@ def main():
         print("\nPut this in petdoor/secrets.h:")
         print(f'  #define LOG_SHARED_KEY "{get_key()}"')
         return
+    if args.commands or args.queue or args.clear_commands:
+        with db() as conn:
+            known = [r["device"] for r in conn.execute("SELECT device FROM devices")]
+        target = args.device
+        if target is None:
+            if len(known) == 1:
+                target = known[0]
+            elif args.queue or args.clear_commands:
+                print("Several doors are known; say which with --device:")
+                for d in known:
+                    print("   ", d)
+                raise SystemExit(1)
+
+        if args.clear_commands:
+            with db() as conn:
+                n = conn.execute(
+                    "DELETE FROM commands WHERE delivered IS NULL AND device=?",
+                    (target,)).rowcount
+            print(f"dropped {n} undelivered command(s) for {target}")
+
+        if args.queue:
+            ok, msg = queue_command(target, " ".join(args.queue))
+            print(msg)
+            if not ok:
+                raise SystemExit(1)
+            print("The door collects it on its next upload. Watch with --commands.")
+
+        if args.commands:
+            with db() as conn:
+                rows = list(conn.execute(
+                    "SELECT id,device,command,queued,delivered,ack FROM commands "
+                    "ORDER BY id DESC LIMIT 30"))
+            if not rows:
+                print("no commands queued or sent")
+            for r in rows:
+                when = dt.datetime.fromtimestamp(r["queued"]).strftime("%Y-%m-%d %H:%M")
+                if r["ack"]:
+                    state = f"acked: {r['ack']}"
+                elif r["delivered"]:
+                    state = "delivered, awaiting the next upload for the result"
+                else:
+                    state = "QUEUED — waiting for the door to call in"
+                print(f"  #{r['id']:<4} {when}  {r['device']:<14} {r['command']:<34} {state}")
+        raise SystemExit(0)
+
     if args.show_key:
         k = get_key()
         print(k if k else "(no key set — unsigned uploads are accepted)")
