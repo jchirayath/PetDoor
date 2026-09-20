@@ -10,6 +10,18 @@
 # you are deploying to a Raspberry Pi on your desk or a VM on the internet.
 set -euo pipefail
 
+# ── BEFORE YOU RUN THIS ──────────────────────────────────────────────────────
+# This is the recipe for a BARE VM: it installs to /opt/petdoor, writes a
+# systemd unit, and optionally configures **nginx** on ports 80 and 443.
+#
+# If the host already runs a web server — Caddy, Traefik, Apache, or anything
+# in Docker publishing 80/443 — this will install a second one on ports the
+# first already owns, and can take every other site on that machine down.
+#
+# On a host like that, deploy the two files and the HTML by hand and point the
+# EXISTING proxy at 127.0.0.1:8080. docs/WEB-DASHBOARD.md has worked Caddy,
+# nginx and Apache rules, including which paths must stay public and which must
+# not.
 TARGET="${1:-}"
 DOMAIN="${2:-}"
 REMOTE_DIR="/opt/petdoor"
