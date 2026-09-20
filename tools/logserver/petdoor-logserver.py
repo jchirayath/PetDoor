@@ -501,11 +501,30 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if pend:
             reply = "".join(c["command"] + "\n" for c in pend)
+            # The door sends a fresh nonce with every upload and folds it into
+            # the signature it expects back. Without that the HMAC would prove
+            # only that we once said these bytes, not that we said them now —
+            # and replies travel over plain HTTP, so a recorded "door open"
+            # could be played back at will. Signing the nonce binds the reply
+            # to this one request.
+            #
+            # A door that sends no nonce is running firmware from before this
+            # existed; it would reject the reply anyway, so say so rather than
+            # sending something that cannot be verified.
+            nonce = self.headers.get("X-PetDoor-Nonce")
+            if not nonce:
+                self.log_message("%s: %d command(s) withheld — door sent no nonce "
+                                 "(firmware predates replay protection)",
+                                 device, len(pend))
+                return self._send(200,
+                                  json.dumps({"received": len(rows), "new": added}) + "\n",
+                                  "application/json")
+            ts = str(int(time.time()))
+            signed = (ts + "\n" + nonce + "\n").encode() + reply.encode()
+            sig = hmac.new(key.encode(), signed, hashlib.sha256).hexdigest()
+            # Only now, once the reply can actually be signed and sent.
             mark_delivered([c["id"] for c in pend])
             self.log_message("%s: sent %d command(s)", device, len(pend))
-            ts = str(int(time.time()))
-            sig = hmac.new(key.encode(), (ts + "\n").encode() + reply.encode(),
-                           hashlib.sha256).hexdigest()
             body_b = reply.encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -562,9 +581,14 @@ def main():
             if len(known) == 1:
                 target = known[0]
             elif args.queue or args.clear_commands:
-                print("Several doors are known; say which with --device:")
-                for d in known:
-                    print("   ", d)
+                if not known:
+                    print("No door has ever uploaded, so there is nothing to queue for.")
+                    print("Name one with --device to queue ahead of its first upload;")
+                    print("it collects the commands when it calls in.")
+                else:
+                    print("Several doors are known; say which with --device:")
+                    for d in known:
+                        print("   ", d)
                 raise SystemExit(1)
 
         if args.clear_commands:
