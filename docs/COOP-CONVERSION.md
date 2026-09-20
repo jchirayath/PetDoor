@@ -176,6 +176,14 @@ that button.
 
 1. **Power everything off** and open the controller housing.
 
+   <p align="center">
+     <img src="../images/ControllerInternal.jpeg" alt="The door controller opened up: logic PCB on the right, gearmotor and 18650 cell on the left" width="440">
+   </p>
+
+   Inside a typical unit: the logic PCB on one side, the gearmotor and its
+   battery on the other. The motor, the limits and the power stage are all
+   things you are going to leave completely alone.
+
 2. **Find the button contacts.** The UP and DOWN buttons are momentary
    switches: two solder pads each, shorted while pressed. With power off, set a
    multimeter to continuity across a button's pads — it should beep only while
@@ -187,6 +195,14 @@ that button.
 
 4. **Solder two wires to each button's pads** — or, if the buttons are on a
    connector, tap the connector instead and avoid soldering entirely.
+
+   <p align="center">
+     <img src="../images/WiringRelaystoSwitch.jpeg" alt="Fine wires soldered directly to the tactile switch pads on the controller PCB, routed out of the housing" width="440">
+   </p>
+
+   Two wires per button, taken straight off the tactile switch pads and routed
+   out of the housing. The switches stay in circuit, so the buttons still work
+   by hand — you have added a second way to press them, not replaced the first.
 
 5. **Wire each pair to a relay's COM and NO** (normally-open) terminals. Relay
    closed = button pressed.
@@ -200,6 +216,14 @@ that button.
    disengaged if possible, use the `o` and `x` serial commands. Each should
    move the door exactly as pressing the corresponding button does. Full
    procedure in [WIRING.md](WIRING.md#bench-test-procedure).
+
+   <p align="center">
+     <img src="../images/FullyWiredTestingOfRelays.jpeg" alt="Bench test: controller PCB, motor and battery wired to the ESP32 relay board on the workbench" width="520">
+   </p>
+
+   Everything laid out and working on the bench before anything goes back in
+   the housing. This is the point at which a wiring mistake costs you five
+   minutes rather than a disassembly.
 
 ### If the buttons are a single button
 
@@ -341,3 +365,32 @@ If you already own the door, the electronics are roughly **$35**.
 
 Skipping step 4 or 6 is how people find out their relay polarity was inverted
 with a bird in the doorway.
+
+---
+
+## What it looks like finished
+
+The ESP32 and its relay board mount to the controller housing. Both boards are
+small enough to sit alongside the original control panel without blocking the
+buttons, which keep working exactly as before.
+
+<p align="center">
+  <img src="../images/ESP32mountingToDoor.jpeg" alt="ESP32 and 2-channel relay board mounted beside the door controller's original control panel" width="480">
+</p>
+
+Installed, the conversion is almost invisible: the original controller, its
+buttons and its timer are all untouched, with a small board wired alongside.
+
+<table>
+  <tr>
+    <td align="center"><img src="../images/FinalDoorClosed.jpeg" alt="The finished pet door, flap closed" width="260"><br><sub><b>Closed</b> — the resting state</sub></td>
+    <td align="center"><img src="../images/DoorClosing.jpeg" alt="The pet door part-way through travel" width="260"><br><sub><b>Mid-travel</b> — about 15 s end to end</sub></td>
+    <td align="center"><img src="../images/FinalDoorOpen.jpeg" alt="The finished pet door, flap fully open" width="260"><br><sub><b>Open</b> — beacon within range</sub></td>
+  </tr>
+</table>
+
+That middle frame is worth a second look. The door takes **about 15 seconds**
+to travel, which is far longer than the 2-second default actuation lockout — so
+`MIN_ACTUATION_INTERVAL_MS` must be raised to match, or a reversing command can
+land mid-travel and most controllers read that as *stop*. See
+[WIRING.md](WIRING.md#measure-your-doors-travel-time).

@@ -316,6 +316,35 @@ beacon as a convenience rather than a credential.
 > door. The most important decision in the build is the door mechanism, not the
 > code.
 
+## A finished build
+
+This is the reference build the firmware is developed and tested against: a
+commercial pet door with its own controller, converted by wiring two relay
+contacts across the controller's existing buttons. The original panel, its
+buttons and its timer all still work — the conversion adds a second way to
+press them and takes nothing away.
+
+<table>
+  <tr>
+    <td align="center"><img src="images/FinalDoorClosed.jpeg" alt="The finished pet door installed in a patio door, flap closed" width="250"><br><sub><b>Closed</b><br>the resting state</sub></td>
+    <td align="center"><img src="images/DoorClosing.jpeg" alt="The pet door part-way through its travel" width="250"><br><sub><b>Travelling</b><br>~15 s end to end</sub></td>
+    <td align="center"><img src="images/FinalDoorOpen.jpeg" alt="The finished pet door with the flap fully open" width="250"><br><sub><b>Open</b><br>beacon within ~1 m</sub></td>
+  </tr>
+</table>
+
+The whole conversion is the small board at the right of the control panel:
+
+<p align="center">
+  <img src="images/ESP32mountingToDoor.jpeg" alt="The ESP32 and 2-channel relay board mounted beside the door controller's original panel" width="460">
+</p>
+
+Two wires per button, soldered to the controller's own switch pads, and nothing
+high-current anywhere near your wiring — see
+[docs/COOP-CONVERSION.md](docs/COOP-CONVERSION.md#pattern-2-tap-the-units-buttons)
+for the step-by-step, including photos of the internals.
+
+---
+
 ## Start here
 
 | If you... | Read |
