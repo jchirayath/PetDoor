@@ -418,6 +418,7 @@ animal.
 | `500,15000,2000` | open ms, close ms, lockout ms |
 | `gap 250` | relay interlock dead time (minimum 100 ms) |
 | `pulse 200` | how long the relay stays closed, 50–10000 ms |
+| `presses 2 1000` | press n times per actuation, ms apart (n 1–3) |
 | `clear` | back to compiled-in defaults |
 
 `pulse` is the one to reach for when **the relay clicks but the door does not

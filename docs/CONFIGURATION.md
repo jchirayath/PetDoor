@@ -297,6 +297,8 @@ anything here.**
 | `PIN_STATUS_LED` | `23` | Status LED, active high. |
 | `RELAY_ACTIVE_LOW` | `0` | `1` for the common blue relay boards, whose coil energises when the input is pulled to GND. `0` for active-high boards and MOSFET drivers. **Getting this wrong means the door runs backwards or runs constantly.** |
 | `RELAY_PULSE_MS` | `200` | Momentary pulse length — how long the relay stays closed. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. Raise it if the relay clicks but the door does not move, or if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
+| `RELAY_PULSE_COUNT` | `1` | Presses per actuation, 1–3. Raise to 2 only if the door's **own button** sometimes needs pressing twice. A blind retry: if the first press worked, the second may stop the door mid-travel. |
+| `RELAY_PULSE_GAP_MS` | `1000` | Gap between repeated presses, 200–5000 ms. Only used when `RELAY_PULSE_COUNT` > 1. |
 | `MIN_ACTUATION_INTERVAL_MS` | `5000` | Minimum gap before the door may **close** again. Protects the motor from thrash. **Opening is never rate-limited** — delaying an open is the one direction that can strand an animal outside a door it just watched close. |
 | `DIRECTION_CHANGE_GAP_MS` | `250` | Dead time before asserting a relay, with the opposite one released. Both relays energised at once is a short across the motor's direction contacts. |
 | `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. |
