@@ -437,6 +437,38 @@
 #define WIFI_CONNECT_TIMEOUT_MS 15000
 #endif
 
+// Hold a freshly flashed image "unconfirmed" until it proves it can still be
+// reached, and let the bootloader put the old one back if it cannot.
+//
+// The ESP32 supports this natively and the Arduino core already wires it up —
+// but the core CONFIRMS THE IMAGE AT BOOT, before any of this firmware runs, so
+// rollback can never trigger. On a door you can walk up to that is harmless. On
+// one screwed to a wall it means a bad push is permanent: an image that boots
+// but cannot join WiFi is unreachable forever, and the only fix is a ladder.
+//
+// With this on, the door overrides the core's hook, and marks the image good
+// only after a SUCCESSFUL UPLOAD — the exact capability that makes it
+// manageable. Reboot before that happens and the bootloader reverts to the
+// previous image.
+//
+// The honest cost: if your log server is down for a long stretch AND the door
+// reboots, it rolls back a perfectly good image. That is the right way round —
+// re-pushing is easy, a ladder is not.
+//
+// Forced off when there is no WiFi, since there would be nothing to prove.
+#ifndef OTA_REQUIRE_CONFIRM
+#define OTA_REQUIRE_CONFIRM 1
+#endif
+
+// Call in at least this often even when the animal is home and the door is
+// open. Without it the door only ever uploads while the beacon is away, so a
+// pet that stays in keeps the door silent — and a silent door collects no
+// commands. One radio burst every half hour is a small price for never losing
+// the channel. 0 disables the heartbeat.
+#ifndef WIFI_HEARTBEAT_MS
+#define WIFI_HEARTBEAT_MS 1800000
+#endif
+
 // Accept configuration and commands from the log server, carried back in its
 // reply to an upload. Off is the old behaviour: the door talks, never listens.
 //

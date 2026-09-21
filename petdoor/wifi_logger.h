@@ -90,4 +90,18 @@ bool popCommand(char *out);
 void setAck(const char *text);
 #endif
 
+// A one-line summary of what the door currently sees, sent with every upload
+// so it can be tuned by someone who cannot reach its console. Set by the
+// control task, which owns everything it describes.
+void setStatusLine(const char *text);
+
+// Hand over a discovery-table dump to be uploaded with the next flush, as a
+// separate POST marked X-PetDoor-Kind: scan. Built by the control task, which
+// owns the scanner; the WiFi task only sends the bytes.
+void queueScanUpload(const String &text);
+
+// True once the running image has been marked good, or when there was nothing
+// to confirm. Shown in `s` so a pending image is visible before it is trusted.
+bool imageConfirmed();
+
 }  // namespace WifiLogger

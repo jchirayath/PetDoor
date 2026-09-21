@@ -141,6 +141,30 @@ uint32_t g_manualHoldUntilMs = 0;
 // it with it. Same signed-delta comparison as everywhere else in this file.
 uint32_t g_restartAtMs = 0;
 
+// Set by a `scan` command: upload the discovery table with the next flush.
+bool g_scanRequested = false;
+
+// dumpTable() writes to a Stream because it was built for the console. This
+// collects that output into a String instead, so the same rendering can be
+// uploaded — one implementation, so the remote view can never drift from what
+// the console shows.
+class StringStream : public Stream {
+ public:
+  String text;
+  size_t write(uint8_t c) override {
+    text += static_cast<char>(c);
+    return 1;
+  }
+  size_t write(const uint8_t *buf, size_t n) override {
+    for (size_t i = 0; i < n; i++) text += static_cast<char>(buf[i]);
+    return n;
+  }
+  int available() override { return 0; }
+  int read() override { return -1; }
+  int peek() override { return -1; }
+  void flush() override {}
+};
+
 // Signed delta, not `nowMs < g_manualHoldUntilMs` — the naive comparison ends
 // the hold 49 days early or late around the millis() wrap. Same trap as
 // ProximityTracker::sampleAgeMs(); see the comment there.
@@ -1376,6 +1400,24 @@ bool applyRemoteCommand(const char *line, String &result) {
     result = "door takes open, close or auto";
     return false;
   }
+  if (strcmp(verb, "reboot") == 0) {
+    // Deferred like the beacon-list restart, so the acknowledgement gets out
+    // before the reboot takes it with it.
+    g_restartAtMs = millis() + REMOTE_RESTART_DELAY_MS;
+    if (g_restartAtMs == 0) g_restartAtMs = 1;
+    WifiLogger::requestFlushNow();
+    result = "rebooting shortly";
+    return true;
+  }
+  if (strcmp(verb, "scan") == 0) {
+    // Upload the discovery table. Without this a beacon can only be changed to
+    // one whose address you already know — and the way you learn an address is
+    // the discovery table, which until now only existed on the console.
+    g_scanRequested = true;
+    WifiLogger::requestFlushNow();
+    result = "discovery table queued for upload";
+    return true;
+  }
   if (strcmp(verb, "resetstats") == 0) {
     g_tracker.reset();
     result = "proximity stats reset";
@@ -1449,6 +1491,13 @@ void controlTask(void *) {
     // than on the WiFi task because the door has one owner.
     serviceRemoteCommands();
 
+    if (g_scanRequested) {
+      g_scanRequested = false;
+      StringStream out;
+      BleScanner::dumpTable(out, now);
+      WifiLogger::queueScanUpload(out.text);
+    }
+
     // A remote change that needs a reboot (a new beacon list) asked for one.
     // Wait for the uploader to go quiet first so the acknowledgement gets out,
     // and never reboot with the door open on a present animal.
@@ -1476,6 +1525,30 @@ void controlTask(void *) {
     //     detection that matters. See wifi_logger.h.
     const bool idle = !g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
                       g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen();
+#if PETDOOR_ENABLE_WIFI
+    // Refresh the snapshot the next upload will carry. Cheap, but there is no
+    // point rebuilding a string ten times a second for something sent every
+    // few minutes.
+    static uint32_t lastStatusMs = 0;
+    if (now - lastStatusMs >= 5000) {
+      lastStatusMs = now;
+      char line[192];
+      snprintf(line, sizeof(line),
+               "rssi=%d raw=%d dist=%s present=%d door=%s gap=%lu samples=%lu "
+               "adv=%lu weak=%lu heap=%lu up=%lu",
+               g_tracker.filteredRssi(), g_tracker.rawRssi(),
+               fmt1(g_tracker.distanceM()).c_str(),
+               g_tracker.isPresent() ? 1 : 0,
+               DoorController::stateName(g_door.state()),
+               static_cast<unsigned long>(g_tracker.maxGapMs()),
+               static_cast<unsigned long>(g_tracker.totalSamples()),
+               static_cast<unsigned long>(BleScanner::advCount()),
+               static_cast<unsigned long>(g_tracker.weakSamples()),
+               static_cast<unsigned long>(ESP.getFreeHeap()),
+               static_cast<unsigned long>(millis() / 1000));
+      WifiLogger::setStatusLine(line);
+    }
+#endif
     WifiLogger::tick(now, idle);
 
     // 5. Diagnostics.

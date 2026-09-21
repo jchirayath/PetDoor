@@ -347,6 +347,8 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 | `REMOTE_CMD_QUEUE_DEPTH` | `12` | Most commands accepted from one reply. |
 | `REMOTE_CMD_MAX_LEN` | `128` | Longest single command line. A MAC list is the long one. |
 | `REMOTE_RESTART_DELAY_MS` | `20000` | Delay before a restart a command asked for, so the acknowledgement is uploaded first. |
+| `OTA_REQUIRE_CONFIRM` | `1` | Hold a freshly flashed image unconfirmed until it completes an upload; the bootloader restores the previous image if it never does. The Arduino core otherwise confirms every image at boot, making rollback unreachable. |
+| `WIFI_HEARTBEAT_MS` | `1800000` | Call in at least this often even while the animal is home. `0` disables it, and the door then only speaks when the beacon is away. |
 | `NTP_SERVER` | `"pool.ntp.org"` | Used to set the clock, so log entries carry real timestamps. |
 
 ### Why uploads are deferred rather than immediate

@@ -92,6 +92,14 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS commands_pending
             ON commands(device, delivered);
+        -- Discovery-table dumps, uploaded on request. This is how you find a
+        -- new beacon's address on a door you cannot plug into.
+        CREATE TABLE IF NOT EXISTS scans (
+            device TEXT NOT NULL,
+            epoch  INTEGER NOT NULL,
+            text   TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS scans_device ON scans(device, epoch);
         CREATE TABLE IF NOT EXISTS devices (
             device   TEXT PRIMARY KEY,
             version  TEXT,
@@ -113,7 +121,8 @@ def init_db():
 FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
 
 VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
-               "openfilter", "macs", "door", "resetstats", "defaults")
+               "openfilter", "macs", "door", "resetstats", "defaults",
+               "scan", "reboot")
 
 
 def queue_command(device, command):
@@ -156,6 +165,20 @@ def record_ack(device, text):
         conn.execute(
             "UPDATE commands SET ack=? WHERE device=? AND delivered IS NOT NULL "
             "AND ack IS NULL", (text[:200], device))
+
+
+def _ensure_column(conn, table, column, decl):
+    """Add a column to an existing database. Older installs predate these."""
+    have = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in have:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
+def migrate():
+    with db() as conn:
+        _ensure_column(conn, "devices", "status", "TEXT")
+        _ensure_column(conn, "devices", "door_ip", "TEXT")
+        _ensure_column(conn, "devices", "remote", "INTEGER")
 
 
 def get_key():
@@ -466,9 +489,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             boots = int(self.headers.get("X-PetDoor-Boot") or 0)
         except ValueError:
             boots = 0
+        # A discovery-table dump, not events. Filed separately so the CSV
+        # parser never has to guess what it is looking at.
+        if self.headers.get("X-PetDoor-Kind") == "scan":
+            text = body.decode("utf-8", "replace")[:20000]
+            with db() as conn:
+                conn.execute("INSERT INTO scans(device,epoch,text) VALUES(?,?,?)",
+                             (device, int(time.time()), text))
+                # Two is plenty: the latest, and the one before it to compare.
+                conn.execute(
+                    "DELETE FROM scans WHERE device=? AND epoch NOT IN "
+                    "(SELECT epoch FROM scans WHERE device=? ORDER BY epoch DESC LIMIT 2)",
+                    (device, device))
+            self.log_message("%s: discovery table stored (%d bytes)", device, len(text))
+            return self._send(200, json.dumps({"scan": "stored"}) + "\n",
+                              "application/json")
+
         rows = parse_csv(body.decode("utf-8", "replace"))
         added = store(device, rows)
-        note_device(device, version, build, boots, self.client_address[0])
+        # The door's OWN address, not the proxy's. self.client_address is
+        # whatever last hop connected — behind a reverse proxy that is the
+        # proxy, which is no use for pushing an update to.
+        door_ip = self.headers.get("X-PetDoor-IP") or self.client_address[0]
+        note_device(device, version, build, boots, door_ip)
+        with db() as conn:
+            conn.execute(
+                "UPDATE devices SET status=?, door_ip=?, remote=? WHERE device=?",
+                (self.headers.get("X-PetDoor-Status"), door_ip,
+                 1 if self.headers.get("X-PetDoor-Remote") == "1" else 0, device))
         self.log_message("%s v%s boot#%d: %d events, %d new (%s)",
                          device, version or "?", boots, len(rows), added, reason)
 
@@ -561,9 +609,14 @@ def main():
                     help="show queued, delivered and acknowledged commands")
     ap.add_argument("--clear-commands", action="store_true",
                     help="drop commands that have not been delivered yet")
+    ap.add_argument("--doors", action="store_true",
+                    help="show each door: firmware, address to push to, and what it sees")
+    ap.add_argument("--scan", action="store_true",
+                    help="show the last discovery table a door uploaded")
     args = ap.parse_args()
 
     init_db()
+    migrate()
 
     if args.init:
         if not get_key():
@@ -573,7 +626,7 @@ def main():
         print("\nPut this in petdoor/secrets.h:")
         print(f'  #define LOG_SHARED_KEY "{get_key()}"')
         return
-    if args.commands or args.queue or args.clear_commands:
+    if args.commands or args.queue or args.clear_commands or args.doors or args.scan:
         with db() as conn:
             known = [r["device"] for r in conn.execute("SELECT device FROM devices")]
         target = args.device
@@ -604,6 +657,32 @@ def main():
             if not ok:
                 raise SystemExit(1)
             print("The door collects it on its next upload. Watch with --commands.")
+
+        if args.doors:
+            with db() as conn:
+                for d in conn.execute("SELECT * FROM devices ORDER BY device"):
+                    age = int(time.time()) - (d["last_seen"] or 0)
+                    print(f"  {d['device']}")
+                    print(f"    firmware   : v{d['version'] or '?'}  ({d['build'] or '?'})")
+                    print(f"    boots      : #{d['boots'] or 0}")
+                    print(f"    last heard : {age // 60} min ago")
+                    print(f"    push to    : {d['door_ip'] or '(unknown — needs newer firmware)'}")
+                    print(f"    commands   : {'accepted' if d['remote'] else 'NOT SUPPORTED by this build'}")
+                    if d["status"]:
+                        print(f"    sees       : {d['status']}")
+                    print()
+
+        if args.scan:
+            with db() as conn:
+                rows = list(conn.execute(
+                    "SELECT device,epoch,text FROM scans ORDER BY epoch DESC LIMIT 1"))
+            if not rows:
+                print("No discovery table has been uploaded.")
+                print("Ask for one with:  --queue scan")
+            for r in rows:
+                when = dt.datetime.fromtimestamp(r["epoch"]).strftime("%Y-%m-%d %H:%M")
+                print(f"{r['device']} — discovery table at {when}\n")
+                print(r["text"])
 
         if args.commands:
             with db() as conn:
