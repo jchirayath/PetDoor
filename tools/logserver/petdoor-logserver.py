@@ -452,8 +452,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 rows = conn.execute("SELECT device,epoch,uptime,boot,type,detail,rssi "
                                     "FROM events ORDER BY epoch, boot, uptime").fetchall()
                 devs = conn.execute("SELECT * FROM devices").fetchall()
+            with db() as conn:
+                # Config changes, so the dashboard can mark WHEN the door's
+                # behaviour was altered against the behaviour itself. A shift in
+                # the daily rhythm means something different if you changed the
+                # exit threshold that morning.
+                cmds = conn.execute(
+                    "SELECT device,command,queued,delivered,ack FROM commands "
+                    "WHERE delivered IS NOT NULL ORDER BY delivered DESC LIMIT 60"
+                ).fetchall()
             return self._send(200, json.dumps({"events": [dict(r) for r in rows],
-                                               "devices": [dict(d) for d in devs]}),
+                                               "devices": [dict(d) for d in devs],
+                                               "commands": [dict(c) for c in cmds]}),
                               "application/json; charset=utf-8")
         if path.startswith("/table"):
             return self._send(200, render(), "text/html; charset=utf-8")

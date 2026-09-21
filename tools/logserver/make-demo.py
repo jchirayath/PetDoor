@@ -70,10 +70,36 @@ def synthesise(days=21):
                      "uptime": uptime, "boot": 1, "type": typ,
                      "detail": 1 if typ == "BOOT" else 0, "rssi": rssi})
     newest = max(r["epoch"] for r in rows)
-    devices = [{"device": "petdoor-sample", "version": "1.0.0",
-                "build": "Sep 20 2026 00:26:25", "boots": 1,
-                "last_seen": newest, "last_ip": ""}]
-    return {"events": rows, "devices": devices}
+    devices = [{"device": "petdoor-sample", "version": "1.1.0",
+                "build": "Sep 20 2026 17:30:00", "boots": 1,
+                "last_seen": newest, "last_ip": "",
+                # What the door reports about itself on every upload.
+                "status": ("rssi=-61 raw=-63 dist=1.2 present=0 door=CLOSED "
+                           "gap=1840 samples=48210 adv=2104883 weak=61 "
+                           "heap=141208 up=186420"),
+                "door_ip": "192.168.1.57",
+                "remote": 1}]
+    # A few settings changes, so the panel shows what it is for rather than an
+    # empty state. Same shape the server returns: delivered, with the door's
+    # own verdict — including one it refused, because that is the interesting
+    # case and a demo that only shows successes teaches the wrong lesson.
+    day = 86400
+    commands = [
+        {"device": "petdoor-sample", "command": "thresholds -58 -68",
+         "queued": newest - 6 * day, "delivered": newest - 6 * day + 240,
+         "ack": "1 applied"},
+        {"device": "petdoor-sample", "command": "pulse 500",
+         "queued": newest - 4 * day, "delivered": newest - 4 * day + 180,
+         "ack": "1 applied"},
+        {"device": "petdoor-sample", "command": "openfilter 11 0.2",
+         "queued": newest - 2 * day, "delivered": newest - 2 * day + 300,
+         "ack": "0 applied, 1 refused: open filter rejected: must not be "
+                "slower than the close filter"},
+        {"device": "petdoor-sample", "command": "dwell 1500 12000 5000",
+         "queued": newest - day, "delivered": newest - day + 210,
+         "ack": "1 applied"},
+    ]
+    return {"events": rows, "devices": devices, "commands": commands}
 
 
 BANNER = """
