@@ -87,6 +87,8 @@ Everything the serial console can set, and nothing else.
 | `resetstats` | Zero the proximity statistics |
 | `ota` | Open an OTA window so you can push new firmware |
 | `defaults` | Revert every stored setting to the compiled-in values |
+| `scan` | Upload the discovery table — how you learn a new beacon's address |
+| `reboot` | Restart, after the acknowledgement has been sent |
 
 Each one calls **the same setter the serial console calls**, so the validation
 that protects a person at the keyboard protects the network path identically.
@@ -188,6 +190,88 @@ direction had no equivalent until the nonce.
 
 The OTA password is still what guards an actual firmware push. This guards the
 trigger.
+
+---
+
+## Seeing what the door sees
+
+You cannot tune a threshold you cannot read, and you cannot point the door at a
+new beacon whose address you have no way to discover. Both used to be
+console-only.
+
+Every upload now carries a status line, and `--doors` shows it:
+
+```
+  back-door
+    firmware   : v1.1.0  (Sep 20 2026)
+    boots      : #31
+    last heard : 0 min ago
+    push to    : 192.168.1.57
+    commands   : accepted
+    sees       : rssi=-63 raw=-63 dist=1.4 present=1 door=OPEN gap=2087
+                 samples=1246 adv=62845 weak=9 heap=138420 up=676
+```
+
+`push to` is the door's **own** address, which it now reports itself. The server
+sees only whatever last hop connected — behind a reverse proxy that is the
+proxy, so before this the door could open an OTA window and leave you with
+nowhere to aim.
+
+`commands: NOT SUPPORTED` means that door is running firmware from before this
+existed, and anything you queue will sit there. The server says so rather than
+letting you wonder.
+
+For the beacons themselves:
+
+```bash
+python3 petdoor-logserver.py --queue scan
+python3 petdoor-logserver.py --scan          # after the next upload
+```
+
+```
+back-door — discovery table at 2026-09-20 17:29
+
+MAC                 RSSI   Age    Class      Name / data
+ac:23:3f:25:17:0a   -52    118ms  Minew      MST01 mfg=4c000215...
+d4:8a:39:11:22:33   -81    402ms  phone      (random address)
+```
+
+Same rendering the console produces — one implementation, so the remote view
+cannot drift from it. That is how you get the address for `macs`.
+
+---
+
+## A bad push rolls itself back
+
+The door holds a freshly flashed image **unconfirmed** until it proves it can
+still be reached, and marks it good only after a **successful upload**. Reboot
+before that and the bootloader puts the previous image back.
+
+This matters more than it sounds. The Arduino core normally confirms every
+image at boot, before any of this firmware runs — so the bootloader's rollback
+could never fire, and an image that booted but could not join WiFi was
+permanent. On a door you can walk up to, harmless. On one screwed to a wall,
+that is the ladder.
+
+```
+[ota] image confirmed good (upload succeeded); rollback cancelled
+```
+
+The honest cost: if your server is down for a long stretch **and** the door
+reboots, it rolls back a perfectly good image. That is the right way round —
+re-pushing is easy and a ladder is not. `OTA_REQUIRE_CONFIRM 0` turns it off.
+
+---
+
+## It calls in even when the animal is home
+
+Uploads used to happen only while the beacon was away and the door shut, which
+is sensible — the radio is shared, and talking costs BLE sampling. But a pet
+that stays in all weekend kept the door silent, and a silent door collects no
+commands.
+
+Past `WIFI_HEARTBEAT_MS` (30 minutes) it now calls in regardless. One burst
+every half hour is a rounding error against losing the channel for two days.
 
 ---
 

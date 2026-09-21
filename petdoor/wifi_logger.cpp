@@ -3,6 +3,7 @@
 #if PETDOOR_ENABLE_WIFI
 
 #include <ArduinoOTA.h>
+#include <esp_ota_ops.h>
 #include <HTTPClient.h>
 #if LOG_ALLOW_TLS
 #include <WiFiClientSecure.h>
@@ -12,6 +13,18 @@
 #include <time.h>
 
 #include "eventlog.h"
+
+// Tell the Arduino core NOT to decide at boot whether a freshly flashed image
+// is good. Left alone it confirms every image before this firmware runs a
+// single line, which makes the bootloader's rollback unreachable — and an
+// image that boots but cannot join WiFi is then permanent.
+//
+// Returning true defers that judgement to confirmImage() below.
+#if OTA_REQUIRE_CONFIRM
+extern "C" bool verifyRollbackLater() {
+  return true;
+}
+#endif
 
 namespace WifiLogger {
 
@@ -44,6 +57,49 @@ char g_ackText[96] = {0};
 // because the server rejects timestamps outside its skew window. The reply
 // direction had no equivalent.
 char g_nonce[33] = {0};
+#endif
+
+// Telemetry, not remote control: these ride every upload so a door can be
+// understood from the server even in a build that refuses to take orders.
+// Keep them OUTSIDE the REMOTE_CONFIG guard.
+//
+// Filled by the control task, which owns the tracker and the door; the WiFi
+// task only sends the string it was handed.
+char g_statusLine[192] = {0};
+
+// A pending discovery-table dump. A String rather than a fixed buffer because
+// it is several KB and exists only between a `scan` request and the next flush.
+String g_scanPayload;
+
+#if OTA_REQUIRE_CONFIRM
+bool g_imageConfirmed = false;
+
+// Confirm the running image if the bootloader is still waiting to hear that it
+// works. Called only once an upload has SUCCEEDED, because reaching the server
+// is precisely the property worth proving: an image that boots but cannot be
+// managed is the one that must not be kept.
+void confirmImage(const char *why) {
+  if (g_imageConfirmed) return;
+  const esp_partition_t *running = esp_ota_get_running_partition();
+  esp_ota_img_states_t state;
+  if (running == nullptr || esp_ota_get_state_partition(running, &state) != ESP_OK) {
+    g_imageConfirmed = true;          // not an OTA slot; nothing to confirm
+    return;
+  }
+  if (state != ESP_OTA_IMG_PENDING_VERIFY) {
+    g_imageConfirmed = true;          // already settled
+    return;
+  }
+  if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+    g_imageConfirmed = true;
+    Serial.printf("[ota] image confirmed good (%s); rollback cancelled\r\n", why);
+  } else {
+    Serial.println(F("[ota] could not confirm image; it rolls back on next reboot"));
+  }
+}
+#endif
+
+#if REMOTE_CONFIG
 
 void newNonce() {
   static const char hexd[] = "0123456789abcdef";
@@ -297,6 +353,14 @@ bool post(const String &body) {
   http.addHeader("X-PetDoor-Version", PETDOOR_VERSION);
   http.addHeader("X-PetDoor-Build", PETDOOR_BUILD);
   http.addHeader("X-PetDoor-Boot", String(g_bootCount));
+  // Where to push an update to. The door used to print this to the serial
+  // console only, which is no use at all once it is on a wall: you could open
+  // an OTA window and still have nowhere to aim. The server sees the proxy's
+  // address, never the door's, so the door has to say.
+  http.addHeader("X-PetDoor-IP", WiFi.localIP().toString());
+  // A snapshot of what `s` shows on the console, so the door can be tuned by
+  // someone who cannot reach it. Compact on purpose: this rides every upload.
+  if (g_statusLine[0] != '\0') http.addHeader("X-PetDoor-Status", g_statusLine);
 
   const String ts = String(static_cast<unsigned long>(time(nullptr)));
   http.addHeader("X-PetDoor-Timestamp", ts);
@@ -347,6 +411,33 @@ bool post(const String &body) {
 }
 
 
+// Upload a discovery table. Same signing, same key, different Kind — so the
+// server can file it separately without guessing from the body.
+bool postScan(const String &text) {
+  WiFiClient plain;
+  HTTPClient http;
+  if (!http.begin(plain, LOG_ENDPOINT_URL)) return false;
+  http.setTimeout(8000);
+  http.addHeader("Content-Type", "text/plain");
+  http.addHeader("X-PetDoor-Id", LOG_DEVICE_ID);
+  http.addHeader("X-PetDoor-Kind", "scan");
+  const String ts = String(static_cast<unsigned long>(time(nullptr)));
+  http.addHeader("X-PetDoor-Timestamp", ts);
+  if (LOG_SHARED_KEY[0] != '\0') {
+    const String sig = signBody(text, LOG_SHARED_KEY, ts);
+    if (sig.length()) http.addHeader("X-PetDoor-Signature", sig);
+  }
+  const int code = http.POST(const_cast<uint8_t *>(
+                                 reinterpret_cast<const uint8_t *>(text.c_str())),
+                             text.length());
+  http.end();
+  if (code >= 200 && code < 300) {
+    g_scanPayload = String();      // delivered; do not repeat it
+    return true;
+  }
+  return false;
+}
+
 void doFlush() {
   g_busy = true;
   Serial.println(F("[wifi] radio up — BLE sampling is degraded until this finishes"));
@@ -363,11 +454,27 @@ void doFlush() {
   const String body = buildBody();
   const bool ok = post(body);
 
+  // A discovery table, if one was asked for. Sent as its own POST rather than
+  // mixed into the event body: it is not events, and the server's CSV parser
+  // should not have to tell the difference.
+  if (ok && g_scanPayload.length()) {
+    if (postScan(g_scanPayload)) {
+      Serial.printf("[cmd] uploaded discovery table (%u bytes)\r\n",
+                    g_scanPayload.length());
+    } else {
+      Serial.println(F("[cmd] discovery table upload failed; will retry next flush"));
+    }
+  }
+
   radioDown();
   g_lastUploadMs = millis();
   g_haveUploaded = true;
   if (ok) {
     g_uploads++;
+#if OTA_REQUIRE_CONFIRM
+    // Reaching the server is the capability a new image has to demonstrate.
+    confirmImage("upload succeeded");
+#endif
     Serial.printf("[wifi] uploaded %u events%s\r\n", EventLog::count(),
                   g_clockSynced ? ", clock synced" : "");
   } else {
@@ -481,8 +588,27 @@ void tick(uint32_t nowMs, bool idle) {
   if (!configured()) return;
   g_idleNow = idle;
 
-  if (!idle) {
+  // A door that only speaks while the animal is out is a door that goes silent
+  // for a whole rainy weekend — and a silent door collects no commands and
+  // reports no status. So past WIFI_HEARTBEAT_MS, call in regardless.
+  //
+  // This deliberately costs BLE time at a moment the beacon may be present,
+  // which is exactly what the idle gate exists to avoid. Half an hour between
+  // bursts makes that a rounding error; losing the channel does not.
+  const bool overdue =
+#if WIFI_HEARTBEAT_MS > 0
+      g_haveUploaded && (nowMs - g_lastUploadMs) >= WIFI_HEARTBEAT_MS;
+#else
+      false;
+#endif
+
+  if (!idle && !overdue) {
     g_idleValid = false;
+    return;
+  }
+  if (overdue && !g_busy && !g_otaOpen) {
+    g_idleValid = false;
+    g_flushRequested = true;
     return;
   }
   if (!g_idleValid) {
@@ -492,7 +618,7 @@ void tick(uint32_t nowMs, bool idle) {
   }
   if ((nowMs - g_idleSinceMs) < WIFI_IDLE_SETTLE_MS) return;
   if (g_haveUploaded && (nowMs - g_lastUploadMs) < WIFI_MIN_UPLOAD_INTERVAL_MS) return;
-  if (EventLog::count() == 0) return;
+  if (EventLog::count() == 0) return;   // nothing to say yet (first boot only)
   if (g_busy) return;
 
   g_idleValid = false;  // re-arm only after another settled idle period
@@ -554,6 +680,21 @@ void setAck(const char *text) {
 }
 #endif
 
+void queueScanUpload(const String &text) { g_scanPayload = text; }
+
+void setStatusLine(const char *text) {
+  strncpy(g_statusLine, text ? text : "", sizeof(g_statusLine) - 1);
+  g_statusLine[sizeof(g_statusLine) - 1] = '\0';
+}
+
+bool imageConfirmed() {
+#if OTA_REQUIRE_CONFIRM
+  return g_imageConfirmed;
+#else
+  return true;
+#endif
+}
+
 void printStatus(Stream &out) {
   if (!configured()) {
     out.println(F("  wifi         : not configured (no WIFI_SSID)"));
@@ -588,6 +729,9 @@ void tick(uint32_t, bool) {}
 void requestFlushNow() {
   Serial.println(F("[wifi] not compiled in (PETDOOR_ENABLE_WIFI is 0)"));
 }
+void setStatusLine(const char *) {}
+void queueScanUpload(const String &) {}
+bool imageConfirmed() { return true; }
 bool busy() { return false; }
 uint32_t stackFreeBytes() { return 0; }
 bool otaWindowOpen() { return false; }
