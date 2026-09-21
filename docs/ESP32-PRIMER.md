@@ -195,6 +195,8 @@ sudo usermod -aG dialout $USER     # then log out and back in
 **1. A charge-only USB cable.** No port appears. Try another cable first.
 
 **2. "Failed to connect to ESP32".** The board needs to be in download mode.
+Full field procedure, including what to bring and what to do before you leave
+the desk, is in [FLASHING.md](FLASHING.md).
 Most boards do this automatically. If yours does not (common with bare modules
 or hand-wired USB-serial adapters), hold **IO0**, tap **EN**, release **IO0**,
 then upload. Full detail in

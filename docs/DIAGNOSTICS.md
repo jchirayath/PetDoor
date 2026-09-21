@@ -789,6 +789,9 @@ Both relays must be **released at idle**. If one sits energised, invert
 
 ## Flashing a board with no auto-reset
 
+> Doing this at an installed door? [FLASHING.md](FLASHING.md) is the field
+> runbook — what to bring, what to build first, and the order to do it in.
+
 Most dev boards reset themselves when `arduino-cli` uploads. Some wiring — a
 bare module, or a USB-TTL adapter with only GND/TX/RX connected — has no
 DTR→IO0 / RTS→EN path, and the upload fails:
