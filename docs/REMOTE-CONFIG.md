@@ -7,6 +7,10 @@ back.
 > **Requires the log server.** A door with no `LOG_ENDPOINT_URL` has no channel
 > to be managed over, and nothing here applies. See
 > [LOG-SERVER.md](LOG-SERVER.md).
+>
+> **And requires one flash to get here.** A door running firmware from before
+> this existed cannot be told about it remotely — that is the loop this closes.
+> See [FLASHING.md](FLASHING.md).
 
 ---
 
