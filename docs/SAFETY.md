@@ -55,6 +55,12 @@ your mechanism.
   [WIRING.md](WIRING.md#which-output-terminals-to-use).
 - **The beacon being left inside the coop.** The door will simply stay open.
   This is the safe failure, but it is a failure.
+- **A door you locked remotely.** `lock` stops the beacon opening the door, by
+  design — so an animal outside cannot let itself back in. The firmware cannot
+  tell which side of the door it is on, and will not guess. `door open` still
+  works while locked and is the way to let it in; turnaround is one upload
+  interval, typically minutes. Do not use the lock for something you may need
+  to undo in seconds.
 - **A beacon carried by a predator-sized animal.** Anything holding the beacon
   opens the door. Proximity is the whole authentication model.
 - **Anything broadcasting your beacon's address.** BLE advertisements are

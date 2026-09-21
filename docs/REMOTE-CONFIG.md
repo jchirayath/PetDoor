@@ -84,6 +84,7 @@ Everything the serial console can set, and nothing else.
 | `openfilter <window> <alpha>` | The open-path filter |
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
 | `door open\|close\|auto` | Actuate now, or clear a manual hold |
+| `lock` / `unlock` | Stop the beacon opening the door — see below |
 | `resetstats` | Zero the proximity statistics |
 | `ota` | Open an OTA window so you can push new firmware |
 | `defaults` | Revert every stored setting to the compiled-in values |
@@ -190,6 +191,56 @@ direction had no equivalent until the nonce.
 
 The OTA password is still what guards an actual firmware push. This guards the
 trigger.
+
+---
+
+## Locking the door
+
+```bash
+python3 petdoor-logserver.py --queue lock
+python3 petdoor-logserver.py --queue unlock
+```
+
+**Locked means the beacon can no longer open the door.** Use it to keep an
+animal in overnight, before a vet trip, or while the coop is being cleaned —
+without taking the collar off or changing any thresholds.
+
+It is deliberately narrow, and each limit is a decision:
+
+**It does not close a door that is already open.** Locking states a rule about
+*future* opens; it does not slam a door an animal may be standing in. A locked
+door that is open settles shut on its own when the beacon leaves, through the
+normal close path with every dwell and interlock intact.
+
+**It does not block closing.** Closing is the safe direction and is never gated
+on anything.
+
+**It does not block you.** `door open` still works while locked, from the
+console or the server — the lock is about the collar, not the owner.
+
+That last point is the important one:
+
+> ### If the animal is shut outside
+>
+> A locked door will not let it back in. It is a lock; that is what a lock does.
+>
+> **`--queue door open` still works while locked**, and applies the usual
+> manual hold, so you can let it in without unlocking and losing the state you
+> wanted. That is the escape hatch, and it is the reason the lock does not
+> block manual actuation.
+>
+> Turnaround is still one upload interval. A lock is not the right tool for
+> something you may need to undo in seconds.
+
+**It survives a reboot.** A lock that a power cut silently clears is not a lock.
+The cost is that it also survives a reboot you did not intend, which is why the
+boot banner, `s`, the status line and the dashboard all say so — and why the
+door's status LED gives a locked-and-shut door a *double* blip, so a glance
+tells you whether it is merely closed or closed against the collar.
+
+**`defaults` does not clear it.** That command exists to undo a bad tuning
+change; quietly unlocking a door as a side effect would be a surprise in the one
+direction that matters.
 
 ---
 

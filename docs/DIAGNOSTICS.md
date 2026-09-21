@@ -219,6 +219,8 @@ Type a single character. No Enter needed; newlines are ignored.
 | `t` | Edit the open/close thresholds, saved on the device |
 | `w` | Edit dwell times and the actuation lockout, saved on the device |
 | `O` | Clear a manual hold, handing the door back to the beacon |
+| `k` | **Lock** — the beacon may no longer open the door. Survives reboot. |
+| `K` | Unlock |
 | `f` | Edit both filter shapes — the slow close filter and the fast open filter — saved on the device |
 | `!` | Reboot into flash mode — no IO0/EN buttons needed |
 

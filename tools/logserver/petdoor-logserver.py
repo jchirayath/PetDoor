@@ -122,7 +122,7 @@ FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
 
 VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
-               "scan", "reboot")
+               "scan", "reboot", "lock", "unlock")
 
 
 def queue_command(device, command):
