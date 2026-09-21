@@ -154,6 +154,7 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
   border:1px solid var(--line);color:var(--ink-2);background:var(--sunk)}
 .pill.in{background:var(--in-soft);border-color:var(--in);color:var(--in)}
 .pill.out{background:var(--out-soft);border-color:var(--out);color:var(--out)}
+.pill.lock{background:var(--fault-soft);border-color:var(--fault);color:var(--fault)}
 .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
 .dim{color:var(--ink-3)}
 </style>
@@ -594,6 +595,10 @@ function renderDoors(devs){
       rows+=`<div class="live">`
         +`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
         +`<span class="pill ${st.door==="OPEN"?"in":""}">door ${esc(st.door||"?")}</span>`
+        // A locked door will not open for the collar. That is the one state
+        // worth shouting about, because from the outside it looks identical to
+        // a door that is simply shut.
+        +(st.locked==="1"?`<span class="pill lock">LOCKED — collar cannot open it</span>`:"")
         +`</div>`
         +`<div class="m">${esc(st.rssi)} dBm`
         +(st.dist?` &middot; ~${esc(st.dist)} m`:"")

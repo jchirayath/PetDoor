@@ -77,6 +77,11 @@ uint32_t loadStoredDirectionGap();
 void storeDirectionGap(uint32_t ms);
 
 // Relay pulse width. 0 means "nothing saved, use the compiled-in default".
+// The lock: when set, proximity may no longer OPEN the door. Persisted,
+// because a lock a power blip clears is not a lock.
+bool loadStoredLock();
+void storeLock(bool locked);
+
 uint32_t loadStoredPulseMs();
 void storePulseMs(uint32_t ms);
 

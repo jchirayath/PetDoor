@@ -608,6 +608,21 @@ uint32_t loadStoredDirectionGap() {
   return g;
 }
 
+bool loadStoredLock() {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const bool locked = prefs.getBool("locked", false);
+  prefs.end();
+  return locked;
+}
+
+void storeLock(bool locked) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putBool("locked", locked);
+  prefs.end();
+}
+
 uint32_t loadStoredPulseMs() {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return 0;

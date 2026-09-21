@@ -141,6 +141,28 @@ uint32_t g_manualHoldUntilMs = 0;
 // it with it. Same signed-delta comparison as everywhere else in this file.
 uint32_t g_restartAtMs = 0;
 
+// When set, the beacon may no longer open the door.
+//
+// WHAT IT DOES NOT DO, and each of these is deliberate:
+//
+//   It does not close a door that is already open. Locking sets a rule about
+//   FUTURE opens; it does not slam a door an animal may be standing in. The
+//   normal close path still runs when the beacon leaves, so a locked door
+//   settles shut on its own and then stays shut.
+//
+//   It does not block closing. Closing is the safe direction and is never
+//   gated on anything.
+//
+//   It does not block YOU. `door open`, from the console or from the server,
+//   still works while locked — the lock is about the collar, not the owner.
+//   That is the escape hatch: if the animal is shut out, you can let it in
+//   without first unlocking and losing the state you wanted.
+//
+// It IS persisted, because a lock that a power cut silently clears is not a
+// lock. The cost is that it survives a reboot you did not intend, which is why
+// every status line says so in capitals.
+bool g_locked = false;
+
 // Set by a `scan` command: upload the discovery table with the next flush.
 bool g_scanRequested = false;
 
@@ -268,6 +290,8 @@ void printHelp() {
   Serial.println(F("  o  pulse the OPEN relay now, and hold it open (see 'O')"));
   Serial.println(F("  x  pulse the CLOSE relay now, and clear any hold"));
   Serial.println(F("  O  clear the manual hold, handing control back to the beacon"));
+  Serial.println(F("  k  LOCK — the beacon may no longer open the door"));
+  Serial.println(F("  K  unlock"));
 #endif
   Serial.println(F("status LED:"));
   Serial.println(F("  solid        door last OPENED"));
@@ -347,6 +371,9 @@ void printStatus(uint32_t nowMs) {
                 g_tracker.maxGapMs() > SAMPLE_MAX_AGE_MS ? "  << EXCEEDS SAMPLE_MAX_AGE_MS" : "");
   Serial.printf("  relay pulse  : %lu ms\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
+  if (g_locked) {
+    Serial.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
+  }
   {
     const uint32_t heldFor = manualHoldRemainingMs(millis());
     if (heldFor > 0) {
@@ -1101,6 +1128,17 @@ void handleSerial(uint32_t nowMs) {
         g_manualHoldUntilMs = 0;
         g_door.forcePulseClose();
         break;
+      case 'k':
+        g_locked = true;
+        BleScanner::storeLock(true);
+        Serial.println(F("[cmd] LOCKED — the beacon can no longer open this door"));
+        Serial.println(F("[cmd] 'o' still opens it by hand; 'K' unlocks."));
+        break;
+      case 'K':
+        g_locked = false;
+        BleScanner::storeLock(false);
+        Serial.println(F("[cmd] unlocked — the beacon controls the door again"));
+        break;
       case 'O':
         if (g_manualHoldUntilMs != 0) {
           g_manualHoldUntilMs = 0;
@@ -1155,7 +1193,12 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
         on = true;                      // solid
         break;
       case DOOR_CLOSED:
-        on = (nowMs % 2000) < 200;      // brief blip every 2 s
+        // Locked reads as a DOUBLE blip, so a glance tells you whether the
+        // door is merely shut or shut against the collar.
+        on = g_locked
+                 ? ((nowMs % 2000) < 150 ||
+                    ((nowMs % 2000) > 300 && (nowMs % 2000) < 450))
+                 : (nowMs % 2000) < 200;
         break;
       default:
         on = false;
@@ -1177,6 +1220,12 @@ void driveDoor(uint32_t nowMs) {
   // The resulting state change is announced by reportTransitions(), which also
   // covers the manual `o` / `x` pulses. Reporting in one place keeps a single
   // line per change rather than one here and another there.
+  // The lock: proximity may not open the door. Checked before anything else
+  // because it is the strongest statement about what this door is allowed to
+  // do — but note it gates only the OPEN path below. A locked door that is
+  // open still closes normally when the beacon goes away.
+  if (g_locked && g_tracker.isPresent()) return;
+
   // A manual hold suppresses automatic CLOSING only. Opening is never blocked:
   // if the beacon turns up mid-hold the door is already open, and a manual `x`
   // must never be able to keep the door shut against an animal walking up to
@@ -1400,6 +1449,21 @@ bool applyRemoteCommand(const char *line, String &result) {
     result = "door takes open, close or auto";
     return false;
   }
+  if (strcmp(verb, "lock") == 0 || strcmp(verb, "unlock") == 0) {
+    const bool want = (verb[0] == 'l');
+    g_locked = want;
+    BleScanner::storeLock(want);
+    if (want) {
+      // Say what it means rather than just that it happened. Someone reading
+      // this back on a dashboard days later needs to know an animal outside
+      // cannot let itself in.
+      result = "LOCKED — the beacon can no longer open this door; "
+               "`door open` still can";
+    } else {
+      result = "unlocked — the beacon controls the door again";
+    }
+    return true;
+  }
   if (strcmp(verb, "reboot") == 0) {
     // Deferred like the beacon-list restart, so the acknowledgement gets out
     // before the reboot takes it with it.
@@ -1437,7 +1501,10 @@ bool applyRemoteCommand(const char *line, String &result) {
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
     g_thresholdsStored = g_timingStored = g_filterStored = g_fastFilterStored = false;
-    result = "reverted to compiled-in defaults (beacon MACs kept)";
+    // The lock is deliberately NOT cleared here. `defaults` is for undoing a
+    // bad tuning change; silently unlocking a door as a side effect of that
+    // would be a surprise in the one direction that matters.
+    result = "reverted to compiled-in defaults (beacon MACs and lock kept)";
     return true;
   }
   result = String("unknown command: ") + verb;
@@ -1534,12 +1601,12 @@ void controlTask(void *) {
       lastStatusMs = now;
       char line[192];
       snprintf(line, sizeof(line),
-               "rssi=%d raw=%d dist=%s present=%d door=%s gap=%lu samples=%lu "
-               "adv=%lu weak=%lu heap=%lu up=%lu",
+               "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d gap=%lu "
+               "samples=%lu adv=%lu weak=%lu heap=%lu up=%lu",
                g_tracker.filteredRssi(), g_tracker.rawRssi(),
                fmt1(g_tracker.distanceM()).c_str(),
                g_tracker.isPresent() ? 1 : 0,
-               DoorController::stateName(g_door.state()),
+               DoorController::stateName(g_door.state()), g_locked ? 1 : 0,
                static_cast<unsigned long>(g_tracker.maxGapMs()),
                static_cast<unsigned long>(g_tracker.totalSamples()),
                static_cast<unsigned long>(BleScanner::advCount()),
@@ -1628,6 +1695,15 @@ void setup() {
     }
     const uint32_t gap = BleScanner::loadStoredDirectionGap();
     if (gap) g_door.setDirectionGapMs(gap);   // floor enforced inside
+  }
+
+  // Said loudly because it survives a reboot by design, and a door that will
+  // not open for the collar is exactly the thing someone needs to be told
+  // about before they start wondering why the animal is outside.
+  g_locked = BleScanner::loadStoredLock();
+  if (g_locked) {
+    Serial.println(F("  !! THIS DOOR IS LOCKED — the beacon cannot open it"));
+    Serial.println(F("  !! 'K' unlocks, or queue `unlock` from the log server"));
   }
 
   if (!BleScanner::begin()) {
