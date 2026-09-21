@@ -265,6 +265,37 @@ As a free stopgap, move the load to the module's **other channel** — fewer
 operations means less film, and if that channel works reliably it confirms the
 diagnosis outright.
 
+**1b. Does the door's OWN button sometimes need pressing twice?**
+
+If pressing the physical button by hand occasionally does nothing, and a second
+press works, then the controller is swallowing presses and the relay is not at
+fault at all. Try:
+
+```
+w
+presses 2 1000
+```
+
+Two presses a second apart, per actuation. Saved on the device, and settable
+remotely with `--queue presses 2 1000`.
+
+**This is a blind retry, and it can make things worse.** The door has no
+position feedback, so it cannot tell whether the first press worked. If it did,
+the second arrives while the door is moving — and many controllers read a press
+mid-travel as *stop*. You would be trading "sometimes does not move" for
+"sometimes stops halfway", which is worse: a door parked halfway is neither open
+nor shut, and the firmware believes it is whichever it last commanded.
+
+So watch a dozen cycles before trusting it, and be specific about which failure
+you are trading for which. A position sensor is the real fix — it is the only
+thing that lets the door know whether it needs to try again.
+
+> This also explains a misleading symptom. A hand-short across COM/NO **bounces**
+> — finger contact is never clean — so it delivers several presses where the
+> relay delivers exactly one. "The hand-short works every time and the relay
+> does not" therefore does *not* prove the contacts are bad. It is equally
+> consistent with a controller that needs more than one press.
+
 **2. Lengthen the pulse.** Many door controllers debounce their button input and
 will ignore a tap shorter than 300–500 ms as electrical noise. This costs
 nothing to try and needs no reflash:

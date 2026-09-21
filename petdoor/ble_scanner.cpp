@@ -631,6 +631,26 @@ uint32_t loadStoredPulseMs() {
   return p;
 }
 
+void storePulseTrain(uint8_t count, uint32_t gapMs) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUChar("pulseN", count);
+  prefs.putUInt("pulseGap", gapMs);
+  prefs.end();
+}
+
+bool loadStoredPulseTrain(uint8_t &count, uint32_t &gapMs) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const uint8_t n = prefs.getUChar("pulseN", 0);
+  const uint32_t g = prefs.getUInt("pulseGap", 0);
+  prefs.end();
+  if (n == 0) return false;
+  count = n;
+  gapMs = g ? g : RELAY_PULSE_GAP_MS;
+  return true;
+}
+
 void storePulseMs(uint32_t ms) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
@@ -653,6 +673,8 @@ void clearStoredTiming() {
   prefs.remove("lockout");
   prefs.remove("dirGap");
   prefs.remove("pulseMs");
+  prefs.remove("pulseN");
+  prefs.remove("pulseGap");
   prefs.end();
 }
 

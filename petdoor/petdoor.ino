@@ -218,6 +218,15 @@ void printBanner() {
                 PIN_RELAY_CLOSE, RELAY_ACTIVE_LOW ? "LOW" : "HIGH");
   Serial.printf("  relay pulse   : %lu ms\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
+  if (g_door.pulseCount() > 1) {
+    Serial.printf("  presses       : %u per actuation, %lu ms apart\r\n",
+                  g_door.pulseCount(),
+                  static_cast<unsigned long>(g_door.pulseGapMs()));
+    // Worth saying out loud: this is a blind retry, and the failure it can
+    // introduce looks nothing like the one it fixes.
+    Serial.println(F("  !! repeat presses are sent blind — the door cannot tell whether"));
+    Serial.println(F("  !! the first worked. If it did, the second may stop it mid-travel."));
+  }
 #if DOOR_TRAVEL_MS > 0
   Serial.printf("  door travel   : %lu ms (measured, configured)\r\n",
                 static_cast<unsigned long>(DOOR_TRAVEL_MS));
@@ -670,6 +679,11 @@ void printTimingMenu() {
                 static_cast<unsigned long>(g_door.directionGapMs()));
   Serial.printf("  relay pulse  : %5lu ms held closed (the \"button press\")\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
+  if (g_door.pulseCount() > 1) {
+    Serial.printf("  presses      : %u per actuation, %lu ms apart\r\n",
+                  g_door.pulseCount(),
+                  static_cast<unsigned long>(g_door.pulseGapMs()));
+  }
   Serial.printf("  source       : %s\r\n", g_timingStored ? "saved on device" : "compiled in");
   Serial.println();
   Serial.printf("  MEASURED worst gap between samples: %lu ms\r\n",
@@ -682,6 +696,9 @@ void printTimingMenu() {
   Serial.println(F("    safe             1500 / 15000 / 5000 (the default)"));
   Serial.println(F("    gap 250          relay interlock dead time, ms (min 100)"));
   Serial.println(F("    pulse 200        how long the relay stays closed, ms (50-10000)"));
+  Serial.println(F("    presses 2 1000   press N times per actuation, ms apart (N 1-3)"));
+  Serial.println(F("      for a controller that sometimes swallows a press. Blind retry:"));
+  Serial.println(F("      if the first press DID take, the second may stop it mid-travel"));
   Serial.println(F("      raise this if the relay clicks but the door does not move:"));
   Serial.println(F("      many controllers debounce their button and ignore a short tap"));
   Serial.println(F("    clear            forget saved values"));
@@ -743,6 +760,7 @@ void processTimingLine(char *line) {
     g_door.setMinIntervalMs(MIN_ACTUATION_INTERVAL_MS);
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
+    g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
     g_timingStored = false;
     Serial.println(F("\r\n[dwell] reverted to the compiled-in defaults."));
     g_entry = ENTRY_NONE;
@@ -766,6 +784,34 @@ void processTimingLine(char *line) {
     g_timingStored = true;
     Serial.printf("\r\n[dwell] interlock gap now %lu ms (saved on device).\r\n",
                   static_cast<unsigned long>(ms));
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "presses ", 8) == 0) {
+    int n = 0; unsigned long g = 0;
+    if (sscanf(line + 8, "%d %lu", &n, &g) < 1) {
+      Serial.println(F("\r\n[dwell] give: presses <count> [gap ms], e.g. presses 2 1000"));
+      printTimingMenu();
+      return;
+    }
+    if (g == 0) g = g_door.pulseGapMs();
+    if (n < 1 || n > DoorController::kMaxPulseCount ||
+        !g_door.setPulseTrain(static_cast<uint8_t>(n), g)) {
+      Serial.printf("\r\n[dwell] rejected: count 1-%u, gap %lu-%lu ms.\r\n",
+                    DoorController::kMaxPulseCount,
+                    static_cast<unsigned long>(DoorController::kMinPulseGapMs),
+                    static_cast<unsigned long>(DoorController::kMaxPulseGapMs));
+      printTimingMenu();
+      return;
+    }
+    BleScanner::storePulseTrain(g_door.pulseCount(), g_door.pulseGapMs());
+    g_timingStored = true;
+    Serial.printf("\r\n[dwell] %u press(es) per actuation, %lu ms apart (saved).\r\n",
+                  g_door.pulseCount(), static_cast<unsigned long>(g_door.pulseGapMs()));
+    if (g_door.pulseCount() > 1) {
+      Serial.println(F("[dwell] blind retry: the door cannot tell whether the first"));
+      Serial.println(F("[dwell] press worked. Watch a dozen cycles before trusting it."));
+    }
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1359,6 +1405,22 @@ bool applyRemoteCommand(const char *line, String &result) {
     result = String("gap ") + g_door.directionGapMs();
     return true;
   }
+  if (strcmp(verb, "presses") == 0) {
+    const char *a = arg(), *b = arg();
+    if (!a) { result = "presses needs <count> [gap ms]"; return false; }
+    const long n = atol(a);
+    const uint32_t g = b ? strtoul(b, nullptr, 10) : g_door.pulseGapMs();
+    if (n < 1 || n > DoorController::kMaxPulseCount ||
+        !g_door.setPulseTrain(static_cast<uint8_t>(n), g)) {
+      result = "presses rejected (count 1-3, gap 200-5000 ms)";
+      return false;
+    }
+    BleScanner::storePulseTrain(g_door.pulseCount(), g_door.pulseGapMs());
+    g_timingStored = true;
+    result = String("presses ") + g_door.pulseCount() + " x, " +
+             g_door.pulseGapMs() + " ms apart";
+    return true;
+  }
   if (strcmp(verb, "pulse") == 0) {
     const char *a = arg();
     if (!a || !g_door.setPulseMs(strtoul(a, nullptr, 10))) {
@@ -1500,6 +1562,7 @@ bool applyRemoteCommand(const char *line, String &result) {
     g_door.setMinIntervalMs(MIN_ACTUATION_INTERVAL_MS);
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
+    g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
     g_thresholdsStored = g_timingStored = g_filterStored = g_fastFilterStored = false;
     // The lock is deliberately NOT cleared here. `defaults` is for undoing a
     // bad tuning change; silently unlocking a door as a side effect of that
@@ -1601,12 +1664,13 @@ void controlTask(void *) {
       lastStatusMs = now;
       char line[192];
       snprintf(line, sizeof(line),
-               "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d gap=%lu "
-               "samples=%lu adv=%lu weak=%lu heap=%lu up=%lu",
+               "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
+               "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu",
                g_tracker.filteredRssi(), g_tracker.rawRssi(),
                fmt1(g_tracker.distanceM()).c_str(),
                g_tracker.isPresent() ? 1 : 0,
                DoorController::stateName(g_door.state()), g_locked ? 1 : 0,
+               g_door.pulseCount(),
                static_cast<unsigned long>(g_tracker.maxGapMs()),
                static_cast<unsigned long>(g_tracker.totalSamples()),
                static_cast<unsigned long>(BleScanner::advCount()),
@@ -1691,6 +1755,11 @@ void setup() {
     }
     const uint32_t savedPulse = BleScanner::loadStoredPulseMs();
     if (savedPulse != 0 && g_door.setPulseMs(savedPulse)) {
+      g_timingStored = true;
+    }
+    uint8_t pn = RELAY_PULSE_COUNT;
+    uint32_t pg = RELAY_PULSE_GAP_MS;
+    if (BleScanner::loadStoredPulseTrain(pn, pg) && g_door.setPulseTrain(pn, pg)) {
       g_timingStored = true;
     }
     const uint32_t gap = BleScanner::loadStoredDirectionGap();

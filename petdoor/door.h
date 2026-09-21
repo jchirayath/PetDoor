@@ -110,6 +110,30 @@ class DoorController {
     return true;
   }
 
+  // Repeat presses, for a controller that occasionally swallows one.
+  //
+  // Capped at 3 because this is a blind retry: with no position feedback the
+  // door cannot know the first press worked, so every extra press is another
+  // chance to hit a moving door with what its controller may read as STOP.
+  // Two is a stopgap; three is already pushing it; more is not a fix, it is
+  // noise. See RELAY_PULSE_COUNT in config.h.
+  //
+  // The gap has a floor because two presses closer together than a
+  // controller's own debounce window are one press as far as it is concerned,
+  // which would make the whole setting do nothing.
+  static constexpr uint8_t kMaxPulseCount = 3;
+  static constexpr uint32_t kMinPulseGapMs = 200;
+  static constexpr uint32_t kMaxPulseGapMs = 5000;
+  uint8_t pulseCount() const { return pulseCount_; }
+  uint32_t pulseGapMs() const { return pulseGapMs_; }
+  bool setPulseTrain(uint8_t count, uint32_t gapMs) {
+    if (count < 1 || count > kMaxPulseCount) return false;
+    if (count > 1 && (gapMs < kMinPulseGapMs || gapMs > kMaxPulseGapMs)) return false;
+    pulseCount_ = count;
+    pulseGapMs_ = gapMs;
+    return true;
+  }
+
   static const char *stateName(DoorState s);
   static const char *resultName(ActuationResult r);
 
@@ -125,6 +149,8 @@ class DoorController {
   uint32_t minIntervalMs_ = MIN_ACTUATION_INTERVAL_MS;
   uint32_t directionGapMs_ = DIRECTION_CHANGE_GAP_MS;
   uint32_t pulseMs_ = RELAY_PULSE_MS;
+  uint8_t pulseCount_ = RELAY_PULSE_COUNT;
+  uint32_t pulseGapMs_ = RELAY_PULSE_GAP_MS;
   uint32_t openCount_ = 0;
   uint32_t closeCount_ = 0;
   uint32_t lockedOutCount_ = 0;

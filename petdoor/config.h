@@ -601,6 +601,40 @@
 #define ALLOW_MANUAL_SERIAL_CONTROL 1
 #endif
 
+// How many times to press the door's button per actuation, and how long to
+// leave between presses.
+//
+// 1 is the default and the right answer for a controller that reliably acts on
+// a single press. Some do not: a press is occasionally swallowed — by the
+// controller's own debouncing, by a marginal contact, or by firmware that was
+// busy — and the door simply does not move.
+//
+// If YOUR door sometimes needs its physical button pressed twice, this is the
+// same problem and 2 will paper over it.
+//
+// BUT READ THIS FIRST. The door has no position feedback: it cannot tell
+// whether the first press worked. So a repeat is sent blind, and if the first
+// press DID take, the second arrives while the door is moving. Many controllers
+// read a press mid-travel as STOP — in which case two presses turn "sometimes
+// does not move" into "sometimes stops halfway", which is worse, because a door
+// parked halfway is neither open nor shut and the firmware believes it is
+// whichever it last commanded.
+//
+// So: test it. Watch a dozen cycles before trusting it, and be specific about
+// which failure you are trading for which. The real fix is a position sensor,
+// which is the only thing that lets the door know whether it needs to try
+// again; this is a stopgap for the wait.
+#ifndef RELAY_PULSE_COUNT
+#define RELAY_PULSE_COUNT 1
+#endif
+
+// Gap between repeated presses. Long enough that the controller sees two
+// distinct presses rather than one long one; short enough to stay well inside
+// the actuation lockout. Only used when RELAY_PULSE_COUNT > 1.
+#ifndef RELAY_PULSE_GAP_MS
+#define RELAY_PULSE_GAP_MS 1000
+#endif
+
 // How long YOUR door takes to travel from fully open to fully closed, in ms.
 // 0 means "not measured" and disables the checks below.
 //

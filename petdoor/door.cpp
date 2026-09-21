@@ -37,9 +37,15 @@ void DoorController::pulse(uint8_t pin) {
   digitalWrite(other, RELAY_RELEASE);
   delay(directionGapMs_);
 
-  digitalWrite(pin, RELAY_ASSERT);
-  delay(pulseMs_);
-  digitalWrite(pin, RELAY_RELEASE);
+  // One press, or several for a controller that sometimes swallows one. The
+  // interlock above runs once: it guards against the OPPOSITE relay being
+  // energised, and repeats of the same relay cannot violate that.
+  for (uint8_t i = 0; i < pulseCount_; i++) {
+    if (i) delay(pulseGapMs_);
+    digitalWrite(pin, RELAY_ASSERT);
+    delay(pulseMs_);
+    digitalWrite(pin, RELAY_RELEASE);
+  }
 }
 
 bool DoorController::lockedOut(uint32_t nowMs) const {

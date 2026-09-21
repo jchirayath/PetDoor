@@ -83,6 +83,8 @@ bool loadStoredLock();
 void storeLock(bool locked);
 
 uint32_t loadStoredPulseMs();
+void storePulseTrain(uint8_t count, uint32_t gapMs);
+bool loadStoredPulseTrain(uint8_t &count, uint32_t &gapMs);
 void storePulseMs(uint32_t ms);
 
 // "Bluedroid" or "NimBLE" — which host stack this build is using. Reported in

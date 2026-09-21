@@ -84,6 +84,7 @@ Everything the serial console can set, and nothing else.
 | `dwell <open> <close> <lockout>` | Dwell times and the actuation lockout, ms |
 | `gap <ms>` | Relay interlock dead time |
 | `pulse <ms>` | How long the relay is held closed — the "button press" |
+| `presses <n> [gap]` | Press n times per actuation. For a controller that swallows presses; see the caveat in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-relay-clicks-but-the-door-does-not-move) |
 | `filter <window> <alpha>` | The close-path filter |
 | `openfilter <window> <alpha>` | The open-path filter |
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
