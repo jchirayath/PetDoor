@@ -235,6 +235,40 @@ Then how long the trips actually are, how many per day, which hours are busy,
 and a **beacon-signal trend** — the strength at each return. A steady decline
 there is a flat battery, weeks before the door starts missing.
 
+### What the door says about itself
+
+The panel under the headline figures is the door's own report, refreshed with
+every upload:
+
+```
+  petdoor-sample
+  firmware v1.1.0 · 1 boot · last heard 1 h ago
+  [beacon away]  [door CLOSED]
+  -61 dBm · ~1.2 m · worst gap 1840 ms
+  push to 192.168.1.57
+```
+
+This is the `s` console output, for a door nobody can plug into. It also flags
+what is wrong rather than leaving you to spot it — free heap running low, a
+worst gap past the three-second fix timeout, or firmware too old to accept
+commands at all. And it gives you the address to push an update to, which the
+server cannot work out for itself: behind a reverse proxy it only ever sees the
+proxy.
+
+### Settings changed
+
+<p align="center">
+  <img src="assets/screenshot-changes.png" alt="A table of configuration commands sent to the door, with the door's own verdict on each" width="860">
+</p>
+
+Every remote configuration change, with what the door made of it — including
+refusals, in the door's own words.
+
+It sits on the same page as the charts deliberately. A door that started closing
+sooner, or stopped opening reliably, usually did so **because something told it
+to**, and having the change log beside the behaviour turns "what happened on the
+14th?" into a question you can answer by looking.
+
 > The screenshots above are generated from synthetic data, not from a real
 > household. That is deliberate: they are in a public repository, and the whole
 > reason the analytics sit behind a login is that this data describes when a

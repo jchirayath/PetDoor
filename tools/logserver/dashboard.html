@@ -147,6 +147,15 @@ code{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px;
 .note{font-size:12.5px; color:var(--ink-2); margin:12px 0 0; line-height:1.5}
 footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 @media (max-width:560px){ h1{font-size:21px} .stat .v{font-size:23px} }
+
+/* --- door status and config-change panels --- */
+.live{display:flex;flex-wrap:wrap;gap:6px;margin:7px 0 4px}
+.pill{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line);color:var(--ink-2);background:var(--sunk)}
+.pill.in{background:var(--in-soft);border-color:var(--in);color:var(--in)}
+.pill.out{background:var(--out-soft);border-color:var(--out);color:var(--out)}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
+.dim{color:var(--ink-3)}
 </style>
 
 <div class="wrap">
@@ -226,6 +235,17 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
   <div class="tablewrap" id="tablewrap"></div>
 </section>
 
+<section>
+  <div class="head">
+    <h2>Settings changed</h2>
+    <span class="hint">what was sent to the door, and what it did with it</span>
+  </div>
+  <div class="tablewrap" id="changes"></div>
+  <p class="note">Queued with <code>petdoor-logserver.py --queue</code>. A change
+     listed here often explains a change in the charts above: a door that
+     started closing sooner did so because something told it to.</p>
+</section>
+
 <section id="camsec">
   <div class="head">
     <h2>Camera footage</h2>
@@ -264,7 +284,7 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost"};
 const RESET={1:"power-on",3:"software",4:"panic",5:"interrupt watchdog",6:"task watchdog",7:"watchdog",9:"brownout",};
 const REFUSE={1:"already there",2:"too soon after last move",3:"boot grace period"};
-let events=[], selected=null;
+let events=[], commands=[], selected=null;
 
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,"0");
@@ -537,11 +557,23 @@ function selectEvent(ep){
   $("camsec").scrollIntoView({behavior:"matchMedia" in window && matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"nearest"});
 }
 
+/* Everything the door reports about ITSELF, as opposed to what the animal did.
+   The status line rides every upload; see docs/REMOTE-CONFIG.md. */
+function parseStatus(s){
+  const out={};
+  (s||"").split(/\s+/).forEach(pair=>{
+    const i=pair.indexOf("=");
+    if(i>0) out[pair.slice(0,i)]=pair.slice(i+1);
+  });
+  return out;
+}
+
 function renderDoors(devs){
   const host=$("doors");
   if(!devs.length){host.innerHTML="";return;}
   const now=Date.now()/1000;
   host.innerHTML='<div class="doors">'+devs.map(d=>{
+    const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
     const mins=Math.round((now-(d.last_seen||0))/60);
     // A door that has not called in for hours is either off, off the network,
     // or failing to upload — worth flagging rather than leaving to be noticed.
@@ -549,15 +581,62 @@ function renderDoors(devs){
     const when=mins<1?"just now":mins<60?`${mins} min ago`:`${Math.round(mins/60)} h ago`;
     // Reboots climbing between uploads is the signature of a power problem.
     const boots=d.boots||0;
-    return `<div><div class="n">${(d.device||"door").replace(/[<>&]/g,"")}</div>`
-      +`<div class="m">firmware v${(d.version||"?").replace(/[<>&]/g,"")} &middot; `
-      +`${boots} boot${boots===1?"":"s"}</div>`
-      +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div></div>`;
+    const st=parseStatus(d.status);
+
+    let rows=`<div class="n">${esc(d.device||"door")}</div>`
+      +`<div class="m">firmware v${esc(d.version||"?")} &middot; ${boots} boot${boots===1?"":"s"}</div>`
+      +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div>`;
+
+    // What it can see right now. This is the number you tune against, and it
+    // used to exist only on a serial console nobody can reach.
+    if(st.rssi!==undefined){
+      const present=st.present==="1";
+      rows+=`<div class="live">`
+        +`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
+        +`<span class="pill ${st.door==="OPEN"?"in":""}">door ${esc(st.door||"?")}</span>`
+        +`</div>`
+        +`<div class="m">${esc(st.rssi)} dBm`
+        +(st.dist?` &middot; ~${esc(st.dist)} m`:"")
+        +(st.gap?` &middot; worst gap ${esc(st.gap)} ms`:"")+`</div>`;
+    }
+
+    // Health, and only when there is something to say about it.
+    const warns=[];
+    if(st.heap!==undefined && +st.heap<30000) warns.push(`low memory (${st.heap} bytes free)`);
+    if(st.gap!==undefined && +st.gap>3000) warns.push(`worst gap ${st.gap} ms exceeds the 3 s fix timeout`);
+    if(warns.length) rows+=`<div class="m warn">${warns.map(esc).join(" &middot; ")}</div>`;
+
+    // Where to push an update, and whether this build would even take one.
+    if(d.door_ip) rows+=`<div class="m mono">push to ${esc(d.door_ip)}</div>`;
+    if(d.remote===0) rows+=`<div class="m warn">firmware predates remote commands — anything queued will wait</div>`;
+
+    return `<div>${rows}</div>`;
   }).join("")+"</div>";
 }
 
+/* Config changes, newest first, with what the door made of each. Shown beside
+   the behaviour they altered so the two can be read together. */
+function renderChanges(){
+  const host=$("changes");
+  if(!host) return;
+  const applied=commands.filter(c=>c.delivered);
+  if(!applied.length){
+    host.innerHTML='<div class="empty">No settings have been changed remotely.</div>';
+    return;
+  }
+  const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
+  host.innerHTML='<table><thead><tr><th>When</th><th>Change</th><th>Result</th></tr></thead><tbody>'
+    +applied.slice(0,20).map(c=>{
+      const when=new Date((c.delivered||c.queued)*1000);
+      const ok=c.ack && !/refus|reject|unknown/i.test(c.ack);
+      return `<tr><td class="mono">${fmtDate(c.delivered||c.queued)} ${pad(when.getHours())}:${pad(when.getMinutes())}</td>`
+        +`<td class="mono">${esc(c.command)}</td>`
+        +`<td class="${c.ack?(ok?"":"warn"):"dim"}">${c.ack?esc(c.ack):"awaiting the door's next upload"}</td></tr>`;
+    }).join("")+"</tbody></table>";
+}
+
 function renderAll(){renderStats();renderStrip();renderDurations();renderPerDay();
-  renderHourly();renderSignal();renderTable();
+  renderHourly();renderSignal();renderTable();renderChanges();
   const dated=events.filter(e=>e.epoch>0);
   $("sub").textContent=events.length?`${events.length} events`+(dated.length?` · ${fmtDate(dated[0].epoch)} to ${fmtDate(dated[dated.length-1].epoch)}`:" · no clock set on the door"):"Comings and goings, from the PetDoor event log";
 }
@@ -575,6 +654,7 @@ async function load(){
     events=(j.events||[]).map(e=>({epoch:+e.epoch||0,uptime:+e.uptime||0,boot:+e.boot||0,
       type:e.type,detail:+e.detail||0,rssi:+e.rssi||0,device:e.device||""}));
     events.sort((a,b)=>(a.epoch||0)-(b.epoch||0)||a.boot-b.boot||a.uptime-b.uptime);
+    commands=(j.commands||[]);
     renderDoors(j.devices||[]);
     lastLoad=Date.now();
     renderAll();
