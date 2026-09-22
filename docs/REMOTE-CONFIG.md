@@ -85,6 +85,10 @@ Everything the serial console can set, and nothing else.
 | `gap <ms>` | Relay interlock dead time |
 | `pulse <ms>` | How long the relay is held closed — the "button press" |
 | `presses <n> [gap]` | Press n times per actuation. For a controller that swallows presses; see the caveat in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-relay-clicks-but-the-door-does-not-move) |
+| `travel <ms>` | How long your door takes to move. Drives the "moving" LED and buzzer; 0 silences them |
+| `buzzer <pin>\|off` | Which GPIO the buzzer is on. Add `passive` for a bare transducer, `low` if it sounds when pulled to GND |
+| `beep` | Sound the buzzer now — how you find an undocumented board's buzzer pin from indoors |
+| `sensors <open> <closed>` | Limit switch pins, or `off`. `-1` for an end with no switch. This is how sensors get switched on after they are wired, without a flash |
 | `filter <window> <alpha>` | The close-path filter |
 | `openfilter <window> <alpha>` | The open-path filter |
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
@@ -98,6 +102,21 @@ Everything the serial console can set, and nothing else.
 
 Each one calls **the same setter the serial console calls**, so the validation
 that protects a person at the keyboard protects the network path identically.
+
+### From a browser instead
+
+**Everything in that table is also on the private dashboard**, if the server was
+started with `--allow-web-control` — the door actions as buttons, and every
+tunable as a typed field filled in with the door's current value. Same queue,
+same validation, same delay. See
+[WEB-DASHBOARD.md](WEB-DASHBOARD.md#controlling-the-door-from-the-browser).
+
+The four that lose state or take the door off the air — `macs`, `defaults`,
+`reboot`, `ota` — ask for confirmation there, and the server refuses them
+without it even if the request is crafted by hand.
+
+The command line remains the only way in when the dashboard is not reachable,
+and the only place the credentials can be changed at all.
 Thresholds that form no hysteresis band, a lockout longer than the close dwell,
 an open filter slower than the close filter — all still refused, and the refusal
 comes back in the acknowledgement.

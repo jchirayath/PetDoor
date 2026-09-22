@@ -157,6 +157,75 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 .pill.lock{background:var(--fault-soft);border-color:var(--fault);color:var(--fault)}
 .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
 .dim{color:var(--ink-3)}
+
+/* --- control panel --- */
+.ctl{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px}
+.ctl button{padding:9px 16px;font-size:13.5px;font-weight:600}
+.ctl .sep{flex-basis:100%;height:0}
+button.act-open{border-color:var(--out);color:var(--out)}
+button.act-open:hover{background:var(--out-soft)}
+button.act-shut{border-color:var(--in);color:var(--in)}
+button.act-shut:hover{background:var(--in-soft)}
+button.act-lock{border-color:var(--fault);color:var(--fault)}
+button.act-lock:hover{background:var(--fault-soft)}
+button[disabled]{opacity:.5;cursor:default}
+button[disabled]:hover{border-color:var(--line)}
+.queued{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--sunk);
+  border:1px solid var(--line-2);font-size:12.5px;color:var(--ink-2);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.queued .cmds{font-family:"IBM Plex Mono",ui-monospace,monospace;color:var(--ink)}
+.queued button{padding:4px 10px;font-size:12px;margin-left:auto}
+.said{margin-top:10px;font-size:12.5px}
+.said.bad{color:var(--fault)}
+.said.good{color:var(--in)}
+
+/* --- settings form --- */
+.setgrp{border-top:1px solid var(--line-2);padding-top:14px;margin-top:14px}
+.setgrp:first-child{border-top:0;padding-top:0;margin-top:0}
+.setgrp h3{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--ink-3);margin:0 0 10px;font-weight:600}
+.srow{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:11px}
+.srow .lab{flex:1 1 210px;min-width:170px;font-size:13px;line-height:1.35}
+.srow .lab small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:1px}
+.srow input,.srow select{font:inherit;font-size:13px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  background:var(--sunk);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:6px 8px;width:82px}
+.srow select{width:auto}
+.srow input:focus,.srow select:focus{outline:2px solid var(--in);outline-offset:1px}
+.srow button{padding:6px 13px;font-size:12.5px;flex:none}
+.srow .was{font-size:11px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace}
+.noconf{padding:10px 12px;border-radius:8px;background:var(--out-soft);
+  border:1px solid var(--out);color:var(--ink-2);font-size:12.5px;margin-bottom:14px}
+/* --- tabs ---
+   The settings form is over a thousand pixels tall on a phone. As a section it
+   sat between the door and its charts and buried both; as a tab it is one tap
+   away and costs the Activity view nothing. */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:-14px}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;
+  border-radius:0;padding:9px 14px;font-size:13.5px;font-weight:600;
+  color:var(--ink-3);cursor:pointer}
+.tabs button:hover{color:var(--ink-2)}
+.tabs button[aria-selected="true"]{color:var(--in);border-bottom-color:var(--in)}
+.tabs button:focus-visible{outline:2px solid var(--in);outline-offset:-2px}
+.tabpanel{display:flex;flex-direction:column;gap:24px}
+.tabpanel[hidden]{display:none}
+
+/* --- banner facts ---
+   Firmware, event count and when the door last called in. These used to be
+   scattered: the version in the door panel, the count in the subtitle, the
+   check-in time halfway down. They are the three things you look for first, so
+   they belong beside the name. */
+.bmeta{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.bmeta span{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;
+  border:1px solid var(--line);background:var(--sunk);color:var(--ink-2);
+  font-variant-numeric:tabular-nums}
+.bmeta span.stale{border-color:var(--out);background:var(--out-soft);color:var(--out)}
+.bmeta span.quiet{border-color:transparent;background:none;color:var(--ink-3);font-weight:400}
+
+/* --- second-level menu inside a tab --- */
+.subnav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:-10px}
+.subnav .lead{font-size:12.5px;color:var(--ink-3);margin-right:2px}
 </style>
 
 <div class="wrap">
@@ -172,20 +241,32 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
       </g>
     </svg>
     <div>
-      <h1>Door Log</h1>
-      <p class="sub" id="sub">Loading from the log server…</p>
+      <h1>PetDoor</h1>
+      <p class="sub">The Activity Dashboard</p>
     </div>
   </div>
   <div class="tools">
-    <span class="hint" id="live"></span>
-    <a class="btn" href="/export.csv" download>Download CSV</a>
-    <a class="btn" href="/table">Plain table</a>
+    <div class="bmeta" id="bmeta"></div>
     <button class="primary" id="refresh">Refresh</button>
   </div>
 </header>
 
-<div class="stats" id="stats"></div>
 <div id="doors"></div>
+
+<nav class="tabs" role="tablist" aria-label="Dashboard sections">
+  <button role="tab" id="tab-btn-activity" aria-controls="tab-activity" aria-selected="true"  data-tab="activity">Activity</button>
+  <button role="tab" id="tab-btn-controls" aria-controls="tab-controls" aria-selected="false" data-tab="controls">Controls</button>
+  <button role="tab" id="tab-btn-settings" aria-controls="tab-settings" aria-selected="false" data-tab="settings">Settings</button>
+</nav>
+
+<div class="tabpanel" id="tab-activity" role="tabpanel" aria-labelledby="tab-btn-activity">
+<div class="subnav">
+  <span class="lead">Take the log with you:</span>
+  <a class="btn" href="/export.csv" download>Download CSV</a>
+  <a class="btn" href="/table">Plain table</a>
+</div>
+
+<div class="stats" id="stats"></div>
 
 <section>
   <div class="head">
@@ -236,17 +317,6 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
   <div class="tablewrap" id="tablewrap"></div>
 </section>
 
-<section>
-  <div class="head">
-    <h2>Settings changed</h2>
-    <span class="hint">what was sent to the door, and what it did with it</span>
-  </div>
-  <div class="tablewrap" id="changes"></div>
-  <p class="note">Queued with <code>petdoor-logserver.py --queue</code>. A change
-     listed here often explains a change in the charts above: a door that
-     started closing sooner did so because something told it to.</p>
-</section>
-
 <section id="camsec">
   <div class="head">
     <h2>Camera footage</h2>
@@ -277,15 +347,59 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
     </p>
   </div>
 </section>
+</div>
+
+<div class="tabpanel" id="tab-controls" role="tabpanel" aria-labelledby="tab-btn-controls" hidden>
+<section id="controlsec" hidden>
+  <div class="head">
+    <h2>Control</h2>
+    <span class="hint">queued here, collected on the door's next check-in</span>
+  </div>
+  <div id="controls"></div>
+</section>
+
+<section>
+  <div class="head">
+    <h2>Controls log</h2>
+    <span class="hint">what was asked of the door, and what it did with it</span>
+  </div>
+  <div class="tablewrap" id="ctllog"></div>
+  <p class="note">Opening, closing, locking and the rest — whether sent from
+     here or queued with <code>petdoor-logserver.py --queue</code>. The result
+     column is the door's own verdict, not ours.</p>
+</section>
+</div>
+
+<div class="tabpanel" id="tab-settings" role="tabpanel" aria-labelledby="tab-btn-settings" hidden>
+<section id="settingssec">
+  <div class="head">
+    <h2>Settings</h2>
+    <span class="hint">every tunable the door will accept</span>
+  </div>
+  <div id="settings"></div>
+</section>
+
+<section>
+  <div class="head">
+    <h2>Settings log</h2>
+    <span class="hint">what was changed, and what the door made of it</span>
+  </div>
+  <div class="tablewrap" id="setlog"></div>
+  <p class="note">A change listed here often explains a change in the Activity
+     charts: a door that started closing sooner did so because something told
+     it to.</p>
+</section>
+</div>
 
 <footer>PetDoor &middot; served from your own log server</footer>
 </div>
 
 <script>
-const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost"};
+const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost",STALLED:"did not complete its travel"};
 const RESET={1:"power-on",3:"software",4:"panic",5:"interrupt watchdog",6:"task watchdog",7:"watchdog",9:"brownout",};
 const REFUSE={1:"already there",2:"too soon after last move",3:"boot grace period"};
 let events=[], commands=[], selected=null;
+let pending=[], controlOn=false, devices=[], busy=false;
 
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,"0");
@@ -584,9 +698,14 @@ function renderDoors(devs){
     const boots=d.boots||0;
     const st=parseStatus(d.status);
 
+    // With one door the banner already carries its firmware and last check-in,
+    // so repeating them here is just noise three inches below. With several,
+    // the banner can only describe one of them and each panel says its own.
+    const solo=devs.length===1;
     let rows=`<div class="n">${esc(d.device||"door")}</div>`
-      +`<div class="m">firmware v${esc(d.version||"?")} &middot; ${boots} boot${boots===1?"":"s"}</div>`
-      +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div>`;
+      +(solo?`<div class="m">${boots} boot${boots===1?"":"s"} since it was flashed</div>`
+            :`<div class="m">firmware v${esc(d.version||"?")} &middot; ${boots} boot${boots===1?"":"s"}</div>`
+             +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div>`);
 
     // What it can see right now. This is the number you tune against, and it
     // used to exist only on a serial console nobody can reach.
@@ -619,19 +738,352 @@ function renderDoors(devs){
   }).join("")+"</div>";
 }
 
-/* Config changes, newest first, with what the door made of each. Shown beside
-   the behaviour they altered so the two can be read together. */
-function renderChanges(){
-  const host=$("changes");
-  if(!host) return;
-  const applied=commands.filter(c=>c.delivered);
-  if(!applied.length){
-    host.innerHTML='<div class="empty">No settings have been changed remotely.</div>';
+/* The settings form.
+
+   Ranges here mirror petdoor-logserver.py's WEB_COMMANDS, which mirror the
+   firmware's own constants. Three copies of the same numbers is not ideal, but
+   the alternative is a door that accepts a value the form offered and then
+   refuses it five minutes later, which is worse. The door remains the
+   authority; these bounds just fail fast and label the input.
+
+   `c` is the key in the door's uploaded config line, which is how each field
+   knows what it is currently set to. */
+const SETTINGS=[
+  {g:"Detection", rows:[
+    {verb:"thresholds", lab:"Signal thresholds",
+     sub:"dBm. Opens above the first, closes below the second",
+     f:[{c:"enter",min:-120,max:0,ph:"-58"},{c:"exit",min:-120,max:0,ph:"-68"}]},
+    {verb:"filter", lab:"Close filter",
+     sub:"median window (odd, 1-15) and smoothing (0-1). Slower = steadier",
+     f:[{c:"fwin",min:1,max:15,step:2,ph:"5"},{c:"falpha",min:0.01,max:1,step:0.01,ph:"0.30"}]},
+    {verb:"openfilter", lab:"Open filter",
+     sub:"must never be slower than the close filter, or a departure is noticed before an arrival",
+     f:[{c:"owin",min:1,max:15,step:2,ph:"1"},{c:"oalpha",min:0.01,max:1,step:0.01,ph:"0.90"}]},
+  ]},
+  {g:"Timing", rows:[
+    {verb:"dwell", lab:"Dwell and lockout",
+     sub:"ms near before opening / ms away before closing / ms between actuations",
+     f:[{c:"dopen",min:100,max:600000,ph:"1500"},{c:"dclose",min:100,max:600000,ph:"15000"},
+        {c:"dmin",min:100,max:600000,ph:"5000"}]},
+    {verb:"travel", lab:"Door travel time",
+     sub:"ms. Drives the moving LED and the buzzer. 0 = announce nothing",
+     f:[{c:"travel",min:0,max:120000,ph:"15000"}]},
+  ]},
+  {g:"Relay", rows:[
+    {verb:"pulse", lab:"Pulse length",
+     sub:"ms the relay stays closed \u2014 the length of the button press",
+     f:[{c:"pulse",min:50,max:10000,ph:"500"}]},
+    {verb:"presses", lab:"Presses per actuation",
+     sub:"1-3, and ms between them. A blind retry \u2014 see the docs before raising it",
+     f:[{c:"pcount",min:1,max:3,ph:"1"},{c:"pgap",min:200,max:5000,ph:"1000"}]},
+    {verb:"gap", lab:"Interlock dead time",
+     sub:"ms with both relays released before either fires. Protects the motor",
+     f:[{c:"igap",min:100,max:5000,ph:"250"}]},
+  ]},
+];
+
+/* Tabs.
+
+   The selected tab is remembered per browser, because the person who opens
+   Settings is usually in the middle of tuning something and will be back in a
+   minute. Wrapped in try/catch: storage throws in a private window, and a
+   dashboard that white-screens because it could not remember a tab would be a
+   poor trade. */
+function showTab(name){
+  document.querySelectorAll(".tabs button").forEach(b=>{
+    b.setAttribute("aria-selected", String(b.dataset.tab===name));
+  });
+  document.querySelectorAll(".tabpanel").forEach(p=>{
+    p.hidden = (p.id !== "tab-"+name);
+  });
+  try{ localStorage.setItem("petdoor.tab", name); }catch(e){}
+}
+
+function initTabs(){
+  document.querySelectorAll(".tabs button").forEach(b=>{
+    b.addEventListener("click",()=>showTab(b.dataset.tab));
+    // Left/right arrows move between tabs, which is what a tablist owes anyone
+    // driving it from the keyboard.
+    b.addEventListener("keydown",e=>{
+      if(e.key!=="ArrowRight"&&e.key!=="ArrowLeft") return;
+      const all=[...document.querySelectorAll(".tabs button")];
+      const i=all.indexOf(b);
+      const next=all[(i+(e.key==="ArrowRight"?1:all.length-1))%all.length];
+      next.focus(); showTab(next.dataset.tab);
+    });
+  });
+  let want="activity";
+  try{ want = localStorage.getItem("petdoor.tab") || "activity"; }catch(e){}
+  const btn=document.getElementById("tab-btn-"+want);
+  if(!document.getElementById("tab-"+want) || (btn && btn.hidden)) want="activity";
+  showTab(want);
+}
+
+let settingsRenderedFor=null;
+
+function renderSettings(){
+  const sec=$("settingssec"), host=$("settings");
+  if(!sec||!host) return;
+  // No web control means no settings to offer: hide the tab itself rather than
+  // leaving a tab that opens onto nothing.
+  // No web control means no settings to offer: hide that tab rather than
+  // leaving one that opens onto nothing.
+  const btn=$("tab-btn-settings");
+  if(btn) btn.hidden=!controlOn;
+  if(!controlOn){
+    if(!$("tab-settings").hidden) showTab("activity");
     return;
   }
+
+  const d=devices[0]||{};
+
+  // Re-render ONLY when the door reports something different.
+  //
+  // This page reloads every 60 seconds, and a queued setting takes up to five
+  // minutes to reach the door. Rebuilding the form on every poll would throw
+  // away half-finished edits, and would snap the box you just changed back to
+  // the old value — which reads as "it didn't work" and gets pressed again.
+  // So the door's own report is the only thing that redraws these fields, and
+  // until it arrives what you typed stays where you typed it.
+  const sig=String(d.config||"")+"|"+String(d.device||"");
+  if(settingsRenderedFor===sig && host.children.length) return;
+  settingsRenderedFor=sig;
+
+  const esc=t=>String(t==null?"":t).replace(/[<>&"]/g,"");
+  const cfg=parseStatus(d.config);
+  const known=Object.keys(cfg).length>0;
+
+  let html="";
+  if(!known){
+    html+=`<div class="noconf"><b>The door has not reported its settings yet.</b>
+      Either it has not called in since this server was updated, or it is running
+      firmware from before it sent them. You can still change anything below \u2014
+      the boxes just cannot show you what it is set to now.</div>`;
+  }
+
+  SETTINGS.forEach(grp=>{
+    html+=`<div class="setgrp"><h3>${esc(grp.g)}</h3>`;
+    grp.rows.forEach(r=>{
+      const inputs=r.f.map(f=>{
+        const cur=cfg[f.c];
+        return `<input type="number" data-verb="${r.verb}" data-k="${f.c}"
+          min="${f.min}" max="${f.max}" step="${f.step||1}"
+          value="${cur!==undefined?esc(cur):""}" placeholder="${esc(f.ph)}"
+          aria-label="${esc(r.lab)} ${esc(f.c)}">`;
+      }).join("");
+      html+=`<div class="srow"><div class="lab">${esc(r.lab)}<small>${esc(r.sub)}</small></div>`
+        +inputs
+        +`<button data-apply="${r.verb}">Apply</button></div>`;
+    });
+    html+=`</div>`;
+  });
+
+  // The buzzer is the one row that is not all numbers.
+  const bpin=cfg.bpin, bp=cfg.bpassive, bl=cfg.blow;
+  html+=`<div class="setgrp"><h3>Buzzer</h3><div class="srow">`
+    +`<div class="lab">Annunciator<small>GPIO pin, or -1 for none. Ticks while the door moves, chimes when the travel time is up</small></div>`
+    +`<input type="number" id="bz-pin" min="-1" max="48" step="1" placeholder="-1"
+        value="${bpin!==undefined?esc(bpin):""}" aria-label="Buzzer GPIO pin">`
+    +`<select id="bz-type" aria-label="Buzzer type">
+        <option value="active"${bp==="0"?" selected":""}>active</option>
+        <option value="passive"${bp==="1"?" selected":""}>passive</option>
+      </select>`
+    +`<select id="bz-pol" aria-label="Buzzer polarity">
+        <option value="high"${bl==="0"?" selected":""}>active high</option>
+        <option value="low"${bl==="1"?" selected":""}>active low</option>
+      </select>`
+    +`<button data-apply="buzzer">Apply</button></div></div>`;
+
+  // The limit switches. Ships disabled (-1/-1), so this row is how they get
+  // turned on once they are wired — no reflash, which is the whole point of
+  // having it here before the hardware exists.
+  const sOpen=cfg.sopen, sShut=cfg.sshut, sLow=cfg.slow;
+  const fitted=(sOpen!==undefined&&+sOpen>=0)||(sShut!==undefined&&+sShut>=0);
+  html+=`<div class="setgrp"><h3>Limit switches</h3><div class="srow">`
+    +`<div class="lab">Position sensors<small>GPIO for the OPEN end and the CLOSED end, or -1 for an end with no switch. `
+    +`Until one is fitted the door is open loop and only knows what it commanded.</small></div>`
+    +`<input type="number" id="sn-open" min="-1" max="48" step="1" placeholder="-1"
+        value="${sOpen!==undefined?esc(sOpen):""}" aria-label="Open limit switch GPIO">`
+    +`<input type="number" id="sn-shut" min="-1" max="48" step="1" placeholder="-1"
+        value="${sShut!==undefined?esc(sShut):""}" aria-label="Closed limit switch GPIO">`
+    +`<select id="sn-pol" aria-label="Switch polarity">
+        <option value="low"${sLow!=="0"?" selected":""}>to GND (usual)</option>
+        <option value="high"${sLow==="0"?" selected":""}>to 3V3</option>
+      </select>`
+    +`<button data-apply="sensors">Apply</button></div>`
+    +(fitted?"":`<p class="note" style="margin-top:0">Not fitted yet. Wire a reed switch from each `
+      +`GPIO to GND, set the pins here, and the door starts measuring its own position \u2014 `
+      +`the arrival chime stops being a stopwatch and a swallowed button press becomes visible.</p>`)
+    +`</div>`;
+
+  // Things that lose state or take the door off the air. Each asks first.
+  html+=`<div class="setgrp"><h3>Maintenance</h3><div class="ctl">`
+    +`<button data-cmd="scan">Upload beacon scan</button>`
+    +`<button data-cmd="resetstats">Reset statistics</button>`
+    +`<button data-cmd="ota" data-confirm="Open an OTA window? You then have a few minutes to push firmware from a laptop.">Open OTA window</button>`
+    +`<button data-cmd="reboot" data-confirm="Restart the door? It will be off the air for about a minute.">Restart door</button>`
+    +`<button class="act-lock" data-cmd="defaults" data-confirm="Revert EVERY stored setting to the compiled-in defaults? Thresholds, dwell, filters, pulse and travel are all lost. The beacon list, the lock and the buzzer pin are kept.">Revert all settings</button>`
+    +`</div></div>`;
+
+  html+=`<div class="said" id="setsaid"></div>`;
+  host.innerHTML=html;
+
+  host.querySelectorAll("button[data-apply]").forEach(el=>{
+    el.addEventListener("click",()=>applySetting(el.dataset.apply,host));
+  });
+  host.querySelectorAll("button[data-cmd]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const q=el.dataset.confirm;
+      if(q && !confirm(q)) return;
+      send(el.dataset.cmd,"setsaid",!!q);
+    });
+  });
+}
+
+/* Builds "<verb> <v1> <v2>" from the row's inputs and queues it. Empty boxes
+   are refused here rather than sent as a blank the door would reject. */
+function applySetting(verb,host){
+  const say=$("setsaid");
+  let cmd;
+  if(verb==="sensors"){
+    const o=$("sn-open").value.trim(), c=$("sn-shut").value.trim();
+    if(o===""||c===""){say.className="said bad";say.textContent="Give both pins — use -1 for an end with no switch.";return;}
+    cmd = (+o < 0 && +c < 0) ? "sensors off" : `sensors ${o} ${c} ${$("sn-pol").value}`;
+  }else if(verb==="buzzer"){
+    const pin=$("bz-pin").value.trim();
+    if(pin==="") {say.className="said bad";say.textContent="Give the buzzer a GPIO pin, or -1 for none.";return;}
+    cmd = (+pin < 0) ? "buzzer off"
+        : `buzzer ${pin} ${$("bz-type").value} ${$("bz-pol").value}`;
+  }else{
+    const vals=[...host.querySelectorAll(`input[data-verb="${verb}"]`)].map(i=>i.value.trim());
+    if(vals.some(v=>v==="")){
+      say.className="said bad";
+      say.textContent="Fill in every box on that row first.";
+      return;
+    }
+    cmd=verb+" "+vals.join(" ");
+  }
+  send(cmd,"setsaid",false);
+}
+
+/* The control panel.
+
+   Hidden unless the server was started with --allow-web-control, so a
+   deployment that has not made that decision shows no buttons at all rather
+   than buttons that 403.
+
+   The honesty problem this panel has to solve: nothing here happens when you
+   press it. The door collects commands on its next check-in, which is
+   opportunistic and gated on the beacon being away, so "now" means "within
+   about five minutes". A button that looked like it had opened the door would
+   be lying, and the person would press it again. So every press moves the
+   command into a visible WAITING list, and the list stays until the door has
+   actually taken it. */
+function renderControl(){
+  const sec=$("controlsec"), host=$("controls");
+  if(!sec||!host) return;
+  sec.hidden=!controlOn;
+  // The Controls tab still has a use with web control off — the log of what was
+  // queued from the command line is worth reading either way — so the tab stays
+  // and only the buttons go.
+  if(!controlOn) return;
+
   const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
-  host.innerHTML='<table><thead><tr><th>When</th><th>Change</th><th>Result</th></tr></thead><tbody>'
-    +applied.slice(0,20).map(c=>{
+  const d=devices[0]||{};
+  const st=parseStatus(d.status);
+  const locked=st.locked==="1";
+
+  // Disabled rather than hidden when it would be a no-op: a button that
+  // vanishes is confusing, one that is visibly unavailable explains itself.
+  const b=(cmd,label,cls,off)=>`<button class="${cls}" data-cmd="${cmd}"${off?" disabled":""}>${label}</button>`;
+  const buttons='<div class="ctl">'
+    +b("door open","Open","act-open",false)
+    +b("door close","Close","act-shut",false)
+    +b("door auto","Auto","",false)
+    +'<span class="sep"></span>'
+    +b("lock","Lock","act-lock",locked)
+    +b("unlock","Unlock","",!locked)
+    +b("beep","Beep","",false)
+    +'</div>';
+
+  let queue="";
+  if(pending.length){
+    queue=`<div class="queued">`
+      +`<span>Waiting for the door:</span> <span class="cmds">${pending.map(p=>esc(p.command)).join(", ")}</span>`
+      +`<button id="cancelq" data-dev="${esc(d.device||"")}">Cancel</button></div>`;
+  }
+
+  host.innerHTML=buttons+queue
+    +`<p class="note"><b>Open</b> and <b>Close</b> press the door controller's buttons once. `
+    +`<b>Auto</b> hands control back to the collar. <b>Lock</b> stops the collar opening the door `
+    +`at all — it does not stop an open door closing.<br>`
+    +`Nothing here is instant: the door collects commands when it next calls in, usually within `
+    +`five minutes, and sooner if the collar is away. Until then you can cancel.</p>`
+    +`<div class="said" id="said"></div>`;
+
+  host.querySelectorAll("button[data-cmd]").forEach(el=>{
+    el.addEventListener("click",()=>send(el.dataset.cmd));
+  });
+  const c=$("cancelq");
+  if(c) c.addEventListener("click",cancelQueued);
+}
+
+/* The custom header is the CSRF defence: a browser will not attach it to a
+   cross-origin request without a preflight this server never answers, so a
+   malicious page cannot ride your dashboard session to open the door. */
+async function send(cmd,sayId,confirmed){
+  if(busy) return;
+  busy=true;
+  const say=$(sayId||"said");
+  if(say){say.className="said";say.textContent="Sending "+cmd+"…";}
+  try{
+    const r=await fetch("/api/command",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-PetDoor-Control":"1"},
+      body:JSON.stringify(confirmed?{command:cmd,confirm:true}:{command:cmd})
+    });
+    const j=await r.json().catch(()=>({ok:false,error:"HTTP "+r.status}));
+    if(say){
+      say.className="said "+(j.ok?"good":"bad");
+      say.textContent=j.ok?(j.message||"queued"):("Refused: "+(j.error||"unknown"));
+    }
+  }catch(err){
+    if(say){say.className="said bad";say.textContent="Could not reach the server ("+err.message+")";}
+  }finally{
+    busy=false;
+    load();
+  }
+}
+
+async function cancelQueued(){
+  if(busy) return;
+  busy=true;
+  try{
+    const dev=$("cancelq")?.dataset.dev||"";
+    await fetch("/api/command"+(dev?"?device="+encodeURIComponent(dev):""),
+      {method:"DELETE",headers:{"X-PetDoor-Control":"1"}});
+  }catch(err){/* load() below surfaces the real state either way */}
+  busy=false;
+  load();
+}
+
+/* Two logs, split by what the command DID.
+
+   Asking the door to open is a different kind of event from retuning its exit
+   threshold: one is a thing you did to the door today, the other changes how it
+   behaves from now on. They were one table while there was one page; with a tab
+   each they belong beside the panel that produced them. */
+const CONTROL_VERBS=new Set(["door","lock","unlock","beep","scan","resetstats","reboot","ota"]);
+
+function renderLog(hostId,keep,empty){
+  const host=$(hostId);
+  if(!host) return;
+  const rows=commands.filter(c=>c.delivered)
+    .filter(c=>keep(String(c.command||"").split(" ")[0].toLowerCase()));
+  if(!rows.length){ host.innerHTML=`<div class="empty">${empty}</div>`; return; }
+  const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
+  host.innerHTML='<table><thead><tr><th>When</th><th>Command</th><th>Result</th></tr></thead><tbody>'
+    +rows.slice(0,20).map(c=>{
       const when=new Date((c.delivered||c.queued)*1000);
       const ok=c.ack && !/refus|reject|unknown/i.test(c.ack);
       return `<tr><td class="mono">${fmtDate(c.delivered||c.queued)} ${pad(when.getHours())}:${pad(when.getMinutes())}</td>`
@@ -640,10 +1092,37 @@ function renderChanges(){
     }).join("")+"</tbody></table>";
 }
 
+function renderChanges(){
+  renderLog("ctllog", v=>CONTROL_VERBS.has(v),  "Nothing has been asked of the door yet.");
+  renderLog("setlog", v=>!CONTROL_VERBS.has(v), "No settings have been changed remotely.");
+}
+
+/* The three facts worth having beside the name: what it is running, how much it
+   has told us, and whether it is still talking to us. */
+function renderBanner(){
+  const host=$("bmeta");
+  if(!host) return;
+  const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
+  const d=devices[0]||{};
+  const bits=[];
+  if(d.version) bits.push(`<span>firmware v${esc(d.version)}</span>`);
+  bits.push(`<span>${events.length.toLocaleString()} event${events.length===1?"":"s"}</span>`);
+  if(d.last_seen){
+    const mins=Math.round((Date.now()/1000-d.last_seen)/60);
+    const when=mins<1?"just now":mins<60?`${mins} min ago`:
+      mins<2880?`${Math.round(mins/60)} h ago`:`${Math.round(mins/1440)} days ago`;
+    // Three hours without a word is not a quiet door, it is a door to go and
+    // look at. Say so here, where it cannot be scrolled past.
+    bits.push(`<span class="${mins>180?"stale":""}">last check-in ${when}</span>`);
+  }else{
+    bits.push(`<span class="stale">never checked in</span>`);
+  }
+  bits.push(`<span class="quiet" id="live"></span>`);
+  host.innerHTML=bits.join("");
+}
+
 function renderAll(){renderStats();renderStrip();renderDurations();renderPerDay();
-  renderHourly();renderSignal();renderTable();renderChanges();
-  const dated=events.filter(e=>e.epoch>0);
-  $("sub").textContent=events.length?`${events.length} events`+(dated.length?` · ${fmtDate(dated[0].epoch)} to ${fmtDate(dated[dated.length-1].epoch)}`:" · no clock set on the door"):"Comings and goings, from the PetDoor event log";
+  renderHourly();renderSignal();renderTable();renderChanges();renderBanner();
 }
 
 
@@ -660,29 +1139,34 @@ async function load(){
       type:e.type,detail:+e.detail||0,rssi:+e.rssi||0,device:e.device||""}));
     events.sort((a,b)=>(a.epoch||0)-(b.epoch||0)||a.boot-b.boot||a.uptime-b.uptime);
     commands=(j.commands||[]);
-    renderDoors(j.devices||[]);
+    pending=(j.pending||[]);
+    controlOn=!!j.control;
+    devices=(j.devices||[]);
+    renderDoors(devices);
+    renderControl();
+    renderSettings();
     lastLoad=Date.now();
     renderAll();
+    // renderAll() rebuilt the banner, so #live exists again from here.
     const devs=[...new Set(events.map(e=>e.device).filter(Boolean))];
-    $("live").textContent=events.length
-      ? `${events.length} events${devs.length>1?` from ${devs.length} doors`:""} · updated just now`
-      : "";
-    if(!events.length){
-      $("sub").innerHTML='No events yet. Point a door at this server &mdash; '
-        +'set <code>LOG_ENDPOINT_URL</code> in its <code>secrets.h</code>.';
-    }
+    if($("live")) $("live").textContent=events.length
+      ? `updated just now${devs.length>1?` · ${devs.length} doors`:""}`
+      : "no events yet — set LOG_ENDPOINT_URL in the door's secrets.h";
   }catch(err){
-    $("sub").textContent="Could not reach the log server ("+err.message+")";
-    $("live").textContent="";
+    // The banner is the one place a failure cannot be scrolled past.
+    const host=$("bmeta");
+    if(host) host.innerHTML='<span class="stale">cannot reach the log server</span>'
+      +'<span class="quiet">'+String(err.message).replace(/[<>&]/g,"")+'</span>';
   }
 }
 $("refresh").onclick=load;
+initTabs();
 renderAll();
 load();
 // The door uploads in bursts when the pet is away, so there is no point polling
 // hard. Once a minute keeps an always-on wall display current.
 setInterval(load,60000);
-setInterval(()=>{ if(lastLoad){const m=Math.round((Date.now()-lastLoad)/60000);
+setInterval(()=>{ if(lastLoad&&$("live")){const m=Math.round((Date.now()-lastLoad)/60000);
   if(m>=1&&events.length) $("live").textContent=$("live").textContent
     .replace(/updated .*/,`updated ${m} min ago`);} },60000);
 </script>
