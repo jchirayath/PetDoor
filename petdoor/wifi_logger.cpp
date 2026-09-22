@@ -137,6 +137,15 @@ bool g_clockSynced = false;
 // Set by the control loop so the uploader can bail out if the animal returns
 // while the radio is busy.
 volatile bool g_idleNow = false;
+// An upload somebody ASKED for, as opposed to one the idle gate allowed.
+//
+// The two want opposite things when the animal turns up mid-association. An
+// opportunistic upload should yield the radio immediately — that is the whole
+// point of the gate. A requested one must finish: it exists to carry the
+// result of a command that has already been applied, and abandoning it leaves
+// the dashboard showing the state from before, which reads as the command
+// having failed.
+volatile bool g_flushForced = false;
 
 bool configured() {
   return WIFI_SSID[0] != '\0';
@@ -153,7 +162,12 @@ bool radioUp() {
   const uint32_t started = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if ((millis() - started) > WIFI_CONNECT_TIMEOUT_MS) return false;
-    if (!g_idleNow) return false;  // animal came back; abandon the attempt
+    // Abandon only an OPPORTUNISTIC attempt. g_idleNow is rewritten by the
+    // control task ten times a second from the live door state, so a forced
+    // flush cannot express itself by setting that flag — `door open` makes the
+    // door non-idle, and the request would be cancelled by the very state
+    // change it was sent to report.
+    if (!g_idleNow && !g_flushForced) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
   }
   return true;
@@ -505,6 +519,10 @@ void doFlush() {
     Serial.println(F("[wifi] events are kept locally and will be retried"));
   }
   Serial.println(F("[wifi] radio down"));
+  // One forced attempt per request. Cleared here rather than on success, so a
+  // flush that genuinely could not associate does not leave the door ignoring
+  // the idle gate on every upload thereafter.
+  g_flushForced = false;
   g_busy = false;
 }
 
@@ -637,7 +655,7 @@ void requestFlushNow() {
     Serial.println(F("[wifi] no WIFI_SSID configured; nothing to do"));
     return;
   }
-  g_idleNow = true;  // manual request overrides the idle gate
+  g_flushForced = true;   // see through to the end, whatever the door is doing
   g_flushRequested = true;
   Serial.println(F("[wifi] flush requested"));
 }
