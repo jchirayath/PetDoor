@@ -12,6 +12,21 @@ About **$80 all in**, and the door is most of it.
 **Already own a motorised door?** Then it is the board and the beacon — around
 **$30** to make a door you already have open for one specific animal.
 
+### Two optional pounds well spent
+
+Neither is needed to make the door work, and the firmware ships with both
+switched off. Add them whenever you like — they are turned on with one command,
+not a reflash.
+
+| | Cost | What it buys |
+|---|---|---|
+| **Piezo buzzer** | ~$1 | The door stops being silent. A tick while it moves, a chime when it should have arrived, a low buzz when a locked door refuses the collar, and a distinct beep per command so you know one landed |
+| **Two reed switches + magnets** | ~$2 | The door stops *guessing*. Its reported position becomes measured, the arrival chime becomes an actual arrival, and a button press the controller swallowed becomes visible instead of silent |
+
+The reed switches are the better value of the two. Everything this project
+cannot currently promise — that the door arrived, that it is where it says it
+is, that the press took — traces back to not having them.
+
 ---
 
 ## The door is the upgrade worth making

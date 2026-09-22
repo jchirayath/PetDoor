@@ -1107,6 +1107,7 @@ function renderControl(){
   const d=devices[0]||{};
   const st=parseStatus(d.status);
   const locked=st.locked==="1";
+  const stand=doorStanding(d);
 
   // Disabled rather than hidden when it would be a no-op: a button that
   // vanishes is confusing, one that is visibly unavailable explains itself.
@@ -1134,6 +1135,24 @@ function renderControl(){
     queue=`<div class="queued">`
       +`<span>Waiting for the door:</span> <span class="cmds">${pending.map(p=>esc(p.command)).join(", ")}</span>`
       +`<button id="cancelq" data-dev="${esc(d.device||"")}">Cancel</button></div>`;
+
+    // Queueing `door close` on a door that already reports CLOSED looks like a
+    // mistake and is not one: manual commands call forcePulse*(), which
+    // bypasses the "already in that state" check on purpose. The door is open
+    // loop, so when its belief is wrong — a shove by hand, a press the
+    // controller swallowed — pressing again is exactly how you correct it.
+    // Saying so beats leaving somebody to wonder whether it registered.
+    const here=(stand.state||"").toUpperCase();
+    const redundant=pending.filter(p=>{
+      const c=String(p.command||"").toLowerCase();
+      return (c==="door close"&&here==="CLOSED")||(c==="door open"&&here==="OPEN");
+    });
+    if(redundant.length){
+      queue+=`<p class="note" style="margin-top:8px">The door already reports
+        <b>${esc(here)}</b>. This still pulses the relay — manual commands skip the
+        "already in that state" check, which is how you correct the door when its
+        idea of where it is has drifted from reality.</p>`;
+    }
   }
 
   host.innerHTML=buttons+queue

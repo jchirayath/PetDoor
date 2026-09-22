@@ -84,6 +84,11 @@ The ESP32 shares **one antenna** between WiFi and Bluetooth. Bringing the radio
 up to upload degrades BLE sampling while it happens — the console says so when
 it does.
 
-So the door batches its log and flushes on a schedule (2 am by default, when the
-animal is least likely to be at the door) rather than uploading events as they
-happen. The radio is down almost all of the time.
+So the door does not upload as events happen. It waits until the animal is away
+and the door is shut, and has been for a minute — then uploads, and not again
+for another five. A heartbeat every half hour covers the case where those
+conditions never arrive, because an animal that stays indoors all evening would
+otherwise keep the door silent, and a silent door collects no commands.
+
+The radio is down almost all of the time, which is the point. All three
+intervals are settable from the Settings tab.

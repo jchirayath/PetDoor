@@ -464,6 +464,15 @@ partition schemes rather than quietly trimming features.
 | `proximity.*` | dual-rate median + EWMA filters, hysteresis state machine |
 | `door.*` | relay pulses, interlock, lockout, boot grace |
 | `beacon.*` | iBeacon parsing, classification, distance estimate — pure functions |
+| `eventlog.*` | the NVS ring of what happened, and its CSV form |
+| `wifi_logger.*` | WiFi, the signed upload, the command channel, OTA |
+| `chime.*` | optional buzzer — non-blocking patterns, runtime pin discovery |
+| `position.*` | optional limit switches — debounce, measured position |
+
+Both optional modules are inert by default (`PIN_BUZZER` and `PIN_SENSOR_*` are
+`-1`), and neither can actuate anything. `position.*` in particular only ever
+corrects what `door.*` BELIEVES — a sensor that could command a motor has a far
+worse failure mode than one that cannot, so it is not given the option.
 
 `beacon.*` has no BLE stack dependency at all, which makes it the easy file to
 unit test or reuse.
