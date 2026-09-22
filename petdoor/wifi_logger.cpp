@@ -359,6 +359,7 @@ bool post(const String &body) {
   // update, and the thing that makes a reboot loop visible from the server.
   http.addHeader("X-PetDoor-Version", PETDOOR_VERSION);
   http.addHeader("X-PetDoor-Build", PETDOOR_BUILD);
+  if (PETDOOR_GIT[0] != '\0') http.addHeader("X-PetDoor-Git", PETDOOR_GIT);
   http.addHeader("X-PetDoor-Boot", String(g_bootCount));
   // Where to push an update to. The door used to print this to the serial
   // console only, which is no use at all once it is on a wall: you could open
