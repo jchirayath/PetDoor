@@ -1222,6 +1222,9 @@ async function send(cmd,sayId,confirmed){
     if(say){say.className="said bad";say.textContent="Could not reach the server ("+err.message+")";}
   }finally{
     busy=false;
+    // Start watching closely: the door is about to do something, and the whole
+    // point of pressing the button was to see it happen.
+    if(typeof watchClosely==="function") watchClosely();
     load();
   }
 }
@@ -1235,6 +1238,7 @@ async function cancelQueued(){
       {method:"DELETE",headers:{"X-PetDoor-Control":"1"}});
   }catch(err){/* load() below surfaces the real state either way */}
   busy=false;
+  if(typeof watchClosely==="function") watchClosely();
   load();
 }
 
@@ -1352,21 +1356,87 @@ async function load(){
     renderAll();
     // renderAll() rebuilt the banner, so #live exists again from here.
     const devs=[...new Set(events.map(e=>e.device).filter(Boolean))];
-    if($("live")) $("live").textContent=events.length?"just now":"no events";
+    if($("live")){
+      // Say when the page is watching closely, so a five-second poll is a
+      // visible state rather than unexplained network traffic.
+      const watching = typeof inFlight==="function" && inFlight() &&
+                       typeof fastUntil!=="undefined" && Date.now()<fastUntil;
+      $("live").textContent = watching ? "watching \u00b7 every 5s"
+                            : events.length ? "just now" : "no events";
+    }
   }catch(err){
     // The banner is the one place a failure cannot be scrolled past.
     const host=$("bmeta");
     if(host) host.innerHTML='<span class="stale">cannot reach the log server</span>'
       +'<span class="quiet">'+String(err.message).replace(/[<>&]/g,"")+'</span>';
+  }finally{
+    // Pick the next interval from the data we just fetched, not the data we
+    // had before it. Every path into load() gets the right pace this way:
+    // the poll loop, the Refresh button, and a button press.
+    if(typeof scheduleNextLoad==="function") scheduleNextLoad();
   }
 }
 $("refresh").onclick=load;
 initTabs();
 renderAll();
-load();
-// The door uploads in bursts when the pet is away, so there is no point polling
-// hard. Once a minute keeps an always-on wall display current.
-setInterval(load,60000);
-setInterval(()=>{ if(lastLoad&&$("live")){const m=Math.round((Date.now()-lastLoad)/60000);
-  if(m>=1&&events.length) $("live").textContent=`${m} min ago`;} },60000);
+
+/* Poll fast only while something is actually in flight.
+
+   Once a minute is right for a wall display: the door uploads in bursts and
+   there is nothing to see between them. But it is useless in the minute after
+   you press Open — the thing you are standing there watching for arrives, and
+   the page sits on the old state until the next tick.
+
+   So: 5 seconds while a command is outstanding, 60 otherwise. "Outstanding"
+   means queued and not yet collected, or collected and not yet acknowledged —
+   the two windows where the door's state is about to change and the page does
+   not know it yet.
+
+   Bounded, because a door that never calls in must not leave a browser tab
+   polling every 5 seconds until the heat death of the laptop battery. After
+   FAST_FOR_MS the pace drops back regardless, and the pending list still says
+   why nothing has happened. */
+const FAST_MS=5000, SLOW_MS=60000, FAST_FOR_MS=15*60*1000;
+let fastUntil=0, loading=false, pollTimer=null;
+
+function inFlight(){
+  if(pending.length) return true;
+  // Delivered but not yet acknowledged: the door has it and the result is on
+  // its way. With the forced-flush fix that is usually seconds.
+  return commands.some(c=>c.delivered && !c.ack);
+}
+
+function scheduleNextLoad(){
+  clearTimeout(pollTimer);
+  const fast = inFlight() && Date.now() < fastUntil;
+  pollTimer = setTimeout(pollOnce, fast ? FAST_MS : SLOW_MS);
+}
+
+async function pollOnce(){
+  if(loading){ scheduleNextLoad(); return; }   // never stack requests
+  loading = true;
+  try { await load(); } finally { loading = false; }
+  // load() reschedules; see below for why it and not this.
+}
+
+// Called whenever we do something that will change the door's state, so the
+// page starts watching closely from that moment rather than on the next tick.
+//
+// This only opens the WINDOW. The rate is chosen at the end of load(), because
+// that is the only place that knows whether anything is actually in flight —
+// scheduling here used the pending list from BEFORE the command was queued,
+// saw nothing outstanding, and quietly picked the one-minute tick. The label
+// said "watching every 5s" while the page polled once a minute.
+function watchClosely(){
+  fastUntil = Date.now() + FAST_FOR_MS;
+}
+
+pollOnce();
+setInterval(()=>{
+  if(!lastLoad || !$("live")) return;
+  // Leave the "watching" label alone; it is describing something live.
+  if(inFlight() && Date.now()<fastUntil) return;
+  const m=Math.round((Date.now()-lastLoad)/60000);
+  if(m>=1&&events.length) $("live").textContent=`${m} min ago`;
+},60000);
 </script>
