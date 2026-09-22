@@ -118,6 +118,9 @@ without it even if the request is crafted by hand.
 
 The command line remains the only way in when the dashboard is not reachable,
 and the only place the credentials can be changed at all.
+
+Either way, the consequential ones can email you — see
+[WEB-DASHBOARD.md](WEB-DASHBOARD.md#email-when-something-consequential-happens).
 Thresholds that form no hysteresis band, a lockout longer than the close dwell,
 an open filter slower than the close filter — all still refused, and the refusal
 comes back in the acknowledgement.

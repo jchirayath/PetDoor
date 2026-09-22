@@ -19,7 +19,20 @@
 // server collecting from several doors can tell which build produced an event.
 // Bump it when you change behaviour someone might need to correlate against.
 #ifndef PETDOOR_VERSION
-#define PETDOOR_VERSION "1.0.0"
+#define PETDOOR_VERSION "1.1.0"
+#endif
+
+// The commit this was built from, when the build command says so:
+//
+//   --build-property "compiler.cpp.extra_flags=-DPETDOOR_GIT=\\"$(git rev-parse --short HEAD)\\""
+//
+// Empty otherwise, and nothing depends on it. It exists because a version
+// string that only moves on release days cannot answer "which code is on the
+// door", and the build timestamp only answers "which of my local builds" —
+// neither maps to anything anyone else can check out. Reported with every
+// upload, so the server's firmware history records it too.
+#ifndef PETDOOR_GIT
+#define PETDOOR_GIT ""
 #endif
 
 // Set automatically by the compiler — useful when several people build from

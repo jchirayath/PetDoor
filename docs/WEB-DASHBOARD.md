@@ -430,6 +430,46 @@ confirm adds friction to the one thing people actually want, which is to open
 the door from the garden with cold hands, and it does nothing about the press
 you regret thirty seconds later.
 
+### Email when something consequential happens
+
+Set `PETDOOR_NOTIFY_TO` and the server mails you when a command with a
+consequence is queued — from the dashboard or the command line, either way:
+
+| Mailed | Not mailed |
+|---|---|
+| `door open`, `lock`, `unlock` | `door close`, `door auto` |
+| `defaults`, `macs`, `reboot`, `ota` | every settings change, `beep`, `scan` |
+
+The exclusions are the point. A tuning session is a dozen commands in a minute,
+and a mailbox that fills with `pulse 500` is one whose PetDoor mail gets
+filtered into a folder nobody opens — at which point the alert that mattered is
+lost with the rest. Settings changes are recorded on the Settings tab, they are
+reversible, and none of them is a thing happening *at* the door.
+
+`door close` and `door auto` are missing for the same reason the lockout only
+gates closing: they are the safe direction.
+
+The message says what was queued, for which door, when, from where, and — when
+it came from the dashboard — **which signed-in account asked**, taken from the
+identity the proxy passes through rather than anything the caller supplied. It
+also mentions that a queued command can still be cancelled, because it can.
+
+SMTP settings come from the environment (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
+`SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_CRYPTO`), deliberately sharing the names a
+host's other services already use, so one set of credentials serves all of them
+rather than a second copy going stale on its own.
+
+**A relay having a bad afternoon never breaks a command.** The command is
+queued before the mail is attempted, the send cannot raise into the caller, and
+a failure is written to the server log — because a notification that never
+arrives is otherwise indistinguishable from nothing having happened.
+
+> **`SMTP_FROM` is a setting, not a guess.** A default like
+> `petdoor@<somedomain>` sends as a domain you may not own, fails SPF and DKIM
+> at any real relay, and quietly lands every future alert in spam — precisely
+> the failure this feature exists to prevent. With nothing to send as, the
+> server refuses and names the missing setting.
+
 ### How it is protected from other sites
 
 Your proxy decides *who* you are, with a cookie. But a browser attaches that

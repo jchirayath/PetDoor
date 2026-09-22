@@ -53,6 +53,44 @@ CLOCK_SKEW_S = 900
 # this in a container where the command line lives in a compose file.
 ALLOW_WEB_CONTROL = os.environ.get("PETDOOR_WEB_CONTROL", "").lower() in ("1", "true", "yes", "on")
 
+# ---------------------------------------------------------------- email
+#
+# Who to tell when something consequential is asked of the door. Empty
+# disables the whole thing, which is the default: a log server that starts
+# mailing people because it was upgraded would be a rude surprise.
+#
+# The SMTP settings deliberately share the names betty already uses for its
+# other services, so this reuses one set of credentials rather than adding a
+# second copy of the same secret to go stale independently.
+NOTIFY_TO = os.environ.get("PETDOOR_NOTIFY_TO", "").strip()
+SMTP_HOST = os.environ.get("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587") or 587)
+SMTP_USER = os.environ.get("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", "").strip()
+SMTP_CRYPTO = os.environ.get("SMTP_CRYPTO", "tls").strip().lower()
+
+# Which commands are worth an email.
+#
+# NOT everything. A tuning session is a dozen commands in a minute, and a
+# mailbox that fills with "pulse 500" is one whose PetDoor mail gets filtered
+# into a folder nobody opens — at which point the alert that mattered is lost
+# with the rest. These are the ones with a consequence you would want to know
+# about from somewhere else:
+#
+#   door open   the door is now open and the weather is coming in
+#   unlock      the collar can open it again
+#   lock        it cannot, which explains an animal outside
+#   defaults    every tuning value you set is gone
+#   macs        the beacon list changed and the door is restarting
+#   reboot      it went away for a minute
+#   ota         a window opened for somebody to push firmware
+#
+# Settings changes are deliberately absent. They are recorded on the Settings
+# tab, they are reversible, and none of them is a thing happening AT the door.
+NOTIFY_VERBS = ("door", "lock", "unlock", "defaults", "macs", "reboot", "ota")
+NOTIFY_DOOR_ARGS = ("open",)   # `door close`/`auto` are the safe direction
+
 EVENT_LABEL = {
     "OPEN": "came in", "CLOSE": "went out", "BOOT": "restarted",
     "REFUSED": "refused", "FIX_GOT": "beacon found", "FIX_LOST": "beacon lost",
@@ -112,6 +150,29 @@ def init_db():
             text   TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS scans_device ON scans(device, epoch);
+        -- Every distinct firmware a door has run, and when it first said so.
+        --
+        -- devices.version is overwritten on every upload, so without this the
+        -- moment a door changed firmware left no trace at all — which is the
+        -- one fact you want when behaviour changes on a given afternoon and
+        -- you are trying to work out whether you caused it.
+        CREATE TABLE IF NOT EXISTS firmware (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            device    TEXT NOT NULL,
+            version   TEXT,
+            build     TEXT,
+            first_seen INTEGER NOT NULL,
+            boots     INTEGER,
+            -- The commit it was built from, when the build said so. A version
+            -- string moves on release days and a build timestamp only means
+            -- something on the machine that produced it; this is the only one
+            -- anybody else can check out.
+            git       TEXT,
+            -- How it arrived, as far as we can tell: an OTA window was open
+            -- shortly before, or it simply appeared (a cable).
+            via       TEXT
+        );
+        CREATE INDEX IF NOT EXISTS firmware_device ON firmware(device, first_seen);
         CREATE TABLE IF NOT EXISTS devices (
             device   TEXT PRIMARY KEY,
             version  TEXT,
@@ -342,6 +403,92 @@ def web_command_allowed(command):
     return True, ""
 
 
+def notify_worthy(command):
+    """Is this command worth an email? See NOTIFY_VERBS for the reasoning."""
+    parts = command.split()
+    if not parts:
+        return False
+    verb = parts[0].lower()
+    if verb not in NOTIFY_VERBS:
+        return False
+    if verb == "door":
+        return len(parts) > 1 and parts[1].lower() in NOTIFY_DOOR_ARGS
+    return True
+
+
+def send_notification(subject, body):
+    """One plain-text message. Returns (ok, reason).
+
+    Never raises into the caller: a mail relay having a bad afternoon must not
+    turn into a failed command or a 500 on the control endpoint. The command
+    has already been queued by the time this runs, and the door will collect it
+    whether or not anybody gets told.
+    """
+    if not NOTIFY_TO:
+        return False, "no PETDOOR_NOTIFY_TO configured"
+    if not SMTP_HOST:
+        return False, "no SMTP_HOST configured"
+    # From is a setting, never a guess. A default like petdoor@<somedomain>
+    # sends mail as somebody else's domain, fails SPF and DKIM at any real
+    # relay, and quietly lands every future alert in a spam folder — which is
+    # precisely the failure a notification feature exists to prevent. Refusing
+    # and naming the missing setting is the honest answer.
+    sender = SMTP_FROM or SMTP_USER
+    if not sender:
+        return False, "no SMTP_FROM (or SMTP_USER) to send as"
+
+    import smtplib, ssl
+    from email.message import EmailMessage
+
+    msg = EmailMessage()
+    msg["Subject"] = f"[petdoor] {subject}"
+    msg["From"] = sender
+    msg["To"] = NOTIFY_TO
+    msg.set_content(body)
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as srv:
+            # STARTTLS unless explicitly disabled. A relay on this host or on
+            # the LAN may not offer it, and refusing to send at all would be
+            # worse than a link that never leaves the machine — so this
+            # downgrades when the server genuinely does not advertise it, and
+            # never on a handshake failure, which is what an attack looks like.
+            if SMTP_CRYPTO not in ("", "none", "off") and srv.has_extn("starttls"):
+                srv.starttls(context=ssl.create_default_context())
+                srv.ehlo()
+            if SMTP_USER and SMTP_PASSWORD:
+                srv.login(SMTP_USER, SMTP_PASSWORD)
+            srv.send_message(msg)
+        return True, None
+    except Exception as e:
+        # The relay's own rejection text is usually the actionable part
+        # ("application-specific password required"), so keep it.
+        return False, f"{type(e).__name__}: {e}"
+
+
+def notify_command(device, command, who, source):
+    """Tell somebody a consequential command was queued for the door."""
+    if not notify_worthy(command) or not NOTIFY_TO:
+        return
+    when = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+    body = (
+        f"{command}\n\n"
+        f"  door    : {device}\n"
+        f"  queued  : {when}\n"
+        f"  from    : {source}\n"
+        f"  by      : {who or 'not recorded'}\n\n"
+        "The door collects queued commands when it next calls in, usually\n"
+        "within five minutes, and sooner if the collar is away. Until then it\n"
+        "can still be cancelled from the Controls tab.\n\n"
+        "https://petdoor.aspl.net/dashboard\n"
+    )
+    ok, why = send_notification(f"{command} queued for {device}", body)
+    if not ok:
+        # Worth a log line rather than silence: a notification that never
+        # arrives is indistinguishable from nothing having happened.
+        sys.stderr.write(f"  NOTIFY FAILED for {command!r}: {why}\n")
+
+
 def queue_command(device, command):
     """Queue one command line. Returns (ok, message)."""
     command = command.strip()
@@ -400,6 +547,7 @@ def migrate():
         # running firmware new enough to send X-PetDoor-Config calls in; the
         # settings form shows "not reported yet" rather than guessing.
         _ensure_column(conn, "devices", "config", "TEXT")
+        _ensure_column(conn, "firmware", "git", "TEXT")
 
 
 def get_key():
@@ -414,7 +562,40 @@ def set_key(key):
                      "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key,))
 
 
-def note_device(device, version, build, boots, ip):
+def note_firmware(device, version, build, boots, git=None):
+    """Record a firmware change, once, the first time we see it.
+
+    Called on every upload; almost always a no-op. The comparison is against
+    the LAST row rather than any row, so a deliberate rollback to a previous
+    build is recorded as its own event rather than silently ignored — a
+    rollback is exactly the thing you want to see in a timeline.
+    """
+    if not version and not build:
+        return
+    with db() as conn:
+        last = conn.execute(
+            "SELECT version,build FROM firmware WHERE device=? "
+            "ORDER BY id DESC LIMIT 1", (device,)).fetchone()
+        if last and last["version"] == version and last["build"] == build:
+            return
+        # An OTA window open in the last ten minutes is the strong hint that
+        # this arrived over the air rather than down a cable. Not proof — the
+        # window could have been opened and not used — so the column says
+        # "ota?" rather than "ota".
+        recent = conn.execute(
+            "SELECT 1 FROM commands WHERE device=? AND command='ota' "
+            "AND delivered IS NOT NULL AND delivered > ? LIMIT 1",
+            (device, int(time.time()) - 600)).fetchone()
+        conn.execute(
+            "INSERT INTO firmware(device,version,build,git,first_seen,boots,via)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (device, version, build, git, int(time.time()), boots,
+             "ota?" if recent else "cable"))
+    sys.stderr.write(f"  FIRMWARE CHANGE {device}: v{version} {build}\n")
+
+
+def note_device(device, version, build, boots, ip, git=None):
+    note_firmware(device, version, build, boots, git)
     with db() as conn:
         conn.execute(
             "INSERT INTO devices(device,version,build,boots,last_seen,last_ip)"
@@ -695,10 +876,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "SELECT device,command,queued FROM commands "
                     "WHERE delivered IS NULL ORDER BY id"
                 ).fetchall()
+                fw = conn.execute(
+                    "SELECT device,version,build,first_seen,boots,via FROM firmware "
+                    "ORDER BY first_seen DESC LIMIT 20"
+                ).fetchall()
             return self._send(200, json.dumps({"events": [dict(r) for r in rows],
                                                "devices": [dict(d) for d in devs],
                                                "commands": [dict(c) for c in cmds],
                                                "pending": [dict(p) for p in pend],
+                                               "firmware": [dict(f) for f in fw],
                                                "control": bool(ALLOW_WEB_CONTROL)}),
                               "application/json; charset=utf-8")
         if path.startswith("/table"):
@@ -815,6 +1001,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # Logged whether or not it was accepted: this is the audit trail for a
         # door that can now be opened from a browser.
         self.log_message("CONTROL from %s: %s -> %s", self.client_address[0], command, msg)
+        if ok:
+            # Caddy strips any client-supplied identity headers BEFORE
+            # authenticating and then sets these from oauth2-proxy's response,
+            # so they are the proxy's word rather than the caller's. Anything
+            # reaching this port without going through Caddy could forge them —
+            # which is the same trust boundary the whole private half rests on.
+            who = (self.headers.get("X-Auth-Request-Email")
+                   or self.headers.get("X-Auth-Request-User") or "")
+            notify_command(device, command, who, f"the dashboard ({self.client_address[0]})")
         return self._json(200 if ok else 400, {"ok": ok, "queued": ok, "message": msg})
 
     def do_DELETE(self):
@@ -896,7 +1091,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # whatever last hop connected — behind a reverse proxy that is the
         # proxy, which is no use for pushing an update to.
         door_ip = self.headers.get("X-PetDoor-IP") or self.client_address[0]
-        note_device(device, version, build, boots, door_ip)
+        note_device(device, version, build, boots, door_ip,
+                    (self.headers.get("X-PetDoor-Git") or "")[:40] or None)
         with db() as conn:
             conn.execute(
                 "UPDATE devices SET status=?, config=?, door_ip=?, remote=? "
@@ -1001,6 +1197,8 @@ def main():
                     help="show queued, delivered and acknowledged commands")
     ap.add_argument("--clear-commands", action="store_true",
                     help="drop commands that have not been delivered yet")
+    ap.add_argument("--firmware", action="store_true",
+                    help="show every firmware a door has run, newest first")
     ap.add_argument("--doors", action="store_true",
                     help="show each door: firmware, address to push to, and what it sees")
     ap.add_argument("--scan", action="store_true",
@@ -1018,6 +1216,22 @@ def main():
         print("\nPut this in petdoor/secrets.h:")
         print(f'  #define LOG_SHARED_KEY "{get_key()}"')
         return
+    if args.firmware:
+        with db() as conn:
+            rows = conn.execute("SELECT * FROM firmware ORDER BY first_seen DESC").fetchall()
+        if not rows:
+            print("No firmware changes recorded yet.")
+            print("This is populated from uploads, so it starts from the first")
+            print("upload after this server was updated — not retroactively.")
+            return
+        print(f"{'first seen':20} {'version':9} {'commit':9} {'build':22} {'boots':>6}  how")
+        for r in rows:
+            when = dt.datetime.fromtimestamp(r["first_seen"]).strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{when:20} {r['version'] or '?':9} {(r['git'] if 'git' in r.keys() else None) or '-':9} "
+                  f"{r['build'] or '?':22} {r['boots'] if r['boots'] is not None else '?':>6}  "
+                  f"{r['via'] or ''}")
+        return
+
     if args.commands or args.queue or args.clear_commands or args.doors or args.scan:
         with db() as conn:
             known = [r["device"] for r in conn.execute("SELECT device FROM devices")]
@@ -1044,11 +1258,16 @@ def main():
             print(f"dropped {n} undelivered command(s) for {target}")
 
         if args.queue:
-            ok, msg = queue_command(target, " ".join(args.queue))
+            cmd = " ".join(args.queue)
+            ok, msg = queue_command(target, cmd)
             print(msg)
             if not ok:
                 raise SystemExit(1)
             print("The door collects it on its next upload. Watch with --commands.")
+            # The same notification as the web path. Somebody with a shell on
+            # the server opening the door is no less worth telling people about
+            # than somebody with a browser — arguably more.
+            notify_command(target, cmd, os.environ.get("USER", ""), "the command line")
 
         if args.doors:
             with db() as conn:

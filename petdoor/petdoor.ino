@@ -236,6 +236,7 @@ void printBanner() {
   Serial.println();
   Serial.println(F("=================================================="));
   Serial.println(F("  PetDoor — BLE proximity door controller"));
+  if (PETDOOR_GIT[0] != '\0') Serial.printf("  commit        : %s\r\n", PETDOOR_GIT);
   Serial.printf("  v%s  (built %s, %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD,
                 BleScanner::stackName());
   Serial.println(F("=================================================="));
