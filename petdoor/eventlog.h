@@ -26,6 +26,11 @@ enum LogEventType : uint8_t {
   LOG_REFUSED = 3,   // detail = ActuationResult
   LOG_FIX_LOST = 4,  // beacon went stale — what usually precedes a close
   LOG_FIX_GOT = 5,
+  // Travel time elapsed and NO limit switch was reached: the door did not get
+  // where it was sent. Only ever recorded with sensors fitted, because without
+  // them there is nothing to notice it with. detail = the DoorState we had
+  // commanded, so the log says which direction failed.
+  LOG_STALLED = 6,
 };
 
 struct LogEntry {

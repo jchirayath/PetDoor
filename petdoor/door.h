@@ -52,6 +52,33 @@ class DoorController {
   void forcePulseClose();
 
   DoorState state() const { return state_; }
+
+  // Tell the controller where the door ACTUALLY is, from a limit switch.
+  //
+  // Correction only, never command: this can change what the controller
+  // believes, and nothing else. No relay is pulsed here, no lockout is
+  // touched, no interlock is bypassed.
+  //
+  // It matters because "already in that state" is how requestOpen() and
+  // requestClose() decide to do nothing. If someone shoves the door by hand,
+  // or the controller swallowed a press, the belief is stale and the door
+  // sits there refusing to correct itself. With a switch fitted, reality wins
+  // and the next request actuates as it should.
+  //
+  // DOOR_UNKNOWN is ignored rather than stored: mid-travel is the normal
+  // reading between the two switches, and forgetting the last known position
+  // every time the door passes between them would be worse than useless.
+  // Returns true if the belief actually changed, so the caller can log it.
+  bool observePosition(DoorState observed) {
+    if (observed == DOOR_UNKNOWN || observed == state_) return false;
+    state_ = observed;
+    // hasActuated_ and lastActuationMs_ are deliberately NOT touched. They mean
+    // "we pulsed a relay", and lockedOut() is built on them: setting them from
+    // a sensor reading would start the actuation lockout at boot, with
+    // lastActuationMs_ still 0, and refuse the first close for no reason.
+    // Nothing moved because of us. Only the belief changed.
+    return true;
+  }
   uint32_t lastActuationMs() const { return lastActuationMs_; }
   bool hasActuated() const { return hasActuated_; }
 

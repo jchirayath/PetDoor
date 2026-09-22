@@ -482,11 +482,17 @@ One LED, in priority order — most urgent wins.
 | Pattern | Meaning |
 |---|---|
 | **Solid** | Door was last commanded **OPEN** |
+| **Near-solid**, brief gap every 0.6 s | Door is **moving** — for `DOOR_TRAVEL_MS` after each actuation |
 | **Brief blip** every 2 s | Door was last commanded **CLOSED** |
+| **Double blip** every 2 s | Door is closed **and locked** — the collar may not open it |
 | 1 Hz blink | No beacon configured, or never heard since boot |
 | **2 Hz flash** | **Beacon battery low** (see `BEACON_LOW_BATTERY_MV`) |
 | 5 Hz flutter | Radio unhealthy — no advertisements from anything |
 | Off | Nothing commanded since boot |
+
+"Moving" is a stopwatch started by the relay pulse, not a position sensor. It
+means the firmware actuated and `DOOR_TRAVEL_MS` has not yet elapsed — nothing
+more. With `DOOR_TRAVEL_MS` at its `0` default this pattern never appears.
 
 Solid-vs-blip shows what was last **commanded**, not where the door physically
 is — this firmware is open-loop and has no limit switches. If the motor jammed,
@@ -495,6 +501,27 @@ the LED still shows solid.
 > Door state is shown here rather than by flashing a relay: a relay's indicator
 > is driven by its coil, so "flashing" one would energise the motor and
 > physically move the door.
+
+## Buzzer
+
+Optional, off by default, and the only diagnostic you can read from across the
+yard without looking at anything. Set it up with `w` → `buzzer <pin>`; full
+detail in [WIRING.md](WIRING.md#the-annunciator).
+
+| Sound | Meaning |
+|---|---|
+| tick … tick … tick | Door is **moving** — one tick a second for `DOOR_TRAVEL_MS` |
+| rising two-tone | Travel time is up. It **should** be there |
+| one low buzz | Refused: the door is **locked**. Sounds once per arrival, not repeatedly |
+| three even beeps | Answering your `beep` — proves the buzzer, says nothing about the door |
+
+The same caveat as the LED, and it is worth repeating because a chime sounds
+more confident than a blink: **the rising two-tone is a timer expiring, not an
+arrival.** A door jammed halfway gets the same chime.
+
+Silence where you expected a sound is nearly always the pin or the buzzer type,
+not the door. `beep` separates the two in one keystroke: if `beep` is silent the
+buzzer is wrong, and if `beep` works but the door never ticks, `travel` is `0`.
 
 ## Beacon battery
 

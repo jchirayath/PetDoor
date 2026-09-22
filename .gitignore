@@ -35,3 +35,7 @@ build/
 
 # Playwright MCP scratch output (screenshots are curated into docs/assets)
 .playwright-mcp/
+
+# Python bytecode, from running the log server locally
+__pycache__/
+*.pyc

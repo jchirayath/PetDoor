@@ -639,9 +639,14 @@
 // 0 means "not measured" and disables the checks below.
 //
 // The firmware never waits for this — it has no position feedback and cannot
-// know when travel actually finishes. It is here because two other settings are
-// only sensible in relation to it, and getting them wrong produces a door that
-// visibly starts moving and then stops partway:
+// know when travel actually finishes. What it does with the number is announce
+// it: for this long after each actuation the status LED shows "moving" and the
+// annunciator ticks, and when it expires the annunciator plays its done chime.
+// That is a TIMER, not a measurement. It will chime at a door stuck halfway.
+//
+// It also exists because two other settings are only sensible in relation to
+// it, and getting them wrong produces a door that visibly starts moving and
+// then stops partway:
 //
 //   MIN_ACTUATION_INTERVAL_MS  must be >= travel time, or the firmware can
 //                              command a reversal while the door is still
@@ -655,6 +660,94 @@
 // close. The reference build measures ~15 s.
 #ifndef DOOR_TRAVEL_MS
 #define DOOR_TRAVEL_MS 0
+#endif
+
+// ---- position sensors ------------------------------------------------------
+//
+// Two normally-open limit switches telling the door where it ACTUALLY is. A
+// reed switch and a magnet is the right pick for a coop: sealed glass, nothing
+// exposed to weather or to a curious beak.
+//
+//   GPIO PIN_SENSOR_OPEN   ──[ reed switch ]── GND    closed when fully OPEN
+//   GPIO PIN_SENSOR_CLOSED ──[ reed switch ]── GND    closed when fully CLOSED
+//
+// -1 disables that end, and both default to -1 because most builds have none.
+//
+// What they buy you: the door stops guessing. Its reported state becomes the
+// measured one, the "arrived" chime fires on arrival instead of on a stopwatch,
+// and a press the controller swallowed becomes visible instead of being
+// indistinguishable from one it obeyed.
+//
+// What they deliberately do NOT do is drive the motor. The proximity logic
+// still decides every actuation and the interlock still gates it; these only
+// correct what the firmware believes. A sensor that can command a door has a
+// much worse failure mode than one that cannot. See petdoor/position.h.
+#ifndef PIN_SENSOR_OPEN
+#define PIN_SENSOR_OPEN -1
+#endif
+
+#ifndef PIN_SENSOR_CLOSED
+#define PIN_SENSOR_CLOSED -1
+#endif
+
+// 1 = switch shorts the pin to GND and the pin idles high on an internal
+// pull-up. This is the default and what you want almost always: a broken wire
+// or a lost magnet then reads as "not at that end", never as a false arrival.
+//
+// 0 = your wiring drives the pin HIGH at that end and supplies its own
+// pull-down. The ESP32 cannot pull down and up at once, so the internal
+// pull-up is dropped in that mode and the external resistor is not optional.
+#ifndef SENSOR_ACTIVE_LOW
+#define SENSOR_ACTIVE_LOW 1
+#endif
+
+// A reed switch chatters as the magnet passes, and a door settling on its stop
+// can bounce it several times. Without this the door would announce three
+// arrivals for one. 50 ms is far longer than the bounce and far shorter than
+// any real travel.
+#ifndef SENSOR_DEBOUNCE_MS
+#define SENSOR_DEBOUNCE_MS 50
+#endif
+
+// ---- the annunciator -------------------------------------------------------
+//
+// A buzzer that says "I heard you, wait" while the door travels and "that
+// should be it" when DOOR_TRAVEL_MS is up. Fifteen seconds of silence between
+// a relay click and a door that has moved is indistinguishable from a relay
+// click that went nowhere, which is most of what makes this door frustrating
+// to stand next to.
+//
+// -1 disables it, and that is the default: this firmware must not start
+// driving an arbitrary GPIO on the assumption something harmless is attached.
+// Set it to the pin your buzzer is on. If your board has one but does not say
+// where, `buzzer <pin>` then `beep` on the console tries a candidate in
+// seconds, and the value is saved on the device — you are not reflashing to
+// guess. See docs/WIRING.md#the-annunciator.
+//
+// This is NOT speech. A buzzer plays patterns; a spoken "wait" needs a DAC, an
+// amplifier and a speaker, which is a different build. See petdoor/chime.h.
+#ifndef PIN_BUZZER
+#define PIN_BUZZER -1
+#endif
+
+// 0 = ACTIVE buzzer: has its own oscillator, sounds on DC, one fixed pitch.
+// 1 = PASSIVE buzzer: a bare transducer that needs a square wave, and plays
+//     whatever pitch it is given.
+// Guessing wrong is harmless — an active buzzer driven as passive still makes
+// noise, it just ignores the tune. `beep` tells you which you have: three even
+// beeps on both, but only a passive one plays a RISING pair when the door
+// finishes.
+#ifndef BUZZER_PASSIVE
+#define BUZZER_PASSIVE 0
+#endif
+
+// The same active-low trap as the relays, and for the same reason: plenty of
+// boards drive their buzzer through a transistor that sounds when the pin is
+// pulled to GND. Symptom of getting it wrong is a buzzer that screams
+// continuously from boot and goes quiet only during a chime. Only meaningful
+// for an ACTIVE buzzer; the passive path drives a waveform either way.
+#ifndef BUZZER_ACTIVE_LOW
+#define BUZZER_ACTIVE_LOW 0
 #endif
 
 // How long a manual `o` keeps the door open before automatic control resumes.

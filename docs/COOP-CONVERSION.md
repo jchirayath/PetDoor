@@ -207,6 +207,15 @@ that button.
 5. **Wire each pair to a relay's COM and NO** (normally-open) terminals. Relay
    closed = button pressed.
 
+   <p align="center">
+     <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, and GPIO 32 and 33 are reserved for open and closed limit switches" width="820">
+   </p>
+
+   The whole picture, for the all-in-one board used here. If you are also
+   fitting a [buzzer](WIRING.md#the-annunciator) or running wires for
+   [position sensors](WIRING.md#position-sensors), now is the moment —
+   the housing is already open.
+
 6. **Do not connect the ESP32's ground to the door controller's ground** unless
    you have confirmed they are at the same potential. The relay contacts are
    electrically isolated from the coil side — that isolation is the point. Keep

@@ -109,6 +109,7 @@ const char *typeName(uint8_t type) {
     case LOG_REFUSED: return "REFUSED";
     case LOG_FIX_LOST: return "FIX_LOST";
     case LOG_FIX_GOT: return "FIX_GOT";
+    case LOG_STALLED: return "STALLED";
     default: return "?";
   }
 }

@@ -1,0 +1,159 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 680" width="980" height="680"
+     role="img" aria-label="Wiring diagram: an ESP32 two-relay board driving a coop door controller's open and close buttons, with a piezo buzzer and two reserved limit-switch inputs">
+  <title>ESP32 2-relay board — PetDoor wiring</title>
+  <style>
+    .h1   { font: 600 17px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#8A96A3; }
+    .sub  { font: 13px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
+    .ttl  { font: 600 13px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#8A96A3; }
+    .wire { font: 12px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:#9AA5B1; }
+    .onbd { font: 10px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#C7D0DA; }
+    .onbd2{ font: 600 11px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#FFFFFF; }
+    .gpio { font: 600 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    .note { font: 12px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
+    .box  { fill:none; stroke:#7A8794; stroke-width:1; opacity:0.45; }
+  </style>
+
+  <text x="20" y="30" class="h1">ESP32 2-relay board — what connects where</text>
+  <text x="20" y="52" class="sub">GPIO numbers are the config.h defaults. Override them in secrets.h if your board differs — check its silkscreen.</text>
+
+  <!-- ================= the board ================= -->
+  <rect x="320" y="110" width="330" height="300" rx="10" fill="#24425E"/>
+  <text x="634" y="402" class="onbd" text-anchor="end" opacity="0.55">LC</text>
+
+  <!-- IO headers -->
+  <rect x="334" y="135" width="22" height="250" rx="3" fill="#1A3049"/>
+  <rect x="470" y="135" width="22" height="250" rx="3" fill="#1A3049"/>
+  <g fill="#C9A227">
+    <circle cx="340" cy="148" r="2.6"/><circle cx="350" cy="148" r="2.6"/>
+    <circle cx="340" cy="170" r="2.6"/><circle cx="350" cy="170" r="2.6"/>
+    <circle cx="340" cy="192" r="2.6"/><circle cx="350" cy="192" r="2.6"/>
+    <circle cx="340" cy="214" r="2.6"/><circle cx="350" cy="214" r="2.6"/>
+    <circle cx="340" cy="236" r="2.6"/><circle cx="350" cy="236" r="2.6"/>
+    <circle cx="340" cy="258" r="2.6"/><circle cx="350" cy="258" r="2.6"/>
+    <circle cx="340" cy="280" r="2.6"/><circle cx="350" cy="280" r="2.6"/>
+    <circle cx="340" cy="302" r="2.6"/><circle cx="350" cy="302" r="2.6"/>
+    <circle cx="340" cy="324" r="2.6"/><circle cx="350" cy="324" r="2.6"/>
+    <circle cx="340" cy="346" r="2.6"/><circle cx="350" cy="346" r="2.6"/>
+    <circle cx="340" cy="368" r="2.6"/><circle cx="350" cy="368" r="2.6"/>
+    <circle cx="476" cy="148" r="2.6"/><circle cx="486" cy="148" r="2.6"/>
+    <circle cx="476" cy="170" r="2.6"/><circle cx="486" cy="170" r="2.6"/>
+    <circle cx="476" cy="192" r="2.6"/><circle cx="486" cy="192" r="2.6"/>
+    <circle cx="476" cy="214" r="2.6"/><circle cx="486" cy="214" r="2.6"/>
+    <circle cx="476" cy="236" r="2.6"/><circle cx="486" cy="236" r="2.6"/>
+    <circle cx="476" cy="258" r="2.6"/><circle cx="486" cy="258" r="2.6"/>
+    <circle cx="476" cy="280" r="2.6"/><circle cx="486" cy="280" r="2.6"/>
+    <circle cx="476" cy="302" r="2.6"/><circle cx="486" cy="302" r="2.6"/>
+    <circle cx="476" cy="324" r="2.6"/><circle cx="486" cy="324" r="2.6"/>
+    <circle cx="476" cy="346" r="2.6"/><circle cx="486" cy="346" r="2.6"/>
+    <circle cx="476" cy="368" r="2.6"/><circle cx="486" cy="368" r="2.6"/>
+  </g>
+  <text x="345" y="130" class="onbd" text-anchor="middle">IO</text>
+  <text x="481" y="130" class="onbd" text-anchor="middle">IO</text>
+
+  <!-- ESP32 module -->
+  <rect x="368" y="146" width="90" height="140" rx="4" fill="#9AA5B1"/>
+  <rect x="374" y="152" width="78" height="128" rx="2" fill="#8A96A3"/>
+  <text x="413" y="210" class="onbd2" text-anchor="middle" fill="#24425E">ESP32</text>
+  <text x="413" y="226" class="onbd" text-anchor="middle" fill="#24425E">WROOM-32</text>
+
+  <!-- 6-pin relay output terminal -->
+  <rect x="506" y="118" width="132" height="34" rx="3" fill="#3E8E5A"/>
+  <g fill="#2A6B41">
+    <circle cx="522" cy="135" r="5"/><circle cx="544" cy="135" r="5"/><circle cx="566" cy="135" r="5"/>
+    <circle cx="588" cy="135" r="5"/><circle cx="610" cy="135" r="5"/><circle cx="630" cy="135" r="5"/>
+  </g>
+
+  <!-- relays -->
+  <rect x="506" y="162" width="62" height="104" rx="3" fill="#3A6EA5"/>
+  <rect x="576" y="162" width="62" height="104" rx="3" fill="#3A6EA5"/>
+  <text x="537" y="192" class="onbd2" text-anchor="middle">RELAY 1</text>
+  <text x="537" y="209" class="onbd" text-anchor="middle">OPEN</text>
+  <text x="537" y="240" class="gpio" text-anchor="middle" fill="#F0A08A">GPIO 16</text>
+  <text x="607" y="192" class="onbd2" text-anchor="middle">RELAY 2</text>
+  <text x="607" y="209" class="onbd" text-anchor="middle">CLOSE</text>
+  <text x="607" y="240" class="gpio" text-anchor="middle" fill="#7FD3C8">GPIO 17</text>
+  <text x="572" y="284" class="onbd" text-anchor="middle" opacity="0.8">both driven on-board</text>
+  <text x="572" y="298" class="onbd" text-anchor="middle" opacity="0.8">nothing to wire</text>
+
+  <!-- power terminal -->
+  <rect x="578" y="326" width="60" height="30" rx="3" fill="#3E8E5A"/>
+  <g fill="#2A6B41"><circle cx="596" cy="341" r="5"/><circle cx="620" cy="341" r="5"/></g>
+  <text x="608" y="374" class="onbd" text-anchor="middle" opacity="0.8">power in</text>
+
+  <!-- ================= left callouts ================= -->
+  <g>
+    <rect x="20" y="138" width="250" height="52" rx="6" class="box"/>
+    <rect x="20" y="138" width="4" height="52" rx="2" fill="#9AA5B1"/>
+    <text x="36" y="158" class="ttl">Status LED  (optional)</text>
+    <text x="36" y="178" class="wire">GPIO 23 ──[220 Ω]──[LED]── GND</text>
+    <path d="M270 164 H334" fill="none" stroke="#9AA5B1" stroke-width="2"/>
+  </g>
+  <g>
+    <rect x="20" y="208" width="250" height="52" rx="6" class="box"/>
+    <rect x="20" y="208" width="4" height="52" rx="2" fill="#9B72CF"/>
+    <text x="36" y="228" class="ttl" fill="#9B72CF">Piezo buzzer</text>
+    <text x="36" y="248" class="wire">GPIO 27 ──[100 Ω]──[piezo]── GND</text>
+    <path d="M270 234 H306 V214 H334" fill="none" stroke="#9B72CF" stroke-width="2"/>
+  </g>
+  <g>
+    <rect x="20" y="288" width="250" height="52" rx="6" class="box" stroke-dasharray="5 4"/>
+    <rect x="20" y="288" width="4" height="52" rx="2" fill="#E9A23B"/>
+    <text x="36" y="308" class="ttl" fill="#E9A23B">OPEN limit sensor</text>
+    <text x="36" y="328" class="wire">GPIO 32 ──[reed switch]── GND</text>
+    <path d="M270 314 H306 V302 H334" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
+  </g>
+  <g>
+    <rect x="20" y="358" width="250" height="52" rx="6" class="box" stroke-dasharray="5 4"/>
+    <rect x="20" y="358" width="4" height="52" rx="2" fill="#E9A23B"/>
+    <text x="36" y="378" class="ttl" fill="#E9A23B">CLOSED limit sensor</text>
+    <text x="36" y="398" class="wire">GPIO 33 ──[reed switch]── GND</text>
+    <path d="M270 384 H306 V368 H334" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
+  </g>
+  <text x="24" y="432" class="note" fill="#E9A23B">Both use INPUT_PULLUP: the switch shorts to GND when the door reaches that end.</text>
+
+  <!-- ================= right callouts ================= -->
+  <g>
+    <rect x="690" y="120" width="280" height="84" rx="6" class="box"/>
+    <rect x="690" y="120" width="4" height="84" rx="2" fill="#E76F51"/>
+    <text x="706" y="142" class="ttl" fill="#E76F51">Door controller — OPEN button</text>
+    <text x="706" y="162" class="wire">COM1 + NO1 across its pads</text>
+    <text x="706" y="181" class="note">In parallel with the existing button.</text>
+    <text x="706" y="197" class="note">Polarity does not matter.</text>
+    <path d="M638 130 H664 V162 H690" fill="none" stroke="#E76F51" stroke-width="2"/>
+  </g>
+  <g>
+    <rect x="690" y="228" width="280" height="84" rx="6" class="box"/>
+    <rect x="690" y="228" width="4" height="84" rx="2" fill="#2A9D8F"/>
+    <text x="706" y="250" class="ttl" fill="#2A9D8F">Door controller — CLOSE button</text>
+    <text x="706" y="270" class="wire">COM2 + NO2 across its pads</text>
+    <text x="706" y="289" class="note">Use NO, never NC — a power cut would</text>
+    <text x="706" y="305" class="note">otherwise hold the button down.</text>
+    <path d="M638 142 H670 V270 H690" fill="none" stroke="#2A9D8F" stroke-width="2"/>
+  </g>
+  <g>
+    <rect x="690" y="336" width="280" height="84" rx="6" class="box"/>
+    <rect x="690" y="336" width="4" height="84" rx="2" fill="#9AA5B1"/>
+    <text x="706" y="358" class="ttl">Power in — check which variant</text>
+    <text x="706" y="378" class="note">Some of these boards take 90–250 V AC</text>
+    <text x="706" y="394" class="note">on that terminal, others 5–12 V DC.</text>
+    <text x="706" y="410" class="note">They look identical. Read the silkscreen.</text>
+    <path d="M638 341 H664 V378 H690" fill="none" stroke="#9AA5B1" stroke-width="2"/>
+  </g>
+
+  <!-- ================= legend ================= -->
+  <line x1="20" y1="454" x2="960" y2="454" stroke="#7A8794" stroke-width="1" opacity="0.3"/>
+  <path d="M24 480 H64" fill="none" stroke="#2A9D8F" stroke-width="2"/>
+  <text x="74" y="484" class="note">Wired and working today</text>
+  <path d="M250 480 H290" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="300" y="484" class="note" fill="#E9A23B">Reserved — the firmware does not read these inputs yet</text>
+
+  <!-- ================= safety ================= -->
+  <rect x="20" y="508" width="940" height="150" rx="6" fill="#E76F51" opacity="0.07"/>
+  <rect x="20" y="508" width="4" height="150" rx="2" fill="#E76F51"/>
+  <text x="42" y="534" class="ttl" fill="#E76F51">Before you connect anything</text>
+  <text x="42" y="558" class="note">The relay contacts carry only your door controller's own button circuit — a few milliamps at battery voltage. Never mains, and</text>
+  <text x="42" y="576" class="note">never the motor current itself. The controller keeps the motor and its travel limits; this board only presses its buttons.</text>
+  <text x="42" y="602" class="note">If yours is the AC variant, that corner of the board sits at mains potential whenever it is powered. Keep the low-voltage wiring</text>
+  <text x="42" y="620" class="note">away from it, route it out of the opposite side of the enclosure, and never work on the board with the supply connected.</text>
+  <text x="42" y="646" class="note">Read docs/SAFETY.md first. It is not optional for anything that moves a door an animal walks through.</text>
+</svg>

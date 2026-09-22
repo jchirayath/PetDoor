@@ -87,6 +87,25 @@ void storePulseTrain(uint8_t count, uint32_t gapMs);
 bool loadStoredPulseTrain(uint8_t &count, uint32_t &gapMs);
 void storePulseMs(uint32_t ms);
 
+// How long the door takes to travel, in ms. Drives the "moving" LED pattern
+// and the annunciator; see DOOR_TRAVEL_MS in config.h. 0 is a legal stored
+// value (it means "do not announce"), so these cannot use 0 as the
+// nothing-saved sentinel — loadStoredTravelMs() reports that separately.
+bool loadStoredTravelMs(uint32_t &ms);
+void storeTravelMs(uint32_t ms);
+
+// The annunciator's wiring: which pin, active or passive, and its polarity.
+// Persisted because finding an undocumented board's buzzer pin is a search,
+// and a search you have to repeat after every power cut is not a fix.
+bool loadStoredChime(int &pin, bool &passive, bool &activeLow);
+void storeChime(int pin, bool passive, bool activeLow);
+
+// The position switches: which pins, and their polarity. Persisted for the
+// same reason as the buzzer — this is wiring, and wiring should survive both a
+// power cut and the next flash.
+bool loadStoredSensors(int &openPin, int &closedPin, bool &activeLow);
+void storeSensors(int openPin, int closedPin, bool activeLow);
+
 // "Bluedroid" or "NimBLE" — which host stack this build is using. Reported in
 // the boot banner and in `s`, because it changes the RF code path and is the
 // first thing to state in a bug report.

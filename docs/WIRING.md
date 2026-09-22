@@ -15,6 +15,9 @@ rather than editing `config.h`, so `git pull` does not clobber your build.
 | OPEN relay | 16 | `PIN_RELAY_OPEN` | Momentary pulse, `RELAY_PULSE_MS` |
 | CLOSE relay | 17 | `PIN_RELAY_CLOSE` | Momentary pulse |
 | Status LED | 23 | `PIN_STATUS_LED` | Active high, series resistor required |
+| Buzzer | — | `PIN_BUZZER` | Optional annunciator, disabled (`-1`) by default. See [below](#the-annunciator) |
+| OPEN limit switch | — | `PIN_SENSOR_OPEN` | Optional, `-1` by default. See [below](#position-sensors) |
+| CLOSED limit switch | — | `PIN_SENSOR_CLOSED` | Optional, `-1` by default |
 
 ### Choosing different pins
 
@@ -77,6 +80,27 @@ protects you from a glitch. It cannot protect you from an inverted
 ---
 
 ## Wiring diagram
+
+### The all-in-one board (the reference build)
+
+An **ESP32 with the relays already on the PCB** is the simplest version of this:
+the relay inputs are wired at the factory, so GPIO 16 and 17 reach the coils
+with nothing for you to get wrong. Everything else hangs off the IO headers.
+
+<div align="center">
+  <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, and GPIO 32 and 33 are reserved for open and closed limit switches" width="900">
+</div>
+
+The two dashed inputs are **supported but off by default** (`-1`). The pin
+numbers are there so you can run the wire once while the door is open on the
+bench; the firmware ignores those pins until you name them, and then starts
+measuring its own position without a reflash. See
+[the note on position sensors](#position-sensors) below.
+
+### Separate ESP32 and relay module
+
+More parts, more flexibility, and several more ways to get the ground and the
+polarity wrong:
 
 ```
                   ESP32 dev board
@@ -315,7 +339,15 @@ x        time the close the same way
 ```
 
 The reference build measures about **15 s** each way. Record it as
-`DOOR_TRAVEL_MS`; the boot banner then checks the relationship for you.
+`DOOR_TRAVEL_MS`, or set it live with `w` then `travel 15000`, which saves it on
+the device. The boot banner then checks the relationship for you.
+
+Measuring it buys you two things. The first is the check below. The second is
+that the door starts **telling you it is moving** for exactly that long — the
+status LED goes near-solid and, if you have fitted a buzzer, it ticks once a
+second and then chimes. Fifteen seconds of silence after a relay click is
+indistinguishable from a relay click that went nowhere, and that ambiguity is
+most of what makes an unresponsive door maddening to stand next to.
 
 **`MIN_ACTUATION_INTERVAL_MS` must be at least the travel time.** If it is
 shorter, the firmware can issue a reversing command while the door is still
@@ -330,11 +362,218 @@ this is a setting you measure rather than something it can work out.
 If you set `DOOR_TRAVEL_MS` and the lockout is too short, the banner says so:
 
 ```
-door travel   : 15000 ms (measured, configured)
+door travel   : 15000 ms (announced on the LED and buzzer)
 !! min interval (2000 ms) is SHORTER than door travel (15000 ms).
 !! A reversing command can land mid-travel; most controllers
 !! read that as STOP, leaving the door parked half open.
 ```
+
+---
+
+## Position sensors
+
+**Supported, and off until you fit them.** Both pins default to `-1`, which
+makes the whole feature inert — the door behaves exactly as it did before
+sensors existed. Wire the switches whenever you like and turn them on with one
+command, from the console or the dashboard. **No reflash.**
+
+### Why the door wants them
+
+Everything this firmware knows about the door's position is what it *commanded*.
+There are no limit switches, so a door that jammed halfway still reads as open,
+and the "arrived" chime is a stopwatch expiring rather than a door arriving.
+That limitation runs through the whole project — it is why
+[SAFETY.md](SAFETY.md) insists the door mechanism provide its own obstruction
+protection, and why `DOOR_TRAVEL_MS` is a number you measure rather than one the
+firmware can work out.
+
+Two switches close that loop. With them fitted:
+
+- **the door's reported state becomes the measured one.** If someone shoves the
+  door by hand, or the controller swallowed a press, the firmware notices and
+  corrects itself instead of sitting on a stale belief and refusing to act.
+- **the arrival chime becomes an arrival**, not a stopwatch expiring.
+- **a travel that does not complete is announced.** If the travel time elapses
+  with neither switch made, the door says so on the console, records it in the
+  event log, and sounds the refused tone — which is precisely the failure
+  `presses 2` is a blind guess at.
+
+**They never drive the motor.** The proximity logic still decides every
+actuation and the interlock still gates every pulse; the switches only correct
+what the firmware believes. A sensor that can command a door has a far worse
+failure mode — a stuck switch that runs a motor — than one that cannot, so that
+is deliberately not attempted.
+
+### What to fit
+
+| | |
+|---|---|
+| **Reed switch + magnet** | Best for a coop. Sealed glass, no moving contact exposed to dust or damp, and nothing for a bird to peck. Magnet on the door, switch on the frame. |
+| **Microswitch / lever switch** | Cheaper and more precise, but the lever and its pivot are exposed. Fine indoors, poor in weather. |
+| **Optical / IR gate** | Avoid. Dust, cobwebs and low sun all defeat it, which is exactly the list of things a coop has. |
+
+Buy **normally-open** switches: closed only when the door is at that end of its
+travel. A normally-closed switch would read "door is open" the moment its wire
+broke, which is the failure that matters.
+
+### Wiring
+
+Two wires each, and no resistors — the ESP32's internal pull-ups do the work:
+
+```
+   GPIO 32 ──[ reed switch ]── GND        door fully OPEN
+   GPIO 33 ──[ reed switch ]── GND        door fully CLOSED
+```
+
+Configured as `INPUT_PULLUP`, the pin idles HIGH and is pulled LOW when the
+switch closes. A broken wire therefore reads as "not at that end", which is the
+safe way round: the door does not believe it has arrived somewhere it has not.
+
+### Turning them on
+
+From the serial console:
+
+```
+w                     open the timing menu
+sensors 32 33         open-end pin, closed-end pin
+sensors 32 33 low     same, spelling out the usual to-GND polarity
+sensors -1 33         only the closed end fitted so far
+sensors off           back to open loop
+s                     check: "position : CLOSED (measured)"
+```
+
+Or remotely, which is the point of shipping it before the hardware:
+
+```bash
+petdoor-logserver.py --queue sensors 32 33
+```
+
+The dashboard's **Settings** tab has the same thing as two pin boxes. Either way
+the wiring is saved on the device and survives both a power cut and the next
+flash.
+
+To check a switch without moving the door, hold a magnet to it and press `s`:
+the `switches` line shows each one as `MADE` or `open` independently.
+
+### Choosing the pins
+
+**32 and 33 are suggestions, not requirements** — any free GPIO with an internal
+pull-up works. What matters:
+
+- **Do not use GPIO 34–39.** They are input-only *and* have no internal
+  pull-ups, so a switch on one of them floats and reads as random noise. This is
+  the mistake people make here, because "input only" sounds like exactly what a
+  switch wants.
+- **Avoid the strapping pins** (0, 2, 12, 15). A switch that happens to be
+  closed at power-on changes how the chip boots.
+- **Keep the runs short or shielded.** A long unshielded wire beside a motor
+  picks up enough noise to need debouncing in software, which is work the
+  firmware does not do yet.
+
+---
+
+## The annunciator
+
+Optional, and the cheapest quality-of-life change in the project. A buzzer that
+**ticks while the door is moving and chimes when it should have arrived** turns
+fifteen seconds of nothing into fifteen seconds of "yes, I heard you".
+
+Disabled by default (`PIN_BUZZER -1`), because the firmware must not start
+driving an arbitrary GPIO on the assumption that something harmless is attached
+to it.
+
+### What it can and cannot say
+
+**It beeps. It does not speak.** A spoken "wait" and "OK" is possible on an
+ESP32, but not through a buzzer — it needs a DAC pin, an amplifier board and a
+speaker, which is a different build and a speaker to keep dry on an exterior
+door. What a buzzer gives you instead is patterns, and patterns carry across a
+yard better than speech does anyway:
+
+| Sound | Means |
+|---|---|
+| tick … tick … tick | The door is moving. One short tick a second, for `travel` ms |
+| a rising two-tone | The travel time is up. It should be there |
+| one low buzz | Refused: the door is **locked** and the collar may not open it |
+| three even beeps | You pressed `beep`. This is the buzzer answering you, not the door |
+
+> **The chime is a stopwatch, not a sensor.** "It should be there" means the
+> time you configured has elapsed, not that the door arrived. A door jammed
+> halfway gets exactly the same cheerful chime. Only a limit switch can tell
+> you where the door really is — see [SAFETY.md](SAFETY.md).
+
+### Two kinds of buzzer
+
+They are sold under one name and behave quite differently:
+
+| | Contains | Apply DC and it | Pitch |
+|---|---|---|---|
+| **Active** | its own oscillator | sounds | fixed at the factory |
+| **Passive** | a bare transducer | ticks once, then silence | whatever you feed it |
+
+An active buzzer is the usual thing already fitted to a board. A passive one
+needs a square wave, which the firmware generates with the LEDC peripheral.
+
+Guessing wrong is harmless — it just sounds wrong. `beep` tells you which you
+have: **both** kinds give you three beeps, but only a passive one plays a
+genuinely *rising* pair when the door finishes.
+
+### If your board already has one
+
+Many ESP32-with-relays boards include a buzzer and do not document which pin it
+is on. You do not have to reflash to find out:
+
+```
+w                     open the timing menu
+buzzer 27             try a pin — it beeps immediately
+buzzer 27 passive     same pin, driven as a passive transducer
+buzzer 4              wrong? try the next one
+beep                  sound it again without changing anything
+buzzer off            give up, or turn it off once you are done
+```
+
+Each attempt is saved on the device, so the right answer survives a power cut
+and the next flash. Candidates worth trying first on a WROOM-32 board are
+**GPIO 4, 5, 13, 14, 18, 19, 21, 22, 25, 26, 27, 32, 33** — and **GPIO 2**,
+which is a strapping pin but is where a great many boards put theirs. The
+firmware allows 2 and warns rather than refusing: it is your board, and plenty
+of them boot fine.
+
+The same three commands work **remotely**, which is the point of having them —
+"which pin is the buzzer on" is exactly the question you want to answer from
+indoors:
+
+```bash
+petdoor-logserver.py --queue buzzer 27
+petdoor-logserver.py --queue beep
+```
+
+### If you are adding one
+
+Two wires, no driver needed for anything under about 25 mA:
+
+```
+   GPIO <pin> ───┤ buzzer ├─── GND
+```
+
+- **Check the current rating.** An ESP32 GPIO is good for ~40 mA absolute, and
+  you want to stay well under that. A louder buzzer needs a transistor.
+- **Observe polarity** on an active buzzer — most have a `+` marked on the case
+  or a longer leg.
+- **Some boards sink rather than source**, driving the buzzer through a
+  transistor that sounds when the pin goes to GND. That is the same active-low
+  trap as the relays, and the symptom is the same shape: a buzzer that screams
+  continuously from boot and goes *quiet* during a chime. Fix with
+  `buzzer <pin> active low`.
+
+### Turning it off
+
+`buzzer off` — or `travel 0`, which silences the door-moving announcements
+without disabling the buzzer entirely, so a lock refusal still buzzes.
+
+Nothing about the annunciator affects the door. It is driven from the control
+task *after* the door has been actuated, so a chime can never delay a relay,
+and a relay pulse can and does delay a chime. That is the right way round.
 
 ---
 
