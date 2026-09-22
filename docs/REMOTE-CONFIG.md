@@ -89,6 +89,7 @@ Everything the serial console can set, and nothing else.
 | `buzzer <pin>\|off` | Which GPIO the buzzer is on. Add `passive` for a bare transducer, `low` if it sounds when pulled to GND |
 | `beep` | Sound the buzzer now — how you find an undocumented board's buzzer pin from indoors |
 | `sensors <open> <closed>` | Limit switch pins, or `off`. `-1` for an end with no switch. This is how sensors get switched on after they are wired, without a flash |
+| `upload <settle> <interval> <heartbeat>` | How often the door calls in, ms. Lower the interval for faster commands, at the cost of radio time the beacon scan would have had. Heartbeat `0` disables it |
 | `filter <window> <alpha>` | The close-path filter |
 | `openfilter <window> <alpha>` | The open-path filter |
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |

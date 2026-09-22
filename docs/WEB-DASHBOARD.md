@@ -344,6 +344,7 @@ because a threshold is a value you consider, not something you tap by accident:
 | | interlock dead time | `gap` |
 | Buzzer | GPIO pin, active/passive, polarity | `buzzer` |
 | Limit switches | open-end pin, closed-end pin, polarity | `sensors` |
+| Calling in | settle, minimum interval, heartbeat | `upload` |
 | Maintenance | upload a beacon scan | `scan` |
 | | reset statistics | `resetstats` |
 | | open an OTA window | `ota` **(asks first)** |

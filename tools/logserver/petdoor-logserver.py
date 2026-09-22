@@ -135,7 +135,7 @@ FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
 VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
                "scan", "reboot", "lock", "unlock", "presses",
-               "travel", "buzzer", "beep")
+               "travel", "buzzer", "beep", "sensors", "upload")
 
 # ---------------------------------------------------------------- web control
 #
@@ -259,6 +259,18 @@ WEB_COMMANDS = {
     "sensors":    ([_whole(-1, 48), _whole(-1, 48), _word("low", "high")], 2,
                    None, False),
 
+    # --- how often the door calls in --------------------------------------
+    # settle / minimum interval / heartbeat, all ms. The interval floor is the
+    # load-bearing one: WiFi and BLE share an antenna, so a short interval
+    # keeps the radio up and starves the beacon scan the door exists to do.
+    # Heartbeat 0 turns it off, which is allowed but means a door whose animal
+    # stays indoors goes silent and collects no commands.
+    "upload":     ([_whole(5000, 300000, " ms"), _whole(60000, 3600000, " ms"),
+                    _whole(0, 21600000, " ms")], 3,
+                   lambda v: "" if v[1] > v[0] else
+                             "the interval must exceed the settle time, or the gate never opens",
+                   False),
+
     # --- things that need you to mean it -----------------------------------
     # Not because they are dangerous to the household, but because each one
     # either loses state or takes the door off the air for a minute, and a
@@ -318,6 +330,10 @@ def web_command_allowed(command):
 
     if verb == "sensors" and len(values) >= 2 and values[0] >= 0 and values[0] == values[1]:
         return False, "sensors: the two switches cannot share one pin"
+
+    if verb == "upload" and len(values) >= 3 and values[2] != 0 and values[2] < 300000:
+        return False, ("upload: heartbeat must be 0 (off) or at least 300000 ms — "
+                       "anything shorter is a poll, not a safety net")
 
     if cross and len(values) >= need:
         err = cross(values)
