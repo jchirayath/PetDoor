@@ -23,13 +23,14 @@ reverse proxy rather than asking the ESP32 to do TLS.
 
 import argparse
 import datetime as dt
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 import hashlib
 import hmac
 import html
 import http.server
 import json
 import os
+import re
 import secrets
 import socketserver
 import sqlite3
@@ -42,9 +43,20 @@ DB_PATH = os.environ.get("PETDOOR_DB", "petdoor.sqlite3")
 # batch cannot be replayed indefinitely.
 CLOCK_SKEW_S = 900
 
+# Whether the private dashboard may queue commands. OFF by default, and that
+# default is deliberate: an existing install whose private routes are protected
+# by nothing but an unguessable hostname must not silently acquire a button
+# that opens the door. Turning it on is a decision, taken once, by someone who
+# has read docs/WEB-DASHBOARD.md and knows what is in front of these routes.
+#
+# Environment variable as well as a flag, because the reference deployment runs
+# this in a container where the command line lives in a compose file.
+ALLOW_WEB_CONTROL = os.environ.get("PETDOOR_WEB_CONTROL", "").lower() in ("1", "true", "yes", "on")
+
 EVENT_LABEL = {
     "OPEN": "came in", "CLOSE": "went out", "BOOT": "restarted",
     "REFUSED": "refused", "FIX_GOT": "beacon found", "FIX_LOST": "beacon lost",
+    "STALLED": "did not complete its travel",
 }
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
@@ -122,7 +134,196 @@ FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
 
 VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
-               "scan", "reboot", "lock", "unlock", "presses")
+               "scan", "reboot", "lock", "unlock", "presses",
+               "travel", "buzzer", "beep")
+
+# ---------------------------------------------------------------- web control
+#
+# What the dashboard may send, and how each argument is checked.
+#
+# The firmware validates all of this again — every remote command calls the
+# same setter the serial console calls, which is the guarantee that matters,
+# since anyone could run a server. These checks exist for a different reason:
+# a value rejected here is rejected NOW, with a message naming the range, and a
+# value rejected by the door is rejected in five minutes' time when it next
+# calls in. That difference is the whole experience of tuning a door remotely.
+#
+# Ranges mirror the constants in petdoor/door.h, proximity.h and config.h. If
+# they ever drift, the door is still the authority and simply refuses.
+
+
+def _whole(lo, hi, unit=""):
+    def check(tok):
+        try:
+            v = int(tok)
+        except ValueError:
+            return None, f"'{tok}' is not a whole number"
+        if not lo <= v <= hi:
+            return None, f"{v}{unit} is outside {lo}-{hi}{unit}"
+        return v, ""
+    return check
+
+
+def _odd(lo, hi):
+    def check(tok):
+        v, err = _whole(lo, hi)(tok)
+        if err:
+            return None, err
+        if v % 2 == 0:
+            return None, f"{v} must be odd — an even median window has no middle value"
+        return v, ""
+    return check
+
+
+def _frac(lo, hi):
+    def check(tok):
+        try:
+            v = float(tok)
+        except ValueError:
+            return None, f"'{tok}' is not a number"
+        if not lo <= v <= hi:
+            return None, f"{v} is outside {lo}-{hi}"
+        return v, ""
+    return check
+
+
+def _word(*allowed):
+    def check(tok):
+        if tok.lower() not in allowed:
+            return None, f"'{tok}' must be one of: {', '.join(allowed)}"
+        return tok.lower(), ""
+    return check
+
+
+_MAC = re.compile(r"^[0-9a-f]{2}(:[0-9a-f]{2}){5}$")
+
+
+def _mac_list(tok):
+    macs = [m.strip() for m in tok.split(",") if m.strip()]
+    if not macs:
+        return None, "give at least one MAC address"
+    if len(macs) > 8:
+        return None, f"{len(macs)} addresses is more than the door tracks (8)"
+    for m in macs:
+        if not _MAC.match(m):
+            return None, f"'{m}' is not a MAC address (aa:bb:cc:dd:ee:ff, lower case)"
+    return ",".join(macs), ""
+
+
+def _enter_above_exit(v):
+    return "" if v[0] > v[1] else "the open threshold must be ABOVE the close threshold"
+
+
+def _lockout_below_close(v):
+    return "" if v[2] < v[1] else "the minimum interval must be BELOW the close dwell"
+
+
+# verb -> (validators, minimum argument count, cross-field check, needs confirming)
+WEB_COMMANDS = {
+    # --- actions -----------------------------------------------------------
+    "door":       ([_word("open", "close", "auto")], 1, None, False),
+    "lock":       ([], 0, None, False),
+    "unlock":     ([], 0, None, False),
+    "beep":       ([], 0, None, False),
+    "scan":       ([], 0, None, False),
+    "resetstats": ([], 0, None, False),
+
+    # --- detection ---------------------------------------------------------
+    "thresholds": ([_whole(-120, 0, " dBm"), _whole(-120, 0, " dBm")], 2,
+                   _enter_above_exit, False),
+    "filter":     ([_odd(1, 15), _frac(0.01, 1.0)], 2, None, False),
+    "openfilter": ([_odd(1, 15), _frac(0.01, 1.0)], 2, None, False),
+
+    # --- timing ------------------------------------------------------------
+    "dwell":      ([_whole(100, 600000, " ms")] * 3, 3, _lockout_below_close, False),
+    "travel":     ([_whole(0, 120000, " ms")], 1, None, False),
+
+    # --- the relay ---------------------------------------------------------
+    "pulse":      ([_whole(50, 10000, " ms")], 1, None, False),
+    "gap":        ([_whole(100, 5000, " ms")], 1, None, False),
+    "presses":    ([_whole(1, 3), _whole(200, 5000, " ms")], 1, None, False),
+
+    # --- the buzzer --------------------------------------------------------
+    # Pin first, then any of passive/active/low/high. "off" is handled before
+    # the validators run, since it is a word where a number belongs.
+    "buzzer":     ([_whole(-1, 48), _word("passive", "active", "low", "high"),
+                    _word("passive", "active", "low", "high")], 1, None, False),
+
+    # --- the limit switches ------------------------------------------------
+    # Both pins, then an optional polarity. -1 for an end with no switch, so
+    # one can be fitted before the other. "sensors off" disables both.
+    #
+    # Shipping this before the hardware exists is deliberate: the firmware
+    # defaults to -1 and behaves exactly as it did without sensors, so the
+    # switches can be wired and turned on from here without another flash.
+    "sensors":    ([_whole(-1, 48), _whole(-1, 48), _word("low", "high")], 2,
+                   None, False),
+
+    # --- things that need you to mean it -----------------------------------
+    # Not because they are dangerous to the household, but because each one
+    # either loses state or takes the door off the air for a minute, and a
+    # thumb on a phone is a low bar for that.
+    "macs":       ([_mac_list], 1, None, True),
+    "defaults":   ([], 0, None, True),
+    "reboot":     ([], 0, None, True),
+    "ota":        ([], 0, None, True),
+}
+
+
+def web_command_needs_confirm(command):
+    parts = command.split()
+    spec = WEB_COMMANDS.get(parts[0].lower()) if parts else None
+    return bool(spec and spec[3])
+
+
+def web_command_allowed(command):
+    """The web panel's allowlist and argument check. Returns (ok, reason).
+
+    Applied BEFORE queue_command()'s own checks, never instead of them.
+    """
+    parts = command.split()
+    if not parts:
+        return False, "empty command"
+    verb = parts[0].lower()
+    if verb not in WEB_COMMANDS:
+        return False, f"'{verb}' is not a setting this panel can change"
+
+    validators, need, cross, _ = WEB_COMMANDS[verb]
+    args = parts[1:]
+
+    # "buzzer off" disables it; there is no pin to range-check.
+    if verb == "buzzer" and args and args[0].lower() in ("off", "none"):
+        return (True, "") if len(args) == 1 else (False, "'buzzer off' takes nothing else")
+
+    # Same for the switches.
+    if verb == "sensors" and args and args[0].lower() in ("off", "none"):
+        return (True, "") if len(args) == 1 else (False, "'sensors off' takes nothing else")
+
+    # macs takes the rest of the line as one comma-separated value.
+    if verb == "macs":
+        args = [" ".join(args).replace(" ", "")] if args else []
+
+    if len(args) < need:
+        return False, (f"'{verb}' needs {need} value{'' if need == 1 else 's'}, "
+                       f"got {len(args)}")
+    if len(args) > len(validators):
+        return False, f"'{verb}' takes at most {len(validators)} value(s)"
+
+    values = []
+    for tok, check in zip(args, validators):
+        v, err = check(tok)
+        if err:
+            return False, f"{verb}: {err}"
+        values.append(v)
+
+    if verb == "sensors" and len(values) >= 2 and values[0] >= 0 and values[0] == values[1]:
+        return False, "sensors: the two switches cannot share one pin"
+
+    if cross and len(values) >= need:
+        err = cross(values)
+        if err:
+            return False, f"{verb}: {err}"
+    return True, ""
 
 
 def queue_command(device, command):
@@ -179,6 +380,10 @@ def migrate():
         _ensure_column(conn, "devices", "status", "TEXT")
         _ensure_column(conn, "devices", "door_ip", "TEXT")
         _ensure_column(conn, "devices", "remote", "INTEGER")
+        # The door's current settings, as key=value text. NULL until a door
+        # running firmware new enough to send X-PetDoor-Config calls in; the
+        # settings form shows "not reported yet" rather than guessing.
+        _ensure_column(conn, "devices", "config", "TEXT")
 
 
 def get_key():
@@ -389,12 +594,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
     #            /images/*    photographs used by that page
     #            /health      so uptime monitoring does not need a credential
     #
-    #   PRIVATE  /dashboard   the analytics
-    #            /api/events  the raw log the analytics are built from
-    #            /table       plain-HTML fallback view
-    #            /export.csv  the whole log as a file
+    #   PRIVATE  /dashboard    the analytics
+    #            /api/events   the raw log the analytics are built from
+    #            /api/command  POST, queues a command — OPENS THE DOOR
+    #            /table        plain-HTML fallback view
+    #            /export.csv   the whole log as a file
     #
-    #   SIGNED   /ingest      POST only, HMAC over timestamp + body
+    #   SIGNED   /ingest       POST only, HMAC over timestamp + body
+    #
+    # /api/command is under /api/ deliberately: every proxy rule in the docs
+    # already matches /api/*, so it is covered the moment it exists rather than
+    # waiting for each operator to notice a new path. It is also off unless the
+    # server was started with --allow-web-control.
     #
     # Protect the private set at the proxy. Leaving them open publishes your
     # household routine to anyone who finds the hostname. See
@@ -461,9 +672,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     "SELECT device,command,queued,delivered,ack FROM commands "
                     "WHERE delivered IS NOT NULL ORDER BY delivered DESC LIMIT 60"
                 ).fetchall()
+                # Still waiting for the door to call in. The control panel shows
+                # these so a button press does not simply vanish for five
+                # minutes with nothing to show it was registered.
+                pend = conn.execute(
+                    "SELECT device,command,queued FROM commands "
+                    "WHERE delivered IS NULL ORDER BY id"
+                ).fetchall()
             return self._send(200, json.dumps({"events": [dict(r) for r in rows],
                                                "devices": [dict(d) for d in devs],
-                                               "commands": [dict(c) for c in cmds]}),
+                                               "commands": [dict(c) for c in cmds],
+                                               "pending": [dict(p) for p in pend],
+                                               "control": bool(ALLOW_WEB_CONTROL)}),
                               "application/json; charset=utf-8")
         if path.startswith("/table"):
             return self._send(200, render(), "text/html; charset=utf-8")
@@ -478,7 +698,146 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(200, json.dumps({"ok": True}), "application/json")
         self._send(404, "not found")
 
+    def _csrf_problem(self):
+        """Why this POST should not be honoured, or None if it looks fine.
+
+        The proxy in front of this server decides WHO you are, using a cookie.
+        A cookie is attached by the browser to any request to this origin —
+        including one started by a page on a completely different site. So
+        authentication alone does not mean the *user* asked for this.
+
+        Two checks, neither of which a cross-origin page can satisfy:
+
+          * A custom request header. Browsers refuse to send one cross-origin
+            without first asking permission via a CORS preflight, and this
+            server answers no preflight, so the request is never made.
+          * Origin must match Host, when the browser sends an Origin at all.
+
+        Neither is a substitute for the proxy's authentication. They assume the
+        request is already authenticated and stop a *different site* from
+        riding that authentication.
+        """
+        if self.headers.get("X-PetDoor-Control") != "1":
+            return "missing X-PetDoor-Control header"
+        origin = self.headers.get("Origin")
+        if origin:
+            if urlparse(origin).netloc != (self.headers.get("Host") or ""):
+                return f"cross-origin POST from {urlparse(origin).netloc}"
+        return None
+
+    def _json(self, code, payload):
+        return self._send(code, json.dumps(payload) + "\n",
+                          "application/json; charset=utf-8")
+
+    def _handle_command(self):
+        """PRIVATE. Queue one command from the dashboard's control panel.
+
+        Lives under /api/ on purpose: every protection rule in
+        docs/WEB-DASHBOARD.md already matches /api/*, so an existing deployment
+        that followed those instructions covers this route the day it appears.
+        A new top-level path would have been exposed until each operator
+        noticed and updated their proxy.
+        """
+        if not ALLOW_WEB_CONTROL:
+            return self._json(403, {"ok": False, "error":
+                "web control is off; start the server with --allow-web-control"})
+
+        bad = self._csrf_problem()
+        if bad:
+            self.log_message("CONTROL REJECTED from %s: %s", self.client_address[0], bad)
+            return self._json(403, {"ok": False, "error": f"rejected: {bad}"})
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > 2000:
+            return self._json(400, {"ok": False, "error": "empty or oversized body"})
+        try:
+            payload = json.loads(self.rfile.read(length))
+            # Lowercased, not just whitespace-normalised. Every web verb and
+            # every argument they take is lowercase ASCII, and the firmware
+            # compares them with strcmp — so "door OPEN" would pass the check
+            # below and then be refused by the door, which is the worst of both
+            # worlds: the panel says queued, the door says no.
+            command = " ".join(str(payload["command"]).split()).lower()[:120]
+            device = str(payload.get("device") or "")[:32]
+        except Exception:
+            return self._json(400, {"ok": False, "error": 'expected {"command": "..."}'})
+
+        ok, why = web_command_allowed(command)
+        if not ok:
+            return self._json(400, {"ok": False, "error": why})
+
+        # A few commands lose state or take the door off the air for a minute.
+        # The panel asks first; this makes the asking load-bearing rather than
+        # decorative, so the same guard applies to a hand-crafted request.
+        if web_command_needs_confirm(command) and payload.get("confirm") is not True:
+            return self._json(400, {"ok": False, "confirm_required": True,
+                                    "error": f"'{command.split()[0]}' needs confirming"})
+
+        if not device:
+            with db() as conn:
+                known = [r["device"] for r in conn.execute("SELECT device FROM devices")]
+            if len(known) == 1:
+                device = known[0]
+            elif not known:
+                return self._json(400, {"ok": False, "error":
+                    "no door has ever uploaded, so there is nothing to queue for"})
+            else:
+                return self._json(400, {"ok": False, "error":
+                    "several doors are known; say which"})
+
+        # A double tap on a phone is one intent, not two. Without this, two
+        # `door open` commands queue and the door pulses the relay twice —
+        # which on a controller that toggles is an open followed by a stop.
+        with db() as conn:
+            dup = conn.execute("SELECT id FROM commands WHERE device=? AND command=? "
+                               "AND delivered IS NULL", (device, command)).fetchone()
+        if dup:
+            return self._json(200, {"ok": True, "queued": False,
+                                    "message": f"already waiting for {device}"})
+
+        ok, msg = queue_command(device, command)
+        # Logged whether or not it was accepted: this is the audit trail for a
+        # door that can now be opened from a browser.
+        self.log_message("CONTROL from %s: %s -> %s", self.client_address[0], command, msg)
+        return self._json(200 if ok else 400, {"ok": ok, "queued": ok, "message": msg})
+
+    def do_DELETE(self):
+        """PRIVATE. Drop whatever has not reached the door yet.
+
+        The reason this exists: a queued command waits for the door's next
+        check-in, which can be five minutes away. That delay is usually a
+        nuisance, but here it is a gift — it means a mistaken tap is still
+        recallable. Better than a confirmation dialog on every press, which
+        would add friction to the one action people actually want (open the
+        door, from the garden, with cold hands).
+        """
+        if urlparse(self.path).path != "/api/command":
+            return self._send(404, "not found")
+        if not ALLOW_WEB_CONTROL:
+            return self._json(403, {"ok": False, "error": "web control is off"})
+        bad = self._csrf_problem()
+        if bad:
+            self.log_message("CONTROL REJECTED from %s: %s", self.client_address[0], bad)
+            return self._json(403, {"ok": False, "error": f"rejected: {bad}"})
+        # Scoped to one door when the panel says which. Without this a Cancel
+        # pressed on a page showing the back door would also empty the front
+        # door's queue, which the person pressing it has no way to see.
+        qs = parse_qs(urlparse(self.path).query)
+        device = (qs.get("device") or [""])[0][:32]
+        with db() as conn:
+            if device:
+                n = conn.execute("DELETE FROM commands WHERE delivered IS NULL "
+                                 "AND device=?", (device,)).rowcount
+            else:
+                n = conn.execute("DELETE FROM commands WHERE delivered IS NULL").rowcount
+        self.log_message("CONTROL from %s: cancelled %d undelivered%s",
+                         self.client_address[0], n, f" for {device}" if device else "")
+        return self._json(200, {"ok": True, "cancelled": n,
+                                "message": f"cancelled {n} command{'' if n == 1 else 's'}"})
+
     def do_POST(self):
+        if urlparse(self.path).path == "/api/command":
+            return self._handle_command()
         if not self.path.startswith("/ingest"):
             return self._send(404, "not found")
         length = int(self.headers.get("Content-Length") or 0)
@@ -524,8 +883,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         note_device(device, version, build, boots, door_ip)
         with db() as conn:
             conn.execute(
-                "UPDATE devices SET status=?, door_ip=?, remote=? WHERE device=?",
-                (self.headers.get("X-PetDoor-Status"), door_ip,
+                "UPDATE devices SET status=?, config=?, door_ip=?, remote=? "
+                "WHERE device=?",
+                (self.headers.get("X-PetDoor-Status"),
+                 self.headers.get("X-PetDoor-Config"), door_ip,
                  1 if self.headers.get("X-PetDoor-Remote") == "1" else 0, device))
         self.log_message("%s v%s boot#%d: %d events, %d new (%s)",
                          device, version or "?", boots, len(rows), added, reason)
@@ -602,6 +963,7 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
+    global ALLOW_WEB_CONTROL
     ap = argparse.ArgumentParser(description="PetDoor log server")
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--host", default="0.0.0.0")
@@ -610,6 +972,10 @@ def main():
     ap.add_argument("--rotate-key", action="store_true", help="issue a new key")
     ap.add_argument("--set-key", metavar="KEY", help="set a specific key")
     ap.add_argument("--no-key", action="store_true", help="accept unsigned uploads")
+    ap.add_argument("--allow-web-control", action="store_true",
+                    help="let the private dashboard queue open/close/lock/unlock. "
+                         "Only with authentication in front of /api/* — see "
+                         "docs/WEB-DASHBOARD.md")
     ap.add_argument("--queue", nargs="+", metavar="WORD",
                     help="queue a command for the door, delivered on its next upload "
                          "(e.g. --queue pulse 500)")
@@ -736,6 +1102,14 @@ def main():
     print(f"  api       : http://{args.host}:{args.port}/api/events")
     print(f"  export    : http://{args.host}:{args.port}/export.csv")
     print(f"  plain     : http://{args.host}:{args.port}/table")
+    if args.allow_web_control:
+        ALLOW_WEB_CONTROL = True
+    if ALLOW_WEB_CONTROL:
+        print(f"  control   : POST http://{args.host}:{args.port}/api/command")
+        print()
+        print("  !! WEB CONTROL IS ON. Anyone who can load /dashboard can open,")
+        print("  !! close, lock and unlock the door. That route must have")
+        print("  !! authentication in front of it — see docs/WEB-DASHBOARD.md.")
     with Server((args.host, args.port), Handler) as srv:
         try:
             srv.serve_forever()

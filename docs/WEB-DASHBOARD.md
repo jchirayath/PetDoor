@@ -172,6 +172,7 @@ flowchart LR
     A["/api/events"] --> AD["JSON log<br/><b>private</b>"]
     C["/export.csv"] --> CD["Whole log as CSV<br/><b>private</b>"]
     T["/table"] --> TD["Plain table<br/><b>private</b>"]
+    M["/api/command"] --> MD["Opens the door<br/><b>private, off by default</b>"]
 
     style PD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
     style ID fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
@@ -180,6 +181,7 @@ flowchart LR
     style AD fill:#2A9D8F,stroke:#21867A,color:#ffffff
     style CD fill:#2A9D8F,stroke:#21867A,color:#ffffff
     style TD fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style MD fill:#C4453B,stroke:#9E3730,color:#ffffff
 ```
 
 **Why bother splitting it.** A door log is a record of when somebody is home.
@@ -293,6 +295,159 @@ uploads in bursts, not continuously.
 
 ---
 
+## Controlling the door from the browser
+
+**Off by default.** Start the server with `--allow-web-control` (or set
+`PETDOOR_WEB_CONTROL=1`) and the dashboard grows a control panel: open, close,
+hand back to the collar, lock, unlock, and a beep to prove the door is awake.
+
+```bash
+python3 petdoor-logserver.py --allow-web-control
+```
+
+Without the flag the panel does not render and `POST /api/command` returns 403.
+That default is deliberate. An existing install whose private routes are
+protected by nothing but an unguessable hostname must not silently acquire a
+button that opens the door; turning this on should be a decision somebody took.
+
+> **Read [protecting the private routes](#protecting-the-private-routes) before
+> you turn it on.** `/api/command` is matched by the same `/api/*` rule as the
+> rest — so if you followed those instructions you are already covered — but
+> the consequence of getting it wrong changes completely. An unprotected
+> `/api/events` leaks your household routine. An unprotected `/api/command`
+> lets a stranger open your door.
+
+### Two panels, because there are two kinds of change
+
+**Control** is the one-tap half, on the Controls tab:
+
+| Button | Sends | Notes |
+|---|---|---|
+| Open / Close | `door open` / `door close` | One press of the controller's button |
+| Auto | `door auto` | Clears a manual hold, handing control back to the collar |
+| Lock / Unlock | `lock` / `unlock` | Stops the collar opening the door. Does **not** stop an open door closing |
+| Beep | `beep` | Sounds the buzzer. A cheap "is it alive" that touches nothing |
+
+**Settings** is everything you would otherwise tune over a serial cable. It
+lives on its own tab, and holds typed fields with ranges rather than buttons —
+because a threshold is a value you consider, not something you tap by accident:
+
+| Group | Fields | Command |
+|---|---|---|
+| Detection | open / close threshold, dBm | `thresholds` |
+| | close filter: median window, smoothing | `filter` |
+| | open filter: median window, smoothing | `openfilter` |
+| Timing | open dwell, close dwell, minimum interval | `dwell` |
+| | door travel time | `travel` |
+| Relay | pulse length | `pulse` |
+| | presses per actuation, and the gap | `presses` |
+| | interlock dead time | `gap` |
+| Buzzer | GPIO pin, active/passive, polarity | `buzzer` |
+| Limit switches | open-end pin, closed-end pin, polarity | `sensors` |
+| Maintenance | upload a beacon scan | `scan` |
+| | reset statistics | `resetstats` |
+| | open an OTA window | `ota` **(asks first)** |
+| | restart the door | `reboot` **(asks first)** |
+| | revert every stored setting | `defaults` **(asks first)** |
+| | change the beacon list | `macs` **(asks first)** |
+
+Only the credentials are off limits — `wifi`, the endpoint, the shared key and
+the OTA password. Those are the channel the command itself travels over, and
+changing one remotely is how a door stops being reachable with no way back but
+a ladder. The firmware refuses them, and so does the server.
+
+### How the page is laid out
+
+The banner carries the three facts you look for first — **firmware version**,
+**event count**, and **when the door last called in**. That last one turns amber
+past three hours, because a door that has gone quiet is a door to walk out and
+look at, and that should not be something you have to scroll to find.
+
+Under it sits the door's live status, then three tabs:
+
+| Tab | Holds |
+|---|---|
+| **Activity** | The charts, the event log and the cameras. Its own second-level menu carries **Download CSV** and **Plain table** |
+| **Controls** | The buttons, and the **controls log** — what was asked of the door and what it did |
+| **Settings** | The form, and the **settings log** — what was changed and what the door made of it |
+
+The two logs used to be one table called "Settings changed". Splitting them
+follows what the commands actually do: asking the door to open is a thing you
+did to it today, retuning its exit threshold changes how it behaves from now on.
+One belongs beside the buttons, the other beside the form.
+
+The tab you last used is remembered in that browser. With `--allow-web-control`
+off, the **Settings** tab is not rendered at all and the **Controls** tab keeps
+only its log — which is still worth reading, since commands queued from the
+command line appear there either way.
+
+### The form shows what the door is actually set to
+
+Each field is filled from the door's own report, not from what was last queued.
+The door sends its full configuration with every upload, so the boxes show the
+values in force right now — and if you change one, the box keeps showing the
+old value until the door confirms the new one, because until then the old value
+*is* what is in force.
+
+A door that has not reported yet — one still running older firmware, or one
+that has not called in since this server was updated — gets a banner saying so,
+and the fields fall back to greyed placeholder defaults rather than pretending.
+
+> **The form never redraws under your fingers.** The page polls every minute,
+> but the settings only re-render when the door itself reports something
+> different. Otherwise a half-finished edit would be wiped by a background
+> refresh, and the box you just changed would snap back to the old value —
+> which reads as "it didn't work", and gets pressed again.
+
+### Validation happens twice, on purpose
+
+The server checks every value against the same ranges the firmware enforces —
+`pulse` 50–10000 ms, an odd median window, the open threshold above the close
+one, the minimum interval below the close dwell — and refuses out-of-range
+input immediately, naming the range.
+
+The firmware then checks it all again, because it has to: anyone can run a
+server, so the door cannot trust one. The duplication buys you the difference
+between being told *now* and being told in five minutes' time when the door
+next calls in. That difference is most of what tuning a door remotely feels
+like.
+
+### Nothing here is instant
+
+A command is **queued**, not sent. The door has no open connection to the
+server — it calls in, opportunistically, when the collar is away, which is
+usually within about five minutes. Only then does it collect what is waiting.
+
+So the panel never pretends. A press moves the command into a visible
+**Waiting for the door** list and it stays there until the door has actually
+taken it, at which point it appears in *Settings changed* with the door's own
+verdict on it.
+
+That delay is also the safety net: while a command is still waiting, **Cancel**
+recalls it. That is why there is no confirmation dialog on every press — a
+confirm adds friction to the one thing people actually want, which is to open
+the door from the garden with cold hands, and it does nothing about the press
+you regret thirty seconds later.
+
+### How it is protected from other sites
+
+Your proxy decides *who* you are, with a cookie. But a browser attaches that
+cookie to any request to this origin — including one started by a completely
+different site you happen to visit. Authentication alone does not prove the
+request came from you.
+
+Two checks close that, neither of which a cross-origin page can satisfy:
+
+- **A custom `X-PetDoor-Control` header.** Browsers refuse to send one
+  cross-origin without a CORS preflight, and this server answers no preflight,
+  so the request is never made.
+- **`Origin` must match `Host`** whenever the browser sends an `Origin`.
+
+Every accepted and rejected command is written to the server log with the source
+address, so there is a record of who opened the door and when.
+
+---
+
 ## Protecting the private routes
 
 The split is only worth anything if something enforces it. The server listens on
@@ -303,7 +458,7 @@ Whatever you use, the rule is the same shape:
 | Path | Who |
 |---|---|
 | `/`, `/images/*`, `/health` | anyone |
-| `/dashboard`, `/api/*`, `/table`, `/export.csv` | you |
+| `/dashboard`, `/api/*`, `/table`, `/export.csv` | you — `/api/*` **includes `/api/command`, which opens the door** |
 | `/ingest` | the door — POST only, HMAC-signed, **never** behind the login |
 
 **`/ingest` must stay outside the login.** The door signs its uploads with the
