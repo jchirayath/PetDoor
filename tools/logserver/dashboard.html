@@ -240,7 +240,12 @@ button[disabled]:hover{border-color:var(--line);background:none;filter:none}
 /* A stat strip, not a row of pills. Label above value, thin rules between:
    reads as instrumentation rather than decoration, and lets the one fact that
    can go wrong (the check-in) change colour without four others competing. */
-.bmeta{display:flex;flex-wrap:wrap;gap:0 20px;align-items:stretch}
+/* Row two of the masthead. Everything you would otherwise go looking for —
+   which door, what it runs, how much it has said, whether it is still
+   talking — on one line under the name, rather than in a card below it. */
+.bmeta{display:flex;flex-wrap:wrap;gap:0 18px;align-items:stretch;
+  padding-top:12px;border-top:1px solid var(--line);margin-top:-8px}
+.hstate{display:flex;flex-wrap:wrap;gap:6px;align-items:center;flex:1 1 auto}
 .fact{display:flex;flex-direction:column;justify-content:center;gap:1px;
   padding-left:20px;border-left:1px solid var(--line)}
 .fact:first-child{padding-left:0;border-left:0}
@@ -265,6 +270,7 @@ button[disabled]:hover{border-color:var(--line);background:none;filter:none}
      splitting either side of a wrap. */
   .srow .lab{flex-basis:100%}
   .srow{gap:8px}
+  .fact.wide-only{display:none}
 }
 </style>
 
@@ -285,11 +291,11 @@ button[disabled]:hover{border-color:var(--line);background:none;filter:none}
       <p class="sub">The Activity Dashboard</p>
     </div>
   </div>
-  <div class="tools">
-    <div class="bmeta" id="bmeta"></div>
-    <button id="refresh">Refresh</button>
-  </div>
+  <div class="hstate" id="hstate"></div>
+  <button id="refresh">Refresh</button>
 </header>
+
+<div class="bmeta" id="bmeta"></div>
 
 <div id="doors"></div>
 
@@ -769,8 +775,9 @@ function doorStanding(dev){
 function renderDoors(devs){
   const host=$("doors");
   if(!devs.length){host.innerHTML="";return;}
+  // Set below once we know whether any panel had anything to show.
   const now=Date.now()/1000;
-  host.innerHTML='<div class="doors">'+devs.map(d=>{
+  const panels=devs.map(d=>{
     const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
     const mins=Math.round((now-(d.last_seen||0))/60);
     // A door that has not called in for hours is either off, off the network,
@@ -784,30 +791,33 @@ function renderDoors(devs){
     // With one door the banner already carries its firmware and last check-in,
     // so repeating them here is just noise three inches below. With several,
     // the banner can only describe one of them and each panel says its own.
+    // With ONE door the masthead already carries its name, firmware, check-in,
+    // signal and live state, so this panel keeps only what did not fit up
+    // there. With several, the masthead can describe just the first, and each
+    // panel has to identify and describe its own.
     const solo=devs.length===1;
-    let rows=`<div class="n">${esc(d.device||"door")}</div>`
-      +(solo?""   // the banner already carries firmware and the check-in time
-            :`<div class="m">firmware v${esc(d.version||"?")}</div>`
-             +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div>`);
+    let rows=solo?"":`<div class="n">${esc(d.device||"door")}</div>`
+      +`<div class="m">firmware v${esc(d.version||"?")}</div>`
+      +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div>`;
 
-    // What it can see right now. This is the number you tune against, and it
-    // used to exist only on a serial console nobody can reach.
     if(st.rssi!==undefined){
-      const present=st.present==="1";
-      const stand=doorStanding(d);
-      rows+=`<div class="live">`
-        +`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
-        +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
-        +(stand.label?` <span style="font-weight:400;opacity:.8">${esc(stand.label)}</span>`:"")
-        +`</span>`
-        // A locked door will not open for the collar. That is the one state
-        // worth shouting about, because from the outside it looks identical to
-        // a door that is simply shut.
-        +(st.locked==="1"?`<span class="pill lock">LOCKED — collar cannot open it</span>`:"")
-        +`</div>`;
+      if(!solo){
+        const present=st.present==="1";
+        const stand=doorStanding(d);
+        rows+=`<div class="live">`
+          +`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
+          +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
+          +(stand.label?` <span style="font-weight:400;opacity:.8">${esc(stand.label)}</span>`:"")
+          +`</span>`
+          // A locked door will not open for the collar. That is the one state
+          // worth shouting about, because from the outside it looks identical
+          // to a door that is simply shut.
+          +(st.locked==="1"?`<span class="pill lock">LOCKED — collar cannot open it</span>`:"")
+          +`</div>`;
+      }
 
-      // The numbers, as labelled cells rather than a run-on sentence. Same
-      // information, but you can find one without reading the others.
+      // The numbers, as labelled cells rather than a run-on sentence. Signal
+      // and distance are omitted when solo — they are in the masthead.
       const cell=(k,v)=>`<div><span class="k">${k}</span><span class="v">${v}</span></div>`;
       let grid="";
       if(st.rssi!==undefined) grid+=cell("Signal",esc(st.rssi)+" dBm");
@@ -816,7 +826,7 @@ function renderDoors(devs){
       grid+=cell("Boots",String(boots));
       if(st.real&&st.real!=="none") grid+=cell("Measured",esc(st.real));
       if(d.door_ip) grid+=cell("Push to",`<span class="mono">${esc(d.door_ip)}</span>`);
-      if(grid) rows+=`<div class="dgrid">${grid}</div>`;
+      if(grid && !solo) rows+=`<div class="dgrid">${grid}</div>`;
     }
 
     // Health, and only when there is something to say about it.
@@ -828,8 +838,12 @@ function renderDoors(devs){
     // Where to push an update, and whether this build would even take one.
     if(d.remote===0) rows+=`<div class="m warn">firmware predates remote commands — anything queued will wait</div>`;
 
-    return `<div>${rows}</div>`;
-  }).join("")+"</div>";
+    // With one door and nothing wrong, this panel has nothing left to say —
+    // everything it carried is in the masthead. An empty card is worse than no
+    // card, so it only appears when there is a warning to make.
+    return rows.trim() ? `<div>${rows}</div>` : "";
+  }).join("");
+  host.innerHTML = panels ? `<div class="doors">${panels}</div>` : "";
 }
 
 /* The settings form.
@@ -1214,9 +1228,22 @@ function renderBanner(){
   const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
   const d=devices[0]||{};
   const fact=(k,v,cls)=>`<div class="fact ${cls||""}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  const st=parseStatus(d.status);
   const bits=[];
+  // The door's own name leads: with several doors it is the thing that tells
+  // you which one everything else on this page is describing.
+  if(d.device) bits.push(fact("Door",esc(d.device)));
   if(d.version) bits.push(fact("Firmware","v"+esc(d.version)));
   bits.push(fact("Events",events.length.toLocaleString()));
+  if(st.rssi!==undefined){
+    bits.push(fact("Signal",esc(st.rssi)+" dBm"+(st.dist?` <span style="font-weight:400;color:var(--ink-3)">~${esc(st.dist)} m</span>`:"")));
+  }
+  // Worst gap and boots are diagnostics, but they are the two that explain a
+  // door misbehaving — a gap near the fix timeout, or a boot count climbing
+  // between uploads, which is what a brownout looks like from here.
+  if(st.gap) bits.push(fact("Worst gap",esc(st.gap)+" ms",
+                            +st.gap>3000?"stale":""));
+  if(d.boots!==undefined&&d.boots!==null) bits.push(fact("Boots",String(d.boots)));
   if(d.last_seen){
     const mins=Math.round((Date.now()/1000-d.last_seen)/60);
     const when=mins<1?"just now":mins<60?`${mins} min ago`:
@@ -1229,7 +1256,24 @@ function renderBanner(){
     bits.push(fact("Last check-in","never","stale"));
   }
   bits.push(fact("Refreshed",'<span id="live">just now</span>'));
+  // Hidden on a phone: it is an OTA-time detail, and nobody pushes firmware
+  // from one. Dropping it saves a whole wrapped row where space is tightest.
+  if(d.door_ip) bits.push(fact("Push to",`<span class="mono" style="font-size:12px">${esc(d.door_ip)}</span>`,"wide-only"));
   host.innerHTML=bits.join("");
+
+  // The live state rides in the title row itself. It is the one thing someone
+  // opens this page to see, so it should not be below a card heading.
+  const hs=$("hstate");
+  if(hs){
+    if(!d.device){ hs.innerHTML=""; return; }
+    const stand=doorStanding(d);
+    const present=st.present==="1";
+    hs.innerHTML=`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
+      +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
+      +(stand.label?` <span style="font-weight:400;opacity:.8">${esc(stand.label)}</span>`:"")
+      +`</span>`
+      +(st.locked==="1"?`<span class="pill lock">LOCKED</span>`:"");
+  }
 }
 
 function renderAll(){renderStats();renderStrip();renderDurations();renderPerDay();
