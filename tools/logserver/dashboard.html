@@ -759,9 +759,38 @@ function doorStanding(dev){
   let state = st.door || null;
   if(newestAt && dev && dev.last_seen && newestAt >= dev.last_seen) state = newest;
   if(!state && newestAt) state = newest;
+
+  // THE FASTEST SIGNAL: a door command the door has COLLECTED.
+  //
+  // This is the same fact that clears the "waiting for the door" list — the
+  // command stopped being pending, so the door has it. Ignoring it for the
+  // status while acting on it for the queue is the page contradicting itself.
+  //
+  // It is also the earliest thing we can know. The status line inside the very
+  // upload that delivered the command was built BEFORE the command was
+  // applied, so it necessarily shows the old state; the corrected one cannot
+  // arrive until the following upload. `delivered` and `last_seen` are both
+  // server-side stamps set by that same request, which is what makes them
+  // safely comparable — unlike event epochs, which come off the door's clock.
+  //
+  // Manual commands call forcePulse*(), which bypasses the "already in that
+  // state" and lockout checks, so a delivered one did actuate.
+  let cmdAt = 0, cmdState = null;
+  for(const c of commands){
+    if(!c.delivered) continue;
+    const verb = String(c.command||"").toLowerCase();
+    if(verb!=="door open" && verb!=="door close") continue;
+    if(c.delivered >= cmdAt){ cmdAt = c.delivered; cmdState = verb==="door open"?"OPEN":"CLOSED"; }
+  }
+  if(cmdState && dev && dev.last_seen && cmdAt >= dev.last_seen) state = cmdState;
+
   if(!state) return {state:null, since:0, label:""};
 
-  const sinceAt = state==="OPEN" ? (last.OPEN||0) : (last.CLOSE||0);
+  // Prefer an event's timestamp for "since" — it is when the door actually
+  // moved. Fall back to the command's delivery when the command is what told
+  // us the state, because then no event has arrived to date it yet.
+  let sinceAt = state==="OPEN" ? (last.OPEN||0) : (last.CLOSE||0);
+  if(cmdState===state && cmdAt>sinceAt) sinceAt = cmdAt;
   let label="";
   if(sinceAt){
     const mins=Math.round((Date.now()/1000-sinceAt)/60);
