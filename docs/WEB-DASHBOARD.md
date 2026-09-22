@@ -459,6 +459,12 @@ SMTP settings come from the environment (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`,
 host's other services already use, so one set of credentials serves all of them
 rather than a second copy going stale on its own.
 
+**Give it its own `SMTP_FROM` even so.** Sharing the credentials is sensible;
+sharing the sender is not. A door telling you it opened should not arrive
+looking like whatever else that host sends, and a dedicated address is one you
+can filter on. Any address on a domain the relay is already authorised for
+works — the SPF and DKIM that pass for one address on it pass for another.
+
 **A relay having a bad afternoon never breaks a command.** The command is
 queued before the mail is attempted, the send cannot raise into the caller, and
 a failure is written to the server log — because a notification that never
