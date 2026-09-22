@@ -15,6 +15,7 @@
 **Understanding**
 - [[How it works]]
 - [[The dashboard]]
+- [[Running it remotely]]
 - [[FAQ]]
 
 **Elsewhere**

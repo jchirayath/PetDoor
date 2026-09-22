@@ -580,6 +580,15 @@ motor. See [docs/WIRING.md](docs/WIRING.md) and [docs/SAFETY.md](docs/SAFETY.md)
 | `!` | Reboot into flash mode (ESP32-S3/C3/C6 only; the original ESP32 has no such flag) |
 | `o` | Pulse the OPEN relay now (bypasses proximity logic) |
 | `x` | Pulse the CLOSE relay now (bypasses proximity logic) |
+| `O` | Clear a manual hold, handing control back to the collar |
+| `k` / `K` | Lock / unlock — stop the collar opening the door at all |
+| `f` | Edit the RSSI filters (the open path and the close path separately) |
+| `w` | Dwell, relay and hardware settings — see below |
+
+Behind `w`: `pulse`, `presses`, `gap`, `travel`, `buzzer`, `beep`, `sensors`,
+`upload`, and the dwell times. Everything there is saved on the device and
+survives a reflash, and every one of them can also be set remotely — see
+[REMOTE-CONFIG.md](docs/REMOTE-CONFIG.md).
 
 Set `ALLOW_MANUAL_SERIAL_CONTROL` to `0` for an unattended deployment to drop
 `o` and `x`.
@@ -600,6 +609,26 @@ Set `ALLOW_MANUAL_SERIAL_CONTROL` to `0` for an unattended deployment to drop
 An optional buzzer says the same things audibly — it ticks while the door is
 moving and chimes when the travel time is up. See
 [docs/WIRING.md](docs/WIRING.md#the-annunciator).
+
+---
+
+## Once it is on a wall
+
+The serial console stops being the answer the moment the door is screwed up
+somewhere. Everything below is optional, off by default, and none of it needs
+a second trip up a ladder to enable.
+
+| | What it buys you |
+|---|---|
+| **[Remote settings](docs/REMOTE-CONFIG.md)** | Every tunable, changed over the network. The door polls a log server and collects what is waiting, so nothing has to reach *in* to it |
+| **[A browser panel](docs/WEB-DASHBOARD.md)** | Open, close, lock and unlock the door, and a form for every setting with the door's current values filled in |
+| **[Email](docs/WEB-DASHBOARD.md#email-when-something-consequential-happens)** | A message when somebody opens, locks, unlocks or reboots it — and which signed-in account asked |
+| **[OTA firmware](docs/REMOTE-CONFIG.md)** | New firmware over WiFi. A bad push rolls itself back, because an image that boots but cannot phone home is otherwise a ladder |
+| **[A buzzer](docs/WIRING.md#the-annunciator)** | ~$1. Patterns for "moving", "arrived", "refused", and a distinct acknowledgement per remote command |
+| **[Limit switches](docs/WIRING.md#position-sensors)** | Two reed switches, and the door stops guessing where it is: a real arrival instead of a stopwatch, and a swallowed button press becomes visible |
+
+The last two ship **disabled** (`-1`) and are turned on with one command once
+the parts are fitted. Nothing changes until then.
 
 ---
 
@@ -639,7 +668,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all of them.
 - [The beacon](docs/BEACON-MINEW.md) — which tag to buy, how to set it, and why not an AirTag
 - [Flashing from a laptop](docs/FLASHING.md) — the field procedure, tools to bring, and what to do before you leave the desk
 - [Remote management](docs/REMOTE-CONFIG.md) — change settings and push firmware on a door you can no longer reach
-- [Web dashboard](docs/WEB-DASHBOARD.md) — *optional* — self-host the charts on a Pi or a VM, with a public project page and the analytics behind a login
+- [Web dashboard](docs/WEB-DASHBOARD.md) — *optional* — self-host the charts, control the door from a browser, and get an email when somebody does
 - [Portal](docs/PORTAL.md) — *optional* — the same charts, hosted, with nothing to run
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — when it does not work
 - [Safety](docs/SAFETY.md) — read before connecting a motor

@@ -206,3 +206,25 @@ attempt.
 Because the door re-sends its whole ring each time and the server de-duplicates
 on `(device, boot, uptime, event)`, a retry after a failure is harmless — it
 adds only what the server had not already seen.
+
+---
+
+## What the server can do back
+
+The upload is a POST, and the door reads the reply. That one fact is what turns
+a log server into a way of managing a door you can no longer reach — no inbound
+connection, no port forwarded, nothing to reach *in* through a router.
+
+- **Change any setting**, and push new firmware, from the command line or the
+  dashboard — [REMOTE-CONFIG.md](REMOTE-CONFIG.md).
+- **Open, close, lock and unlock** from a browser, behind whatever
+  authentication is already in front of the private routes —
+  [WEB-DASHBOARD.md](WEB-DASHBOARD.md#controlling-the-door-from-the-browser).
+- **Email you** when something consequential is asked of it —
+  [WEB-DASHBOARD.md](WEB-DASHBOARD.md#email-when-something-consequential-happens).
+- **Record every firmware a door has run**, with the commit it was built from
+  and whether it arrived over the air or down a cable: `--firmware`.
+
+All of it rides the reply to an upload the door started, and every reply is
+signed with the same shared key and bound to a nonce the door chose — so a
+recorded reply cannot be played back at it later.

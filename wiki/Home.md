@@ -43,6 +43,7 @@ fit to a door you already own.
 | are about to wire a motor | **[Safety](https://github.com/jchirayath/PetDoor/blob/main/docs/SAFETY.md)** — read this first |
 | want to know how it works | [[How it works]] |
 | want the log and charts | [[The dashboard]] |
+| cannot reach the door any more | [[Running it remotely]] |
 
 ---
 
@@ -92,5 +93,6 @@ is not optional reading.
 - [[The beacon]] — why not an AirTag, and what to use instead
 - [[Converting a door]] — tapping an existing controller's buttons
 - [[The dashboard]] — the optional log server and its analytics
+- [[Running it remotely]] — settings, control, firmware and email once it is on a wall
 - [[ESP32]] — the board, for people who have never used one
 - [[FAQ]]
