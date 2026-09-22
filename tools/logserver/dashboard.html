@@ -158,18 +158,39 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 .mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
 .dim{color:var(--ink-3)}
 
-/* --- control panel --- */
-.ctl{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px}
-.ctl button{padding:9px 16px;font-size:13.5px;font-weight:600}
-.ctl .sep{flex-basis:100%;height:0}
-button.act-open{border-color:var(--out);color:var(--out)}
-button.act-open:hover{background:var(--out-soft)}
-button.act-shut{border-color:var(--in);color:var(--in)}
-button.act-shut:hover{background:var(--in-soft)}
-button.act-lock{border-color:var(--fault);color:var(--fault)}
-button.act-lock:hover{background:var(--fault-soft)}
-button[disabled]{opacity:.5;cursor:default}
-button[disabled]:hover{border-color:var(--line)}
+/* --- control panel ---
+   One accent, spent on the primary action. Everything else recedes in a
+   deliberate order: outline for the other real action, quiet for the ones that
+   move nothing. Six equally-coloured buttons say "pick one of these six"; this
+   says "you probably want Open". */
+/* The panel bodies were sitting flush to the card edge while their headers
+   were inset by 18px. Invisible while the content was buttons; obvious the
+   moment the buttons gained labels to misalign against. */
+#controls,#settings{padding:16px 18px}
+#controls .queued{margin-left:-4px;margin-right:-4px}
+.ctlgroups{display:flex;flex-wrap:wrap;gap:14px 26px;margin:2px 0}
+.ctlgroup{display:flex;flex-direction:column;gap:7px}
+.glabel{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--ink-3);font-weight:600}
+.ctl{display:flex;flex-wrap:wrap;gap:8px}
+.ctl button{padding:9px 17px;font-size:13.5px;font-weight:500}
+button.b-primary{background:var(--in);border-color:var(--in);color:#fff;font-weight:600}
+button.b-primary:hover{border-color:var(--in);filter:brightness(1.08)}
+button.b-outline{border-color:var(--ink-3);color:var(--ink);font-weight:600}
+button.b-outline:hover{background:var(--night)}
+button.b-danger{border-color:var(--fault);color:var(--fault);font-weight:600}
+button.b-danger:hover{background:var(--fault-soft);border-color:var(--fault)}
+button.b-quiet{color:var(--ink-2)}
+button[disabled]{opacity:.45;cursor:default}
+button[disabled]:hover{border-color:var(--line);background:none;filter:none}
+
+/* --- the door facts, as a grid rather than five loose lines --- */
+.dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+  gap:12px 20px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2)}
+.dgrid .k{display:block;font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.09em;color:var(--ink-3);font-weight:600;margin-bottom:2px}
+.dgrid .v{font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
+
 .queued{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--sunk);
   border:1px solid var(--line-2);font-size:12.5px;color:var(--ink-2);
   display:flex;flex-wrap:wrap;gap:8px;align-items:center}
@@ -216,16 +237,35 @@ button[disabled]:hover{border-color:var(--line)}
    scattered: the version in the door panel, the count in the subtitle, the
    check-in time halfway down. They are the three things you look for first, so
    they belong beside the name. */
-.bmeta{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-.bmeta span{font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;
-  border:1px solid var(--line);background:var(--sunk);color:var(--ink-2);
-  font-variant-numeric:tabular-nums}
-.bmeta span.stale{border-color:var(--out);background:var(--out-soft);color:var(--out)}
-.bmeta span.quiet{border-color:transparent;background:none;color:var(--ink-3);font-weight:400}
+/* A stat strip, not a row of pills. Label above value, thin rules between:
+   reads as instrumentation rather than decoration, and lets the one fact that
+   can go wrong (the check-in) change colour without four others competing. */
+.bmeta{display:flex;flex-wrap:wrap;gap:0 20px;align-items:stretch}
+.fact{display:flex;flex-direction:column;justify-content:center;gap:1px;
+  padding-left:20px;border-left:1px solid var(--line)}
+.fact:first-child{padding-left:0;border-left:0}
+.fact .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--ink-3);font-weight:600;white-space:nowrap}
+.fact .v{font-size:13px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.fact.stale .v{color:var(--out)}
+.fact.stale .k{color:var(--out)}
 
 /* --- second-level menu inside a tab --- */
 .subnav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:-10px}
 .subnav .lead{font-size:12.5px;color:var(--ink-3);margin-right:2px}
+
+@media (max-width:560px){
+  /* The dividers between facts are drawn as a left border, which a wrapped
+     item carries to the start of its new line where it separates nothing.
+     Drop them once the strip stops being a strip. */
+  .fact{padding-left:0;border-left:0}
+  .bmeta{gap:10px 18px}
+  /* Give the label its own line so a row's inputs stay together instead of
+     splitting either side of a wrap. */
+  .srow .lab{flex-basis:100%}
+  .srow{gap:8px}
+}
 </style>
 
 <div class="wrap">
@@ -247,7 +287,7 @@ button[disabled]:hover{border-color:var(--line)}
   </div>
   <div class="tools">
     <div class="bmeta" id="bmeta"></div>
-    <button class="primary" id="refresh">Refresh</button>
+    <button id="refresh">Refresh</button>
   </div>
 </header>
 
@@ -746,8 +786,8 @@ function renderDoors(devs){
     // the banner can only describe one of them and each panel says its own.
     const solo=devs.length===1;
     let rows=`<div class="n">${esc(d.device||"door")}</div>`
-      +(solo?`<div class="m">${boots} boot${boots===1?"":"s"} since it was flashed</div>`
-            :`<div class="m">firmware v${esc(d.version||"?")} &middot; ${boots} boot${boots===1?"":"s"}</div>`
+      +(solo?""   // the banner already carries firmware and the check-in time
+            :`<div class="m">firmware v${esc(d.version||"?")}</div>`
              +`<div class="m${stale?" warn":""}">last heard ${when}${stale?" — check it":""}</div>`);
 
     // What it can see right now. This is the number you tune against, and it
@@ -764,10 +804,19 @@ function renderDoors(devs){
         // worth shouting about, because from the outside it looks identical to
         // a door that is simply shut.
         +(st.locked==="1"?`<span class="pill lock">LOCKED — collar cannot open it</span>`:"")
-        +`</div>`
-        +`<div class="m">${esc(st.rssi)} dBm`
-        +(st.dist?` &middot; ~${esc(st.dist)} m`:"")
-        +(st.gap?` &middot; worst gap ${esc(st.gap)} ms`:"")+`</div>`;
+        +`</div>`;
+
+      // The numbers, as labelled cells rather than a run-on sentence. Same
+      // information, but you can find one without reading the others.
+      const cell=(k,v)=>`<div><span class="k">${k}</span><span class="v">${v}</span></div>`;
+      let grid="";
+      if(st.rssi!==undefined) grid+=cell("Signal",esc(st.rssi)+" dBm");
+      if(st.dist) grid+=cell("Distance","~"+esc(st.dist)+" m");
+      if(st.gap) grid+=cell("Worst gap",esc(st.gap)+" ms");
+      grid+=cell("Boots",String(boots));
+      if(st.real&&st.real!=="none") grid+=cell("Measured",esc(st.real));
+      if(d.door_ip) grid+=cell("Push to",`<span class="mono">${esc(d.door_ip)}</span>`);
+      if(grid) rows+=`<div class="dgrid">${grid}</div>`;
     }
 
     // Health, and only when there is something to say about it.
@@ -777,7 +826,6 @@ function renderDoors(devs){
     if(warns.length) rows+=`<div class="m warn">${warns.map(esc).join(" &middot; ")}</div>`;
 
     // Where to push an update, and whether this build would even take one.
-    if(d.door_ip) rows+=`<div class="m mono">push to ${esc(d.door_ip)}</div>`;
     if(d.remote===0) rows+=`<div class="m warn">firmware predates remote commands — anything queued will wait</div>`;
 
     return `<div>${rows}</div>`;
@@ -1049,14 +1097,22 @@ function renderControl(){
   // Disabled rather than hidden when it would be a no-op: a button that
   // vanishes is confusing, one that is visibly unavailable explains itself.
   const b=(cmd,label,cls,off)=>`<button class="${cls}" data-cmd="${cmd}"${off?" disabled":""}>${label}</button>`;
-  const buttons='<div class="ctl">'
-    +b("door open","Open","act-open",false)
-    +b("door close","Close","act-shut",false)
-    +b("door auto","Auto","",false)
-    +'<span class="sep"></span>'
-    +b("lock","Lock","act-lock",locked)
-    +b("unlock","Unlock","",!locked)
-    +b("beep","Beep","",false)
+  const group=(label,inner)=>`<div class="ctlgroup"><span class="glabel">${label}</span><div class="ctl">${inner}</div></div>`;
+
+  // Grouped by what each acts on, and weighted by what you came to do. Open is
+  // what people reach for from the garden, so it is the only solid button on
+  // the page; Close is the other real actuation; the rest move nothing and
+  // recede. Six equally-coloured buttons say "pick one of these six".
+  const buttons='<div class="ctlgroups">'
+    +group("Door",
+        b("door open","Open","b-primary",false)
+       +b("door close","Close","b-outline",false)
+       +b("door auto","Auto","b-quiet",false))
+    +group("Collar access",
+        b("lock","Lock","b-danger",locked)
+       +b("unlock","Unlock","b-quiet",!locked))
+    +group("Check",
+        b("beep","Beep","b-quiet",false))
     +'</div>';
 
   let queue="";
@@ -1157,20 +1213,22 @@ function renderBanner(){
   if(!host) return;
   const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
   const d=devices[0]||{};
+  const fact=(k,v,cls)=>`<div class="fact ${cls||""}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
   const bits=[];
-  if(d.version) bits.push(`<span>firmware v${esc(d.version)}</span>`);
-  bits.push(`<span>${events.length.toLocaleString()} event${events.length===1?"":"s"}</span>`);
+  if(d.version) bits.push(fact("Firmware","v"+esc(d.version)));
+  bits.push(fact("Events",events.length.toLocaleString()));
   if(d.last_seen){
     const mins=Math.round((Date.now()/1000-d.last_seen)/60);
     const when=mins<1?"just now":mins<60?`${mins} min ago`:
       mins<2880?`${Math.round(mins/60)} h ago`:`${Math.round(mins/1440)} days ago`;
-    // Three hours without a word is not a quiet door, it is a door to go and
-    // look at. Say so here, where it cannot be scrolled past.
-    bits.push(`<span class="${mins>180?"stale":""}">last check-in ${when}</span>`);
+    // The only fact here allowed to change colour, so that when it does it is
+    // the one thing the eye lands on. Three hours without a word is not a
+    // quiet door, it is a door to go and look at.
+    bits.push(fact("Last check-in",when,mins>180?"stale":""));
   }else{
-    bits.push(`<span class="stale">never checked in</span>`);
+    bits.push(fact("Last check-in","never","stale"));
   }
-  bits.push(`<span class="quiet" id="live"></span>`);
+  bits.push(fact("Refreshed",'<span id="live">just now</span>'));
   host.innerHTML=bits.join("");
 }
 
@@ -1202,9 +1260,7 @@ async function load(){
     renderAll();
     // renderAll() rebuilt the banner, so #live exists again from here.
     const devs=[...new Set(events.map(e=>e.device).filter(Boolean))];
-    if($("live")) $("live").textContent=events.length
-      ? `updated just now${devs.length>1?` · ${devs.length} doors`:""}`
-      : "no events yet — set LOG_ENDPOINT_URL in the door's secrets.h";
+    if($("live")) $("live").textContent=events.length?"just now":"no events";
   }catch(err){
     // The banner is the one place a failure cannot be scrolled past.
     const host=$("bmeta");
@@ -1220,6 +1276,5 @@ load();
 // hard. Once a minute keeps an always-on wall display current.
 setInterval(load,60000);
 setInterval(()=>{ if(lastLoad&&$("live")){const m=Math.round((Date.now()-lastLoad)/60000);
-  if(m>=1&&events.length) $("live").textContent=$("live").textContent
-    .replace(/updated .*/,`updated ${m} min ago`);} },60000);
+  if(m>=1&&events.length) $("live").textContent=`${m} min ago`;} },60000);
 </script>
