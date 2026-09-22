@@ -66,6 +66,11 @@ char g_nonce[33] = {0};
 // Filled by the control task, which owns the tracker and the door; the WiFi
 // task only sends the string it was handed.
 char g_statusLine[224] = {0};
+
+// Seeded from config.h, then overridable at runtime and from NVS.
+uint32_t g_settleMs = WIFI_IDLE_SETTLE_MS;
+uint32_t g_minUploadMs = WIFI_MIN_UPLOAD_INTERVAL_MS;
+uint32_t g_heartbeatMs = WIFI_HEARTBEAT_MS;
 // Bigger than the status line because it carries every tunable at once.
 char g_configLine[320] = {0};
 
@@ -600,12 +605,8 @@ void tick(uint32_t nowMs, bool idle) {
   // This deliberately costs BLE time at a moment the beacon may be present,
   // which is exactly what the idle gate exists to avoid. Half an hour between
   // bursts makes that a rounding error; losing the channel does not.
-  const bool overdue =
-#if WIFI_HEARTBEAT_MS > 0
-      g_haveUploaded && (nowMs - g_lastUploadMs) >= WIFI_HEARTBEAT_MS;
-#else
-      false;
-#endif
+  const bool overdue = g_heartbeatMs > 0 && g_haveUploaded &&
+                       (nowMs - g_lastUploadMs) >= g_heartbeatMs;
 
   if (!idle && !overdue) {
     g_idleValid = false;
@@ -621,8 +622,8 @@ void tick(uint32_t nowMs, bool idle) {
     g_idleValid = true;
     return;
   }
-  if ((nowMs - g_idleSinceMs) < WIFI_IDLE_SETTLE_MS) return;
-  if (g_haveUploaded && (nowMs - g_lastUploadMs) < WIFI_MIN_UPLOAD_INTERVAL_MS) return;
+  if ((nowMs - g_idleSinceMs) < g_settleMs) return;
+  if (g_haveUploaded && (nowMs - g_lastUploadMs) < g_minUploadMs) return;
   if (EventLog::count() == 0) return;   // nothing to say yet (first boot only)
   if (g_busy) return;
 
@@ -639,6 +640,15 @@ void requestFlushNow() {
   g_flushRequested = true;
   Serial.println(F("[wifi] flush requested"));
 }
+
+void setUploadTiming(uint32_t settleMs, uint32_t minIntervalMs, uint32_t heartbeatMs) {
+  g_settleMs = settleMs;
+  g_minUploadMs = minIntervalMs;
+  g_heartbeatMs = heartbeatMs;
+}
+uint32_t settleMs() { return g_settleMs; }
+uint32_t minIntervalMs() { return g_minUploadMs; }
+uint32_t heartbeatMs() { return g_heartbeatMs; }
 
 bool busy() { return g_busy || g_otaOpen; }
 
@@ -739,6 +749,10 @@ void tick(uint32_t, bool) {}
 void requestFlushNow() {
   Serial.println(F("[wifi] not compiled in (PETDOOR_ENABLE_WIFI is 0)"));
 }
+void setUploadTiming(uint32_t, uint32_t, uint32_t) {}
+uint32_t settleMs() { return WIFI_IDLE_SETTLE_MS; }
+uint32_t minIntervalMs() { return WIFI_MIN_UPLOAD_INTERVAL_MS; }
+uint32_t heartbeatMs() { return WIFI_HEARTBEAT_MS; }
 void setStatusLine(const char *) {}
 void setConfigLine(const char *) {}
 void queueScanUpload(const String &) {}

@@ -347,8 +347,8 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 | `LOG_SHARED_KEY` | `""` | Optional. When set, each upload is signed with HMAC-SHA256. **The key is never transmitted** — only a signature over the timestamp and body — so plain HTTP is still safe from forgery. See [LOG-SERVER.md](LOG-SERVER.md#why-http-and-not-https). |
 | `LOG_ALLOW_TLS` | `0` | Compile in TLS for uploads. **Off by default because it does not fit on a classic ESP32** — measured, a handshake drove free heap from 80 KB to 18 KB and failed to connect, and it costs ~170 KB of flash. Uploads are signed with HMAC instead, which gives integrity without it. |
 | `LOG_DEVICE_ID` | `"petdoor"` | Identifies this door to the server, so one endpoint can collect from several. |
-| `WIFI_IDLE_SETTLE_MS` | `60000` | Everything must have been quiet this long before an upload is allowed. |
-| `WIFI_MIN_UPLOAD_INTERVAL_MS` | `300000` | Never upload more often than this, however many events arrive. |
+| `WIFI_IDLE_SETTLE_MS` | `60000` | Everything must have been quiet this long before an upload is allowed. Runtime-settable together with the two below via `upload <settle> <interval> <heartbeat>`. |
+| `WIFI_MIN_UPLOAD_INTERVAL_MS` | `300000` | Never upload more often than this, however many events arrive. **This is the one that protects the BLE scan** — WiFi and BLE share an antenna, so a short interval keeps the radio up and starves the listening the door exists to do. Floor of 60 s when set remotely. |
 | `WIFI_CONNECT_TIMEOUT_MS` | `15000` | Give up associating after this long, so a missing access point cannot hold the radio. |
 | `OTA_PASSWORD` | `""` | Password for over-the-air firmware updates. **Empty disables OTA entirely** — without one, anyone on the network could reflash the door. |
 | `OTA_WINDOW_MS` | `300000` | How long an update window stays open before the radio is handed back to BLE. |
@@ -357,7 +357,7 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 | `REMOTE_CMD_MAX_LEN` | `128` | Longest single command line. A MAC list is the long one. |
 | `REMOTE_RESTART_DELAY_MS` | `20000` | Delay before a restart a command asked for, so the acknowledgement is uploaded first. |
 | `OTA_REQUIRE_CONFIRM` | `1` | Hold a freshly flashed image unconfirmed until it completes an upload; the bootloader restores the previous image if it never does. The Arduino core otherwise confirms every image at boot, making rollback unreachable. |
-| `WIFI_HEARTBEAT_MS` | `1800000` | Call in at least this often even while the animal is home. `0` disables it, and the door then only speaks when the beacon is away. |
+| `WIFI_HEARTBEAT_MS` | `1800000` | Call in at least this often even while the animal is home. `0` disables it, and the door then only speaks when the beacon is away. Runtime-settable; `0` disables it, at the cost of a door whose animal stays indoors going silent and collecting no commands. |
 | `NTP_SERVER` | `"pool.ntp.org"` | Used to set the clock, so log entries carry real timestamps. |
 
 ### Why uploads are deferred rather than immediate

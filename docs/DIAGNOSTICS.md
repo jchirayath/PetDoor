@@ -514,10 +514,33 @@ detail in [WIRING.md](WIRING.md#the-annunciator).
 | rising two-tone | Travel time is up. It **should** be there |
 | one low buzz | Refused: the door is **locked**. Sounds once per arrival, not repeatedly |
 | three even beeps | Answering your `beep` — proves the buzzer, says nothing about the door |
+| **short then long**, rising | Acknowledging `door open` — the command arrived |
+| **long then short**, falling | Acknowledging `door close` |
+| **three short**, low | Acknowledging `lock` |
+| **one long**, high | Acknowledging `unlock` |
+| one short blip | Acknowledging a setting change |
 
 The same caveat as the LED, and it is worth repeating because a chime sounds
 more confident than a blink: **the rising two-tone is a timer expiring, not an
 arrival.** A door jammed halfway gets the same chime.
+
+### Why the acknowledgements sound the way they do
+
+A remote command waits for the door's next check-in, so the beep is how you
+learn it landed without walking to a screen. They are told apart by **rhythm
+first, pitch second** — an active buzzer has one pitch it chose at the factory,
+so tunes distinguished only by pitch would collapse into a single sound on half
+the hardware this supports.
+
+The pairs mirror each other, which is what makes them learnable: **open and
+close differ by direction** (rising / falling), **lock and unlock by register**
+(low / high). Anything that merely changes a setting gets one short blip,
+because the distinction that matters from the coop is "the door is about to
+move" versus "the door took a note".
+
+One sound per batch, not one per command — several commands usually arrive
+together. A refusal always wins over a confirmation: "something did not take"
+is the part you need to hear.
 
 Silence where you expected a sound is nearly always the pin or the buzzer type,
 not the door. `beep` separates the two in one keystroke: if `beep` is silent the

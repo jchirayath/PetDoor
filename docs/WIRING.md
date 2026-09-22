@@ -496,6 +496,11 @@ yard better than speech does anyway:
 | a rising two-tone | The travel time is up. It should be there |
 | one low buzz | Refused: the door is **locked** and the collar may not open it |
 | three even beeps | You pressed `beep`. This is the buzzer answering you, not the door |
+| **short then long**, rising | Acknowledging `door open` — the command arrived |
+| **long then short**, falling | Acknowledging `door close` |
+| **three short**, low | Acknowledging `lock` |
+| **one long**, high | Acknowledging `unlock` |
+| one short blip | Acknowledging a setting change |
 
 > **The chime is a stopwatch, not a sensor.** "It should be there" means the
 > time you configured has elapsed, not that the door arrived. A door jammed

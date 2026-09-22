@@ -60,6 +60,7 @@ uint32_t g_travelMs = DOOR_TRAVEL_MS;
 bool g_travelling = false;
 bool g_lockRefusedAnnounced = false;
 bool g_travelVerified = false;      // did a switch confirm the last travel?
+bool g_workingPending = false;      // travel started; waiting for an ack to finish
 DoorState g_lastObserved = DOOR_UNKNOWN;
 bool g_sensorFaultAnnounced = false;
 
@@ -778,6 +779,47 @@ bool applyTravelMs(const char *arg, String &msg) {
   return true;
 }
 
+// "<settle ms> <minimum interval ms> <heartbeat ms>". Heartbeat 0 disables it.
+bool applyUploadTiming(const char *args, String &msg) {
+  unsigned long st = 0, mi = 0, hb = 0;
+  if (args == nullptr || sscanf(args, "%lu %lu %lu", &st, &mi, &hb) != 3) {
+    msg = F("upload needs three values: <settle ms> <interval ms> <heartbeat ms>");
+    return false;
+  }
+  if (st < WifiLogger::kMinSettleMs || st > WifiLogger::kMaxSettleMs) {
+    msg = String("upload: settle must be ") + WifiLogger::kMinSettleMs + "-" +
+          WifiLogger::kMaxSettleMs + " ms";
+    return false;
+  }
+  // The floor here is the one that matters. WiFi and BLE share one antenna, so
+  // every upload is time taken from listening for the collar; a few seconds
+  // would keep the radio up continuously and starve the door's actual job.
+  if (mi < WifiLogger::kMinUploadIntervalMs || mi > WifiLogger::kMaxUploadIntervalMs) {
+    msg = String("upload: interval must be ") + WifiLogger::kMinUploadIntervalMs + "-" +
+          WifiLogger::kMaxUploadIntervalMs + " ms — below that the radio never rests";
+    return false;
+  }
+  if (hb != 0 && (hb < WifiLogger::kMinHeartbeatMs || hb > WifiLogger::kMaxHeartbeatMs)) {
+    msg = String("upload: heartbeat must be 0 (off) or ") + WifiLogger::kMinHeartbeatMs +
+          "-" + WifiLogger::kMaxHeartbeatMs + " ms";
+    return false;
+  }
+  if (mi <= st) {
+    msg = F("upload: the interval must exceed the settle time, or the gate never opens");
+    return false;
+  }
+  WifiLogger::setUploadTiming(st, mi, hb);
+  BleScanner::storeUpload(st, mi, hb);
+  g_timingStored = true;
+  msg = String("upload: settle ") + st + " ms, interval " + mi + " ms, heartbeat " +
+        (hb ? String(hb) + " ms" : String("off"));
+  if (hb == 0) {
+    msg += "; WARNING with no heartbeat a door whose animal stays in goes silent "
+           "and collects no commands";
+  }
+  return true;
+}
+
 // "off" | "<openPin> <closedPin> [low|high]". Either pin may be -1 for "that
 // end has no switch", which is how you fit one before the other.
 bool applySensorSpec(const char *args, String &msg) {
@@ -939,6 +981,10 @@ void printTimingMenu() {
                   g_door.pulseCount(),
                   static_cast<unsigned long>(g_door.pulseGapMs()));
   }
+  Serial.printf("  calls in     : quiet %lu ms, min gap %lu ms, heartbeat %lu min\r\n",
+                static_cast<unsigned long>(WifiLogger::settleMs()),
+                static_cast<unsigned long>(WifiLogger::minIntervalMs()),
+                static_cast<unsigned long>(WifiLogger::heartbeatMs() / 60000));
   Serial.printf("  door travel  : %5lu ms (0 = do not announce)\r\n",
                 static_cast<unsigned long>(g_travelMs));
   if (Chime::enabled()) {
@@ -982,6 +1028,10 @@ void printTimingMenu() {
   Serial.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
   Serial.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
   Serial.println(F("    beep             three beeps now — find the pin by trying it"));
+  Serial.println(F("    upload 60000 300000 1800000   how often the door calls in:"));
+  Serial.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
+  Serial.println(F("      Lower the middle one for faster commands, at the cost of"));
+  Serial.println(F("      radio time the BLE scan would otherwise have. 0 heartbeat = off"));
   Serial.println(F("    sensors 32 33    limit switch pins: <open> <closed> ('sensors off')"));
   Serial.println(F("    sensors 32 33 low   same, for switches that pull the pin to GND"));
   Serial.println(F("      the door stops guessing where it is. Without them it only"));
@@ -1090,6 +1140,17 @@ void processTimingLine(char *line) {
   if (strncmp(line, "travel", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
     String msg;
     if (!applyTravelMs(line[6] ? line + 7 : nullptr, msg)) {
+      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      printTimingMenu();
+      return;
+    }
+    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "upload", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
+    String msg;
+    if (!applyUploadTiming(line[6] ? line + 7 : nullptr, msg)) {
       Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
       printTimingMenu();
       return;
@@ -1606,6 +1667,70 @@ void updatePosition(uint32_t nowMs) {
   }
 }
 
+// Rebuild the two lines the next upload carries: what the door can see, and
+// what it is set to.
+//
+// Pulled out of the control loop's five-second timer so it can also be called
+// the moment a remote command changes something. Otherwise the upload that
+// follows a command carries a snapshot taken BEFORE it was applied, and the
+// dashboard shows the old value while insisting the command succeeded.
+void publishStatusLines() {
+#if PETDOOR_ENABLE_WIFI
+  char line[224];
+  snprintf(line, sizeof(line),
+           "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
+           "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu real=%s",
+           g_tracker.filteredRssi(), g_tracker.rawRssi(),
+           fmt1(g_tracker.distanceM()).c_str(),
+           g_tracker.isPresent() ? 1 : 0,
+           DoorController::stateName(g_door.state()), g_locked ? 1 : 0,
+           g_door.pulseCount(),
+           static_cast<unsigned long>(g_tracker.maxGapMs()),
+           static_cast<unsigned long>(g_tracker.totalSamples()),
+           static_cast<unsigned long>(BleScanner::advCount()),
+           static_cast<unsigned long>(g_tracker.weakSamples()),
+           static_cast<unsigned long>(ESP.getFreeHeap()),
+           static_cast<unsigned long>(millis() / 1000),
+           // What the switches SAY, as opposed to what we commanded. "none"
+           // when no switches are fitted; "?" is the normal mid-travel
+           // reading with them.
+           !Position::enabled() ? "none"
+               : Position::fault() ? "FAULT"
+               : Position::state() == DOOR_OPEN ? "OPEN"
+               : Position::state() == DOOR_CLOSED ? "CLOSED" : "?");
+  WifiLogger::setStatusLine(line);
+
+  // Every tunable the remote channel can change, so the dashboard's
+  // settings form can show what each one IS rather than a blank box. Built
+  // here for the same reason the status line is: this task owns all of it.
+  char cfg[320];
+  snprintf(cfg, sizeof(cfg),
+           "enter=%d exit=%d dopen=%lu dclose=%lu dmin=%lu pulse=%lu "
+           "pcount=%u pgap=%lu igap=%lu travel=%lu fwin=%u falpha=%s "
+           "owin=%u oalpha=%s bpin=%d bpassive=%d blow=%d "
+           "sopen=%d sshut=%d slow=%d "
+           "upsettle=%lu upmin=%lu upbeat=%lu",
+           g_tracker.enterDbm(), g_tracker.exitDbm(),
+           static_cast<unsigned long>(g_tracker.enterConfirmMs()),
+           static_cast<unsigned long>(g_tracker.exitConfirmMs()),
+           static_cast<unsigned long>(g_door.minIntervalMs()),
+           static_cast<unsigned long>(g_door.pulseMs()),
+           g_door.pulseCount(),
+           static_cast<unsigned long>(g_door.pulseGapMs()),
+           static_cast<unsigned long>(g_door.directionGapMs()),
+           static_cast<unsigned long>(g_travelMs),
+           g_tracker.windowSize(), String(g_tracker.alpha(), 2).c_str(),
+           g_tracker.fastWindowSize(), String(g_tracker.fastAlpha(), 2).c_str(),
+           Chime::pin(), Chime::passive() ? 1 : 0, Chime::activeLow() ? 1 : 0,
+           Position::openPin(), Position::closedPin(),
+           Position::activeLow() ? 1 : 0,
+           static_cast<unsigned long>(WifiLogger::settleMs()),
+           static_cast<unsigned long>(WifiLogger::minIntervalMs()),
+           static_cast<unsigned long>(WifiLogger::heartbeatMs()));
+  WifiLogger::setConfigLine(cfg);
+#endif
+}
+
 void updateChime(uint32_t nowMs) {
   const bool moving = doorTravelling(nowMs);
   if (moving != g_travelling) {
@@ -1613,7 +1738,11 @@ void updateChime(uint32_t nowMs) {
     g_travelling = moving;
     if (moving) {
       g_travelVerified = false;   // a fresh travel has to earn its confirmation
-      Chime::play(CHIME_WORKING);
+      // Do not start the travel pattern on top of an acknowledgement. The ack
+      // is the half-second that tells you the door HEARD you, and a `door
+      // open` produces both in the same tick — starting the loop immediately
+      // would swallow the one that carries the information.
+      g_workingPending = true;
     } else if (wasMoving && g_travelMs != 0) {
       // With switches fitted, "arrived" is a measurement rather than a timer
       // running out — and a travel that ends with neither switch made is a
@@ -1631,10 +1760,17 @@ void updateChime(uint32_t nowMs) {
       // announcements off mid-travel (`travel 0`) also clears g_travelling,
       // and announcing "arrived" because someone disabled announcements would
       // be a lie in the one direction that matters.
+      g_workingPending = false;
       Chime::play(CHIME_DONE);
     } else {
+      g_workingPending = false;
       Chime::stop();
     }
+  }
+  // Start the travel pattern once whatever was playing has had its say.
+  if (g_workingPending && Chime::playing() == CHIME_NONE) {
+    g_workingPending = false;
+    if (g_travelling) Chime::play(CHIME_WORKING);
   }
   Chime::tick(nowMs);
 }
@@ -1856,6 +1992,9 @@ bool applyRemoteCommand(const char *line, String &result) {
   if (strcmp(verb, "travel") == 0) {
     return applyTravelMs(arg(), result);
   }
+  if (strcmp(verb, "upload") == 0) {
+    return applyUploadTiming(strtok(nullptr, ""), result);
+  }
   if (strcmp(verb, "sensors") == 0) {
     return applySensorSpec(strtok(nullptr, ""), result);
   }
@@ -2028,23 +2167,75 @@ bool applyRemoteCommand(const char *line, String &result) {
   return false;
 }
 
+// Which acknowledgement a command earns.
+//
+// The point is to tell them apart by EAR, from the coop, without a screen. So
+// the pairs mirror each other: open and close differ by direction, lock and
+// unlock by register. Everything that merely changes a setting shares one short
+// blip — the distinction that matters out there is "the door is about to move"
+// versus "the door took a note".
+ChimeTune ackTuneFor(const char *command) {
+  if (command == nullptr) return CHIME_ACK_SET;
+  if (strncmp(command, "door ", 5) == 0) {
+    if (strstr(command, "open") != nullptr) return CHIME_ACK_OPEN;
+    if (strstr(command, "close") != nullptr) return CHIME_ACK_CLOSE;
+    return CHIME_ACK_SET;                       // `door auto` moves nothing
+  }
+  if (strcmp(command, "lock") == 0) return CHIME_ACK_LOCK;
+  if (strcmp(command, "unlock") == 0) return CHIME_ACK_UNLOCK;
+  return CHIME_ACK_SET;
+}
+
 // Drain whatever the last upload brought back. Bounded per tick so a long
 // batch cannot hold up the door.
 void serviceRemoteCommands() {
   char line[REMOTE_CMD_MAX_LEN];
   int applied = 0, failed = 0;
   String last;
+  ChimeTune ack = CHIME_NONE;
+  bool sounded = false;
   for (int i = 0; i < 4 && WifiLogger::popCommand(line); i++) {
     String result;
     const bool ok = applyRemoteCommand(line, result);
     Serial.printf("[cmd] %s -> %s\r\n", line, result.c_str());
-    if (ok) applied++; else failed++;
+    if (ok) {
+      applied++;
+      // `beep` already sounds; a second tune on top would cut it off.
+      if (strcmp(line, "beep") == 0) sounded = true;
+      else ack = ackTuneFor(line);
+    } else {
+      failed++;
+    }
     last = result;
   }
+
+  // One sound per batch, not one per command: several commands arrive together
+  // and a burst of overlapping tunes would say less than a single clear one.
+  // A refusal always wins — "something did not take" is the thing you need to
+  // know, and it is worth hearing over a confirmation of the rest.
+  if (failed) Chime::play(CHIME_REFUSED);
+  else if (ack != CHIME_NONE && !sounded) Chime::play(ack);
   if (applied || failed) {
     String ack = String(applied) + " applied";
     if (failed) ack += String(", ") + failed + " refused: " + last;
     WifiLogger::setAck(ack.c_str());
+
+    // Report the RESULT straight away, rather than at the next natural upload.
+    //
+    // Two things were wrong without this. The snapshot is rebuilt on a
+    // five-second timer, so an upload could carry a status taken before the
+    // command was applied — the dashboard would say the command succeeded and
+    // show the old value beside it. And worse: `door open` makes the door
+    // non-idle, and the idle gate is what permits an upload at all, so opening
+    // the door from the web stopped the door reporting until it closed again
+    // or the half-hour heartbeat fired. The one action whose result you most
+    // want to see was the one that silenced the channel.
+    //
+    // requestFlushNow() overrides the idle gate, which is exactly right here:
+    // the radio burst is the point, and it is one burst per batch of commands,
+    // not a new polling rate.
+    publishStatusLines();
+    WifiLogger::requestFlushNow();
   }
 }
 #endif  // REMOTE_CONFIG && PETDOOR_ENABLE_WIFI
@@ -2112,60 +2303,10 @@ void controlTask(void *) {
     const bool idle = !g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
                       g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen();
 #if PETDOOR_ENABLE_WIFI
-    // Refresh the snapshot the next upload will carry. Cheap, but there is no
-    // point rebuilding a string ten times a second for something sent every
-    // few minutes.
     static uint32_t lastStatusMs = 0;
     if (now - lastStatusMs >= 5000) {
       lastStatusMs = now;
-      char line[224];
-      snprintf(line, sizeof(line),
-               "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
-               "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu real=%s",
-               g_tracker.filteredRssi(), g_tracker.rawRssi(),
-               fmt1(g_tracker.distanceM()).c_str(),
-               g_tracker.isPresent() ? 1 : 0,
-               DoorController::stateName(g_door.state()), g_locked ? 1 : 0,
-               g_door.pulseCount(),
-               static_cast<unsigned long>(g_tracker.maxGapMs()),
-               static_cast<unsigned long>(g_tracker.totalSamples()),
-               static_cast<unsigned long>(BleScanner::advCount()),
-               static_cast<unsigned long>(g_tracker.weakSamples()),
-               static_cast<unsigned long>(ESP.getFreeHeap()),
-               static_cast<unsigned long>(millis() / 1000),
-               // What the switches SAY, as opposed to what we commanded. "none"
-               // when no switches are fitted; "?" is the normal mid-travel
-               // reading with them.
-               !Position::enabled() ? "none"
-                   : Position::fault() ? "FAULT"
-                   : Position::state() == DOOR_OPEN ? "OPEN"
-                   : Position::state() == DOOR_CLOSED ? "CLOSED" : "?");
-      WifiLogger::setStatusLine(line);
-
-      // Every tunable the remote channel can change, so the dashboard's
-      // settings form can show what each one IS rather than a blank box. Built
-      // here for the same reason the status line is: this task owns all of it.
-      char cfg[320];
-      snprintf(cfg, sizeof(cfg),
-               "enter=%d exit=%d dopen=%lu dclose=%lu dmin=%lu pulse=%lu "
-               "pcount=%u pgap=%lu igap=%lu travel=%lu fwin=%u falpha=%s "
-               "owin=%u oalpha=%s bpin=%d bpassive=%d blow=%d "
-               "sopen=%d sshut=%d slow=%d",
-               g_tracker.enterDbm(), g_tracker.exitDbm(),
-               static_cast<unsigned long>(g_tracker.enterConfirmMs()),
-               static_cast<unsigned long>(g_tracker.exitConfirmMs()),
-               static_cast<unsigned long>(g_door.minIntervalMs()),
-               static_cast<unsigned long>(g_door.pulseMs()),
-               g_door.pulseCount(),
-               static_cast<unsigned long>(g_door.pulseGapMs()),
-               static_cast<unsigned long>(g_door.directionGapMs()),
-               static_cast<unsigned long>(g_travelMs),
-               g_tracker.windowSize(), String(g_tracker.alpha(), 2).c_str(),
-               g_tracker.fastWindowSize(), String(g_tracker.fastAlpha(), 2).c_str(),
-               Chime::pin(), Chime::passive() ? 1 : 0, Chime::activeLow() ? 1 : 0,
-               Position::openPin(), Position::closedPin(),
-               Position::activeLow() ? 1 : 0);
-      WifiLogger::setConfigLine(cfg);
+      publishStatusLines();
     }
 #endif
     WifiLogger::tick(now, idle);
@@ -2256,6 +2397,13 @@ void setup() {
     uint32_t travel = DOOR_TRAVEL_MS;
     if (BleScanner::loadStoredTravelMs(travel)) {
       g_travelMs = travel;
+      g_timingStored = true;
+    }
+
+    uint32_t upSt = WIFI_IDLE_SETTLE_MS, upMi = WIFI_MIN_UPLOAD_INTERVAL_MS,
+             upHb = WIFI_HEARTBEAT_MS;
+    if (BleScanner::loadStoredUpload(upSt, upMi, upHb)) {
+      WifiLogger::setUploadTiming(upSt, upMi, upHb);
       g_timingStored = true;
     }
   }
