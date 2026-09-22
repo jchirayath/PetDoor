@@ -683,6 +683,49 @@ function parseStatus(s){
   return out;
 }
 
+/* Where the door stands, and since when.
+
+   Two sources, and they answer different questions. The uploaded status line
+   says what the door believes RIGHT NOW, but carries no timestamp. The event
+   log carries timestamps but is history. So: take the state from the status
+   line where there is one, and the "since" from the most recent event that
+   agrees with it.
+
+   The fallback matters more than it looks. Between pressing Open and the door's
+   next status upload there is a window where the status line still says CLOSED
+   — the door only rebuilds it when it reports — but the OPEN event has already
+   arrived. Preferring a newer event over a staler status closes that window, so
+   the page stops insisting the door is shut some minutes after it opened. */
+function doorStanding(dev){
+  const st=parseStatus(dev && dev.status);
+  const last={};
+  for(const e of events){
+    if(!e.epoch) continue;
+    if(e.type==="OPEN"||e.type==="CLOSE"){
+      if(!last[e.type] || e.epoch>last[e.type]) last[e.type]=e.epoch;
+    }
+  }
+  const newest = (last.OPEN||0)>=(last.CLOSE||0) ? "OPEN" : "CLOSED";
+  const newestAt = Math.max(last.OPEN||0, last.CLOSE||0);
+
+  // An event that postdates the door's last upload is fresher than the status
+  // line, which was built before that upload was sent.
+  let state = st.door || null;
+  if(newestAt && dev && dev.last_seen && newestAt >= dev.last_seen) state = newest;
+  if(!state && newestAt) state = newest;
+  if(!state) return {state:null, since:0, label:""};
+
+  const sinceAt = state==="OPEN" ? (last.OPEN||0) : (last.CLOSE||0);
+  let label="";
+  if(sinceAt){
+    const mins=Math.round((Date.now()/1000-sinceAt)/60);
+    const ago = mins<1?"just now" : mins<60?`${mins} min` :
+                mins<2880?`${Math.round(mins/60)} h` : `${Math.round(mins/1440)} days`;
+    label = mins<1 ? `since ${fmtClock(sinceAt)}` : `since ${fmtClock(sinceAt)} \u00b7 ${ago}`;
+  }
+  return {state, since:sinceAt, label};
+}
+
 function renderDoors(devs){
   const host=$("doors");
   if(!devs.length){host.innerHTML="";return;}
@@ -711,9 +754,12 @@ function renderDoors(devs){
     // used to exist only on a serial console nobody can reach.
     if(st.rssi!==undefined){
       const present=st.present==="1";
+      const stand=doorStanding(d);
       rows+=`<div class="live">`
         +`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
-        +`<span class="pill ${st.door==="OPEN"?"in":""}">door ${esc(st.door||"?")}</span>`
+        +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
+        +(stand.label?` <span style="font-weight:400;opacity:.8">${esc(stand.label)}</span>`:"")
+        +`</span>`
         // A locked door will not open for the collar. That is the one state
         // worth shouting about, because from the outside it looks identical to
         // a door that is simply shut.
@@ -768,6 +814,13 @@ const SETTINGS=[
     {verb:"travel", lab:"Door travel time",
      sub:"ms. Drives the moving LED and the buzzer. 0 = announce nothing",
      f:[{c:"travel",min:0,max:120000,ph:"15000"}]},
+  ]},
+  {g:"Calling in", rows:[
+    {verb:"upload", lab:"How often the door reports",
+     sub:"ms quiet before uploading / minimum gap between uploads / heartbeat (0 = off). The middle one is the trade: lower means commands arrive sooner, at the cost of radio time the beacon scan would have had",
+     f:[{c:"upsettle",min:5000,max:300000,ph:"60000"},
+        {c:"upmin",min:60000,max:3600000,ph:"300000"},
+        {c:"upbeat",min:0,max:21600000,ph:"1800000"}]},
   ]},
   {g:"Relay", rows:[
     {verb:"pulse", lab:"Pulse length",
