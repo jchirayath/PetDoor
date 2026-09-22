@@ -588,10 +588,18 @@ Set `ALLOW_MANUAL_SERIAL_CONTROL` to `0` for an unattended deployment to drop
 
 | Pattern | Meaning |
 |---|---|
-| Solid | Beacon is present |
-| Off | Beacon is absent |
+| Solid | Door was last commanded **open** |
+| Near-solid, brief gap | Door is **moving** (for `DOOR_TRAVEL_MS` after an actuation) |
+| Brief blip every 2 s | Door was last commanded **closed** |
+| Double blip every 2 s | Closed **and locked** — the collar may not open it |
 | Slow blink (1 Hz) | No beacon configured, or never heard since boot |
+| 2 Hz flash | Beacon battery low |
 | Fast blink (5 Hz) | Radio is unhealthy — no advertisements from anything |
+| Off | Nothing commanded since boot |
+
+An optional buzzer says the same things audibly — it ticks while the door is
+moving and chimes when the travel time is up. See
+[docs/WIRING.md](docs/WIRING.md#the-annunciator).
 
 ---
 

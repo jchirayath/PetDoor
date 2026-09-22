@@ -65,7 +65,9 @@ char g_nonce[33] = {0};
 //
 // Filled by the control task, which owns the tracker and the door; the WiFi
 // task only sends the string it was handed.
-char g_statusLine[192] = {0};
+char g_statusLine[224] = {0};
+// Bigger than the status line because it carries every tunable at once.
+char g_configLine[320] = {0};
 
 // A pending discovery-table dump. A String rather than a fixed buffer because
 // it is several KB and exists only between a `scan` request and the next flush.
@@ -361,6 +363,9 @@ bool post(const String &body) {
   // A snapshot of what `s` shows on the console, so the door can be tuned by
   // someone who cannot reach it. Compact on purpose: this rides every upload.
   if (g_statusLine[0] != '\0') http.addHeader("X-PetDoor-Status", g_statusLine);
+  // The settings behind that snapshot, so the dashboard can show what each
+  // value currently IS rather than offering blank boxes.
+  if (g_configLine[0] != '\0') http.addHeader("X-PetDoor-Config", g_configLine);
 
   const String ts = String(static_cast<unsigned long>(time(nullptr)));
   http.addHeader("X-PetDoor-Timestamp", ts);
@@ -687,6 +692,11 @@ void setStatusLine(const char *text) {
   g_statusLine[sizeof(g_statusLine) - 1] = '\0';
 }
 
+void setConfigLine(const char *text) {
+  strncpy(g_configLine, text ? text : "", sizeof(g_configLine) - 1);
+  g_configLine[sizeof(g_configLine) - 1] = '\0';
+}
+
 bool imageConfirmed() {
 #if OTA_REQUIRE_CONFIRM
   return g_imageConfirmed;
@@ -730,6 +740,7 @@ void requestFlushNow() {
   Serial.println(F("[wifi] not compiled in (PETDOOR_ENABLE_WIFI is 0)"));
 }
 void setStatusLine(const char *) {}
+void setConfigLine(const char *) {}
 void queueScanUpload(const String &) {}
 bool imageConfirmed() { return true; }
 bool busy() { return false; }

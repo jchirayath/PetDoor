@@ -295,6 +295,13 @@ anything here.**
 | `PIN_RELAY_OPEN` | `16` | GPIO pulsed to open. Must differ from `PIN_RELAY_CLOSE`. |
 | `PIN_RELAY_CLOSE` | `17` | GPIO pulsed to close. |
 | `PIN_STATUS_LED` | `23` | Status LED, active high. |
+| `PIN_BUZZER` | `-1` | Optional annunciator. `-1` disables it. Ticks while the door is travelling, chimes when `DOOR_TRAVEL_MS` is up, buzzes once if a locked door refuses the collar. Runtime-settable and saved on the device, so an undocumented board's buzzer pin can be found by trying it. See [WIRING.md](WIRING.md#the-annunciator). |
+| `BUZZER_PASSIVE` | `0` | `0` = active buzzer (own oscillator, sounds on DC). `1` = passive transducer (needs a square wave). Guessing wrong is harmless; it just sounds wrong. |
+| `BUZZER_ACTIVE_LOW` | `0` | Set to `1` for a board that sounds its buzzer when the pin is pulled to GND. Symptom of getting it wrong: continuous screaming from boot that goes *quiet* during a chime. Active buzzers only. |
+| `PIN_SENSOR_OPEN` | `-1` | Limit switch closed when the door is fully OPEN. `-1` = not fitted, which is the default and makes the whole feature inert. Runtime-settable with `sensors <open> <closed>` and saved on the device, so switches can be added without a reflash. See [WIRING.md](WIRING.md#position-sensors). |
+| `PIN_SENSOR_CLOSED` | `-1` | Limit switch closed when the door is fully CLOSED. |
+| `SENSOR_ACTIVE_LOW` | `1` | `1` = switch shorts the pin to GND, pin idles high on an internal pull-up. Almost always what you want: a broken wire then reads as "not at that end" rather than a false arrival. `0` needs your own pull-down. |
+| `SENSOR_DEBOUNCE_MS` | `50` | A reed switch chatters as the magnet passes and a door settling bounces it. Without this the door announces three arrivals for one. |
 | `RELAY_ACTIVE_LOW` | `0` | `1` for the common blue relay boards, whose coil energises when the input is pulled to GND. `0` for active-high boards and MOSFET drivers. **Getting this wrong means the door runs backwards or runs constantly.** |
 | `RELAY_PULSE_MS` | `200` | Momentary pulse length — how long the relay stays closed. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. Raise it if the relay clicks but the door does not move, or if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
 | `RELAY_PULSE_COUNT` | `1` | Presses per actuation, 1–3. Raise to 2 only if the door's **own button** sometimes needs pressing twice. A blind retry: if the first press worked, the second may stop the door mid-travel. |
@@ -435,7 +442,7 @@ The event log is unaffected: it lives in NVS and never needed a network. That is
 | `CALIBRATE_INTERVAL_MS` | `500` | How often calibration mode prints a reading. |
 | `ALLOW_MANUAL_SERIAL_CONTROL` | `1` | Allow `o` / `x` to drive the relays directly. Invaluable while wiring. **Set to `0` for an unattended deployment** — these commands bypass the proximity logic, the lockout *and* the boot grace window. |
 | `MANUAL_HOLD_MS` | `300000` | How long a manual `o` keeps the door open before automatic control resumes. Suppresses automatic **closing** only — the beacon can always still open it. `0` restores the old single-pulse behaviour. Cleared by `x` or `O`. Never persisted: a reboot always returns to automatic. |
-| `DOOR_TRAVEL_MS` | `0` | How long your door takes to travel, measured with a stopwatch. `0` = not measured. The firmware never waits for it — it is used to check that `MIN_ACTUATION_INTERVAL_MS` is not shorter than the travel, which would let a reversing command land mid-travel and stop the door partway. See [WIRING.md](WIRING.md#measure-your-doors-travel-time). |
+| `DOOR_TRAVEL_MS` | `0` | How long your door takes to travel, measured with a stopwatch. `0` = not measured, and nothing is announced. The firmware never *waits* for it. It uses it for two things: checking that `MIN_ACTUATION_INTERVAL_MS` is not shorter than the travel (which would let a reversing command land mid-travel and stop the door partway), and announcing travel — the status LED goes near-solid and the buzzer ticks for this long after each actuation, then chimes. A **stopwatch, not a sensor**: it chimes at a door stuck halfway just as happily. Runtime-settable with `travel <ms>`. See [WIRING.md](WIRING.md#measure-your-doors-travel-time). |
 
 ---
 

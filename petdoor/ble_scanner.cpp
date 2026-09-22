@@ -651,6 +651,73 @@ bool loadStoredPulseTrain(uint8_t &count, uint32_t &gapMs) {
   return true;
 }
 
+// 0 is a meaningful travel time ("do not announce"), so it cannot double as
+// the nothing-stored sentinel. Stored as ms+1; 0 back from NVS means unset.
+bool loadStoredTravelMs(uint32_t &ms) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const uint32_t v = prefs.getUInt("travelMs", 0);
+  prefs.end();
+  if (v == 0) return false;
+  ms = v - 1;
+  return true;
+}
+
+void storeTravelMs(uint32_t ms) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUInt("travelMs", ms + 1);
+  prefs.end();
+}
+
+// -1 is a meaningful buzzer pin ("no buzzer"), so -2 is the unset sentinel.
+bool loadStoredChime(int &pin, bool &passive, bool &activeLow) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const int p = prefs.getInt("bzPin", -2);
+  const uint8_t flags = prefs.getUChar("bzFlags", 0);
+  prefs.end();
+  if (p == -2) return false;
+  pin = p;
+  passive = (flags & 0x01) != 0;
+  activeLow = (flags & 0x02) != 0;
+  return true;
+}
+
+void storeChime(int pin, bool passive, bool activeLow) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putInt("bzPin", pin);
+  prefs.putUChar("bzFlags", static_cast<uint8_t>((passive ? 0x01 : 0) |
+                                                 (activeLow ? 0x02 : 0)));
+  prefs.end();
+}
+
+// -1 is a meaningful pin ("that end has no switch"), so -2 is the unset
+// sentinel, as with the buzzer.
+bool loadStoredSensors(int &openPin, int &closedPin, bool &activeLow) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const int o = prefs.getInt("snOpen", -2);
+  const int c = prefs.getInt("snShut", -2);
+  const uint8_t flags = prefs.getUChar("snFlags", 1);
+  prefs.end();
+  if (o == -2 && c == -2) return false;
+  openPin = (o == -2) ? -1 : o;
+  closedPin = (c == -2) ? -1 : c;
+  activeLow = (flags & 0x01) != 0;
+  return true;
+}
+
+void storeSensors(int openPin, int closedPin, bool activeLow) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putInt("snOpen", openPin);
+  prefs.putInt("snShut", closedPin);
+  prefs.putUChar("snFlags", static_cast<uint8_t>(activeLow ? 0x01 : 0));
+  prefs.end();
+}
+
 void storePulseMs(uint32_t ms) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
@@ -675,6 +742,10 @@ void clearStoredTiming() {
   prefs.remove("pulseMs");
   prefs.remove("pulseN");
   prefs.remove("pulseGap");
+  prefs.remove("travelMs");
+  // NOT the buzzer pin. This is "forget my tuning"; the buzzer is wiring, and
+  // silencing a door because someone reverted a dwell time would be a surprise
+  // in the direction that costs you the feedback you were relying on.
   prefs.end();
 }
 

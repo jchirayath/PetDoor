@@ -8,13 +8,14 @@ What to buy, and why.
 
 | Part | Cost | Notes |
 |---|---|---|
-| ESP32 board with 2 relays on-board | $15–20 | **Simplest option.** Relays and ESP32 on one PCB, no inter-wiring, polarity already correct. Usually has no USB socket |
+| ESP32 board with 2 relays on-board | $15–20 | **Simplest option.** Relays and ESP32 on one PCB, no inter-wiring, polarity already correct. Usually has no USB socket. [Wiring diagram](WIRING.md#the-all-in-one-board-the-reference-build) |
 | *or* separate ESP32 + relay module | $8 + $6 | More flexible, more ways to get the ground and polarity wrong |
 | USB-to-TTL adapter (CP2102) | $8–10 | Needed for any board without a USB socket |
 | BLE beacon | $10–15 | Must advertise a **fixed** address. See below |
 | Door motor + controller | Whatever your coop door already uses. |
 | 5 V supply | Sized for the ESP32 *and* both relay coils. 1 A minimum. |
 | LED + 220 Ω–1 kΩ resistor | Optional; many dev boards have one you can reuse. |
+| Buzzer | ~$1 | Optional. Ticks while the door travels, chimes when it should have arrived — the difference between "nothing is happening" and "it is working, wait". Many ESP32-relay boards already have one; [WIRING.md](WIRING.md#the-annunciator) shows how to find out which pin. |
 | Weatherproof enclosure | Not optional in a coop. |
 
 **About $80 for a complete build** including a basic automatic door. The

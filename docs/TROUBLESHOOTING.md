@@ -213,6 +213,17 @@ Confirm with the bench test in
 The firmware is doing its job — you can hear the coil — and nothing happens
 downstream. Work through this in order; each step rules something out.
 
+> **First, make the door tell you what it thinks it is doing.** Measure the
+> travel time and set it (`w`, then `travel 15000`). The status LED then goes
+> near-solid for exactly that long after every actuation, and if you fit a
+> buzzer it ticks and then chimes — see
+> [WIRING.md](WIRING.md#the-annunciator). That does not fix anything, but it
+> separates *"the firmware never actuated"* from *"the firmware actuated and
+> the door did not move"*, which are the two halves of this page and are
+> otherwise indistinguishable from where you are standing.
+>
+> It cannot tell you the door **arrived** — that is a timer, not a sensor.
+
 **1. Does a manual short move the door?** With the relay module powered, bridge
 `COM` and `NO` on that channel with a wire or a screwdriver blade. If the door
 moves, the wiring from the relay to your controller is good and the controller

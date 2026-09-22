@@ -75,6 +75,8 @@ the folder name and `petdoor.ino` in sync or Arduino IDE stops recognising it.
 | `proximity.*` | dual-rate median + EWMA filters, hysteresis state machine |
 | `door.*` | relay pulses, interlock, lockout, boot grace |
 | `beacon.*` | iBeacon parsing, classification, distance estimate — pure functions |
+| `chime.*` | Optional buzzer: non-blocking patterns, pin/type discovery at runtime |
+| `position.*` | Optional limit switches: debounce, measured state. Never commands the motor |
 
 ## The bug this project exists to fix
 

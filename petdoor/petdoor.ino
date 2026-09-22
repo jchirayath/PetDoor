@@ -40,9 +40,11 @@
 #endif
 
 #include "ble_scanner.h"
+#include "chime.h"
 #include "config.h"
 #include "door.h"
 #include "eventlog.h"
+#include "position.h"
 #include "proximity.h"
 #include "wifi_logger.h"
 
@@ -50,6 +52,30 @@ namespace {
 
 ProximityTracker g_tracker;
 DoorController g_door;
+
+// How long the door is believed to take to travel, and whether it is believed
+// to be travelling right now. Open-loop: this is a stopwatch started by an
+// actuation, not a position sensor. See DOOR_TRAVEL_MS in config.h.
+uint32_t g_travelMs = DOOR_TRAVEL_MS;
+bool g_travelling = false;
+bool g_lockRefusedAnnounced = false;
+bool g_travelVerified = false;      // did a switch confirm the last travel?
+DoorState g_lastObserved = DOOR_UNKNOWN;
+bool g_sensorFaultAnnounced = false;
+
+// Is the door believed to be moving?
+//
+// OPEN LOOP. This is a stopwatch started by the last actuation, not a position
+// sensor: it reports "moving" for g_travelMs after a relay pulse whether or not
+// anything actually moved, and it will report "arrived" for a door jammed
+// halfway. It exists to turn fifteen seconds of silence into fifteen seconds of
+// visible and audible "yes, I heard you" — nothing more. A limit switch is the
+// only thing that could make this a measurement; see docs/SAFETY.md.
+bool doorTravelling(uint32_t nowMs) {
+  if (g_travelMs == 0 || !g_door.hasActuated()) return false;
+  return (nowMs - g_door.lastActuationMs()) < g_travelMs;
+}
+
 
 bool g_calibrate = false;
 uint32_t g_lastDiscoverDumpMs = 0;
@@ -227,21 +253,38 @@ void printBanner() {
     Serial.println(F("  !! repeat presses are sent blind — the door cannot tell whether"));
     Serial.println(F("  !! the first worked. If it did, the second may stop it mid-travel."));
   }
-#if DOOR_TRAVEL_MS > 0
-  Serial.printf("  door travel   : %lu ms (measured, configured)\r\n",
-                static_cast<unsigned long>(DOOR_TRAVEL_MS));
-  // Warned about at boot rather than static_assert'ed, because the lockout is
-  // runtime-adjustable and can be changed to a bad value long after compiling.
-  if (g_door.minIntervalMs() < DOOR_TRAVEL_MS) {
-    Serial.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
-                  static_cast<unsigned long>(g_door.minIntervalMs()),
-                  static_cast<unsigned long>(DOOR_TRAVEL_MS));
-    Serial.println(F("  !! A reversing command can land mid-travel; most controllers"));
-    Serial.println(F("  !! read that as STOP, leaving the door parked half open."));
-    Serial.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
+  if (g_travelMs > 0) {
+    Serial.printf("  door travel   : %lu ms (announced on the LED and buzzer)\r\n",
+                  static_cast<unsigned long>(g_travelMs));
+    // Warned about at boot rather than static_assert'ed, because both values
+    // are runtime-adjustable and can be changed long after compiling.
+    if (g_door.minIntervalMs() < g_travelMs) {
+      Serial.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
+                    static_cast<unsigned long>(g_door.minIntervalMs()),
+                    static_cast<unsigned long>(g_travelMs));
+      Serial.println(F("  !! A reversing command can land mid-travel; most controllers"));
+      Serial.println(F("  !! read that as STOP, leaving the door parked half open."));
+      Serial.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
+    }
   }
-#endif
   Serial.printf("  status LED    : GPIO %d\r\n", PIN_STATUS_LED);
+  if (Chime::enabled()) {
+    Serial.printf("  buzzer        : GPIO %d, %s, active %s\r\n", Chime::pin(),
+                  Chime::passive() ? "passive (tones)" : "active (fixed pitch)",
+                  Chime::activeLow() ? "LOW" : "HIGH");
+  } else {
+    Serial.println(F("  buzzer        : none ('w' then 'buzzer <pin>' to add one)"));
+  }
+  if (Position::enabled()) {
+    Serial.printf("  limit switches: open GPIO %d, closed GPIO %d, active %s\r\n",
+                  Position::openPin(), Position::closedPin(),
+                  Position::activeLow() ? "LOW" : "HIGH");
+    Serial.printf("  door is really: %s\r\n",
+                  DoorController::stateName(Position::state()));
+  } else {
+    Serial.println(F("  limit switches: none — the door is OPEN LOOP and only knows"));
+    Serial.println(F("                  what it commanded ('w' then 'sensors' to add)"));
+  }
   Serial.printf("  thresholds    : open at >= %d dBm, close at <= %d dBm (%s)\r\n",
                 g_tracker.enterDbm(), g_tracker.exitDbm(),
                 g_thresholdsStored ? "saved on device" : "compiled in");
@@ -305,9 +348,14 @@ void printHelp() {
   Serial.println(F("status LED:"));
   Serial.println(F("  solid        door last OPENED"));
   Serial.println(F("  brief blip   door last CLOSED"));
+  Serial.println(F("  near-solid   door MOVING (for the configured travel time)"));
   Serial.println(F("  1 Hz blink   no beacon configured / never heard"));
   Serial.println(F("  2 Hz flash   beacon battery LOW"));
   Serial.println(F("  5 Hz flutter radio unhealthy"));
+  Serial.println(F("buzzer (if fitted — 'w' to configure):"));
+  Serial.println(F("  tick .. tick door MOVING"));
+  Serial.println(F("  rising pair  travel time is up"));
+  Serial.println(F("  low buzz     refused: this door is LOCKED"));
 }
 
 void printStatus(uint32_t nowMs) {
@@ -380,6 +428,37 @@ void printStatus(uint32_t nowMs) {
                 g_tracker.maxGapMs() > SAMPLE_MAX_AGE_MS ? "  << EXCEEDS SAMPLE_MAX_AGE_MS" : "");
   Serial.printf("  relay pulse  : %lu ms\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
+  if (g_travelMs > 0) {
+    if (doorTravelling(nowMs)) {
+      Serial.printf("  door travel  : MOVING, %lu ms left of %lu (open loop — a timer)\r\n",
+                    static_cast<unsigned long>(g_travelMs -
+                                               (nowMs - g_door.lastActuationMs())),
+                    static_cast<unsigned long>(g_travelMs));
+    } else {
+      Serial.printf("  door travel  : %lu ms announced after each actuation\r\n",
+                    static_cast<unsigned long>(g_travelMs));
+    }
+  }
+  if (Position::enabled()) {
+    if (Position::fault()) {
+      Serial.println(F("  position     : !! FAULT — both limit switches made at once"));
+    } else {
+      Serial.printf("  position     : %s (measured)%s\r\n",
+                    DoorController::stateName(Position::state()),
+                    Position::state() == DOOR_UNKNOWN ? "  << between the two switches" : "");
+    }
+    Serial.printf("  switches     : open GPIO %d %s, closed GPIO %d %s\r\n",
+                  Position::openPin(), Position::openMade() ? "MADE" : "open",
+                  Position::closedPin(), Position::closedMade() ? "MADE" : "open");
+  } else {
+    Serial.println(F("  position     : not measured — no limit switches fitted"));
+  }
+  if (Chime::enabled()) {
+    Serial.printf("  buzzer       : GPIO %d, %s, active %s%s\r\n", Chime::pin(),
+                  Chime::passive() ? "passive" : "active",
+                  Chime::activeLow() ? "LOW" : "HIGH",
+                  Chime::playing() != CHIME_NONE ? "  << sounding now" : "");
+  }
   if (g_locked) {
     Serial.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
   }
@@ -666,6 +745,182 @@ bool parseBoundedMs(const char *text, uint32_t minMs, uint32_t maxMs, uint32_t &
   return true;
 }
 
+// A door that takes longer than two minutes to move is not a pet door, and an
+// absurd value here would leave the LED and buzzer announcing "moving" for the
+// rest of the afternoon. Persisted, so the ceiling has to hold across reboots.
+constexpr uint32_t kMaxTravelMs = 120000;
+
+// Both of these are shared by the console and the remote command channel, so
+// that `travel 15000` typed at the door and `travel 15000` queued on the server
+// take exactly the same path. Two parsers for one setting is how they drift.
+bool applyTravelMs(const char *arg, String &msg) {
+  uint32_t ms = 0;
+  if (!parseBoundedMs(arg, 0, kMaxTravelMs, ms)) {
+    msg = String("travel rejected: 0-") + kMaxTravelMs + " ms (0 = do not announce)";
+    return false;
+  }
+  g_travelMs = ms;
+  BleScanner::storeTravelMs(ms);
+  g_timingStored = true;
+  if (ms == 0) {
+    msg = F("travel 0: the door no longer announces that it is moving");
+    // Leaving the buzzer mid-pattern here would strand a tone on the pin.
+    g_travelling = false;
+    Chime::stop();
+    return true;
+  }
+  msg = String("travel ") + ms + " ms";
+  if (g_door.minIntervalMs() < ms) {
+    msg += "; WARNING min interval (";
+    msg += g_door.minIntervalMs();
+    msg += " ms) is shorter, so a reversal can land mid-travel";
+  }
+  return true;
+}
+
+// "off" | "<openPin> <closedPin> [low|high]". Either pin may be -1 for "that
+// end has no switch", which is how you fit one before the other.
+bool applySensorSpec(const char *args, String &msg) {
+  char buf[64];
+  strncpy(buf, args ? args : "", sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  char *save = nullptr;
+  char *tok = strtok_r(buf, " \t", &save);
+  if (tok == nullptr) {
+    msg = F("sensors needs: <open pin> <closed pin>, or 'off'");
+    return false;
+  }
+
+  int openPin = -1, closedPin = -1;
+  bool low = Position::activeLow();
+
+  if (strcmp(tok, "off") == 0 || strcmp(tok, "none") == 0) {
+    if (strtok_r(nullptr, " \t", &save) != nullptr) {
+      msg = F("'sensors off' takes nothing else");
+      return false;
+    }
+  } else {
+    auto pin = [](const char *t, int &out) {
+      char *end = nullptr;
+      errno = 0;
+      const long v = strtol(t, &end, 10);
+      if (end == t || *end != '\0' || errno == ERANGE || v < -1 || v > 48) return false;
+      out = static_cast<int>(v);
+      return true;
+    };
+    const char *second = strtok_r(nullptr, " \t", &save);
+    if (second == nullptr) {
+      msg = F("sensors needs BOTH pins: <open> <closed>. Use -1 for an end with no switch");
+      return false;
+    }
+    if (!pin(tok, openPin) || !pin(second, closedPin)) {
+      msg = F("sensors: give GPIO numbers, or -1 for an end with no switch");
+      return false;
+    }
+    for (char *t = strtok_r(nullptr, " \t", &save); t != nullptr;
+         t = strtok_r(nullptr, " \t", &save)) {
+      if (strcmp(t, "low") == 0)       low = true;
+      else if (strcmp(t, "high") == 0) low = false;
+      else {
+        msg = String("sensors: unknown option '") + t + "' (low|high)";
+        return false;
+      }
+    }
+    if (openPin >= 0 && openPin == closedPin) {
+      msg = F("sensors: the two switches cannot share one pin");
+      return false;
+    }
+  }
+
+  if (!Position::configure(openPin, closedPin, low)) {
+    const char *a = Position::pinProblem(openPin);
+    const char *b = Position::pinProblem(closedPin);
+    msg = String("sensors rejected: ") + (a ? a : (b ? b : "unusable pin"));
+    return false;
+  }
+  BleScanner::storeSensors(openPin, closedPin, low);
+
+  if (!Position::enabled()) {
+    msg = F("limit switches off — the door is open loop again");
+    return true;
+  }
+  msg = String("sensors: open GPIO ") + Position::openPin() +
+        ", closed GPIO " + Position::closedPin() +
+        ", active " + (low ? "LOW" : "HIGH");
+  return true;
+}
+
+// "off" | "<pin> [active|passive] [low|high]". Unspecified options keep their
+// current value, so `buzzer 27` then `buzzer 27 passive` is a legal way to
+// change your mind about one thing without restating the others.
+bool applyBuzzerSpec(const char *args, String &msg) {
+  char buf[64];
+  strncpy(buf, args ? args : "", sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  // strtok_r, not strtok: the remote dispatcher is itself mid-strtok when it
+  // calls this, and clobbering its state would eat the rest of the command.
+  char *save = nullptr;
+  char *tok = strtok_r(buf, " \t", &save);
+  if (tok == nullptr) {
+    msg = F("buzzer needs a GPIO number, or 'off'");
+    return false;
+  }
+
+  int pin = -1;
+  bool passive = Chime::passive();
+  bool low = Chime::activeLow();
+
+  if (strcmp(tok, "off") == 0 || strcmp(tok, "none") == 0) {
+    pin = -1;
+  } else {
+    char *end = nullptr;
+    errno = 0;
+    const long v = strtol(tok, &end, 10);
+    // Loose bound only — which numbers actually exist is the chip's business,
+    // and Chime::pinProblem() below answers that per target.
+    if (end == tok || *end != '\0' || errno == ERANGE || v < -1 || v > 48) {
+      msg = F("buzzer: give a GPIO number, or 'off'");
+      return false;
+    }
+    pin = static_cast<int>(v);
+  }
+
+  for (char *t = strtok_r(nullptr, " \t", &save); t != nullptr;
+       t = strtok_r(nullptr, " \t", &save)) {
+    if (strcmp(t, "passive") == 0)      passive = true;
+    else if (strcmp(t, "active") == 0)  passive = false;
+    else if (strcmp(t, "low") == 0)     low = true;
+    else if (strcmp(t, "high") == 0)    low = false;
+    else {
+      msg = String("buzzer: unknown option '") + t + "' (passive|active|low|high)";
+      return false;
+    }
+  }
+
+  if (!Chime::configure(pin, passive, low)) {
+    const char *why = Chime::pinProblem(pin);
+    msg = String("buzzer rejected: ") + (why ? why : "unusable pin");
+    return false;
+  }
+  BleScanner::storeChime(pin, passive, low);
+
+  if (pin < 0) {
+    msg = F("buzzer disabled");
+    return true;
+  }
+  msg = String("buzzer GPIO ") + pin + ", " + (passive ? "passive" : "active") +
+        ", active " + (low ? "LOW" : "HIGH");
+  const char *warn = Chime::pinProblem(pin);
+  if (warn != nullptr) {
+    msg += " (";
+    msg += warn;
+    msg += ")";
+  }
+  return true;
+}
+
 void printTimingMenu() {
   Serial.println();
   Serial.println(F("---- dwell / timing ----"));
@@ -684,6 +939,24 @@ void printTimingMenu() {
                   g_door.pulseCount(),
                   static_cast<unsigned long>(g_door.pulseGapMs()));
   }
+  Serial.printf("  door travel  : %5lu ms (0 = do not announce)\r\n",
+                static_cast<unsigned long>(g_travelMs));
+  if (Chime::enabled()) {
+    Serial.printf("  buzzer       : GPIO %d, %s, active %s\r\n", Chime::pin(),
+                  Chime::passive() ? "passive" : "active",
+                  Chime::activeLow() ? "LOW" : "HIGH");
+  } else {
+    Serial.println(F("  buzzer       : none"));
+  }
+  if (Position::enabled()) {
+    Serial.printf("  sensors      : open GPIO %d, closed GPIO %d, active %s — reads %s\r\n",
+                  Position::openPin(), Position::closedPin(),
+                  Position::activeLow() ? "LOW" : "HIGH",
+                  Position::fault() ? "FAULT: both made"
+                                    : DoorController::stateName(Position::state()));
+  } else {
+    Serial.println(F("  sensors      : none (open loop)"));
+  }
   Serial.printf("  source       : %s\r\n", g_timingStored ? "saved on device" : "compiled in");
   Serial.println();
   Serial.printf("  MEASURED worst gap between samples: %lu ms\r\n",
@@ -701,6 +974,18 @@ void printTimingMenu() {
   Serial.println(F("      if the first press DID take, the second may stop it mid-travel"));
   Serial.println(F("      raise this if the relay clicks but the door does not move:"));
   Serial.println(F("      many controllers debounce their button and ignore a short tap"));
+  Serial.println(F("    travel 15000     how long YOUR door takes to move, ms (0 = off)"));
+  Serial.println(F("      the LED goes near-solid and the buzzer ticks for this long"));
+  Serial.println(F("      after every actuation, then chimes. A STOPWATCH, not a sensor:"));
+  Serial.println(F("      it will chime cheerfully at a door stuck halfway"));
+  Serial.println(F("    buzzer 27        which GPIO the buzzer is on ('buzzer off' = none)"));
+  Serial.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
+  Serial.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
+  Serial.println(F("    beep             three beeps now — find the pin by trying it"));
+  Serial.println(F("    sensors 32 33    limit switch pins: <open> <closed> ('sensors off')"));
+  Serial.println(F("    sensors 32 33 low   same, for switches that pull the pin to GND"));
+  Serial.println(F("      the door stops guessing where it is. Without them it only"));
+  Serial.println(F("      knows what it COMMANDED, which is why the chime is a timer"));
   Serial.println(F("    clear            forget saved values"));
   Serial.println(F("    q                cancel"));
   Serial.println(F("  (live output is paused while this menu is open)"));
@@ -761,8 +1046,10 @@ void processTimingLine(char *line) {
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
     g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
+    g_travelMs = DOOR_TRAVEL_MS;
     g_timingStored = false;
     Serial.println(F("\r\n[dwell] reverted to the compiled-in defaults."));
+    Serial.println(F("[dwell] the buzzer pin is kept — that is wiring, not tuning."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -784,6 +1071,61 @@ void processTimingLine(char *line) {
     g_timingStored = true;
     Serial.printf("\r\n[dwell] interlock gap now %lu ms (saved on device).\r\n",
                   static_cast<unsigned long>(ms));
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strcmp(line, "beep") == 0) {
+    if (!Chime::enabled()) {
+      Serial.println(F("\r\n[dwell] no buzzer configured. 'buzzer <pin>' first."));
+      printTimingMenu();
+      return;
+    }
+    Chime::play(CHIME_TEST);
+    Serial.printf("\r\n[dwell] three beeps on GPIO %d. Silence means the wrong pin,\r\n",
+                  Chime::pin());
+    Serial.println(F("[dwell] or the wrong kind: try 'buzzer <pin> passive', then this again."));
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "travel", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
+    String msg;
+    if (!applyTravelMs(line[6] ? line + 7 : nullptr, msg)) {
+      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      printTimingMenu();
+      return;
+    }
+    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "sensors", 7) == 0 && (line[7] == ' ' || line[7] == '\0')) {
+    String msg;
+    if (!applySensorSpec(line[7] ? line + 8 : nullptr, msg)) {
+      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      printTimingMenu();
+      return;
+    }
+    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    if (Position::enabled()) {
+      Serial.printf("[dwell] reading right now: %s\r\n",
+                    DoorController::stateName(Position::state()));
+      Serial.println(F("[dwell] move the door by hand and press 's' to watch it change."));
+    }
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "buzzer", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
+    String msg;
+    if (!applyBuzzerSpec(line[6] ? line + 7 : nullptr, msg)) {
+      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      printTimingMenu();
+      return;
+    }
+    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    if (Chime::enabled()) {
+      Chime::play(CHIME_TEST);
+      Serial.println(F("[dwell] beeping now — if you hear nothing, it is the wrong pin."));
+    }
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1225,6 +1567,78 @@ bool beaconBatteryLow(uint32_t nowMs) {
 #endif
 }
 
+// Drives the annunciator from the travel stopwatch: the working pattern for as
+// long as the door is believed to be moving, the done chime on the edge where
+// that expires. Edge-triggered, so a silent buzzer costs one comparison a tick.
+// Read the limit switches, and let reality correct what the door believes.
+//
+// This never actuates. It only ever changes the controller's idea of where the
+// door is, which matters because "already in that state" is how an actuation
+// request decides to do nothing: a stale belief leaves the door refusing to
+// correct itself after a swallowed press or a shove by hand.
+void updatePosition(uint32_t nowMs) {
+  if (!Position::enabled()) return;
+  Position::tick(nowMs);
+
+  if (Position::fault()) {
+    if (!g_sensorFaultAnnounced) {
+      g_sensorFaultAnnounced = true;
+      Serial.println(F("[pos] !! BOTH limit switches are made at once."));
+      Serial.println(F("[pos] !! That cannot happen on a working door — suspect a"));
+      Serial.println(F("[pos] !! shorted wire, a stuck switch, or a stray magnet."));
+      Serial.println(F("[pos] !! Position is being ignored until it clears."));
+    }
+    return;
+  }
+  g_sensorFaultAnnounced = false;
+
+  const DoorState seen = Position::state();
+  if (seen != g_lastObserved) {
+    g_lastObserved = seen;
+    if (seen != DOOR_UNKNOWN) {
+      // Arriving at an end is what confirms a travel actually completed.
+      if (doorTravelling(nowMs)) g_travelVerified = true;
+      if (g_door.observePosition(seen)) {
+        Serial.printf("[pos] switch says %s — correcting what the door believed\r\n",
+                      DoorController::stateName(seen));
+      }
+    }
+  }
+}
+
+void updateChime(uint32_t nowMs) {
+  const bool moving = doorTravelling(nowMs);
+  if (moving != g_travelling) {
+    const bool wasMoving = g_travelling;
+    g_travelling = moving;
+    if (moving) {
+      g_travelVerified = false;   // a fresh travel has to earn its confirmation
+      Chime::play(CHIME_WORKING);
+    } else if (wasMoving && g_travelMs != 0) {
+      // With switches fitted, "arrived" is a measurement rather than a timer
+      // running out — and a travel that ends with neither switch made is a
+      // door that did NOT get there. Say so differently.
+      if (Position::enabled() && !g_travelVerified) {
+        Serial.println(F("[pos] !! travel time elapsed and NO limit switch was reached."));
+        Serial.println(F("[pos] !! The door did not complete its travel: a swallowed"));
+        Serial.println(F("[pos] !! button press, an obstruction, or a jam."));
+        EventLog::record(LOG_STALLED, static_cast<uint8_t>(g_door.state()),
+                         g_tracker.filteredRssi());
+        Chime::play(CHIME_REFUSED);
+        return;
+      }
+      // Only a stopwatch that actually ran out gets the done chime. Turning
+      // announcements off mid-travel (`travel 0`) also clears g_travelling,
+      // and announcing "arrived" because someone disabled announcements would
+      // be a lie in the one direction that matters.
+      Chime::play(CHIME_DONE);
+    } else {
+      Chime::stop();
+    }
+  }
+  Chime::tick(nowMs);
+}
+
 void updateLed(uint32_t nowMs, bool scanHealthy) {
   bool on;
   if (!scanHealthy) {
@@ -1233,6 +1647,12 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
     on = (nowMs / 250) % 2 == 0;  // 2 Hz: replace the beacon battery
   } else if (!BleScanner::isConfigured() || !BleScanner::targetEverSeen()) {
     on = (nowMs / 500) % 2 == 0;  // 1 Hz: nothing to track yet
+  } else if (doorTravelling(nowMs)) {
+    // Lit, with a heartbeat gap: the door is moving. Deliberately NOT another
+    // even blink — 5 Hz, 2 Hz and 1 Hz are already spoken for by the three
+    // faults above, and a fourth would be unreadable. "Nearly solid" is
+    // recognisable across a yard and cannot be mistaken for a fault.
+    on = (nowMs % 600) > 120;
   } else {
     switch (g_door.state()) {
       case DOOR_OPEN:
@@ -1270,7 +1690,19 @@ void driveDoor(uint32_t nowMs) {
   // because it is the strongest statement about what this door is allowed to
   // do — but note it gates only the OPEN path below. A locked door that is
   // open still closes normally when the beacon goes away.
-  if (g_locked && g_tracker.isPresent()) return;
+  if (g_locked && g_tracker.isPresent()) {
+    // Say so, once per arrival. Someone standing at a locked door with the
+    // collar in their hand cannot tell "locked" from "broken", and that is
+    // exactly the moment they start taking the thing apart. Edge-triggered:
+    // this condition holds for as long as the animal is there, and a buzzer
+    // that repeated it would be an alarm.
+    if (!g_lockRefusedAnnounced) {
+      g_lockRefusedAnnounced = true;
+      Chime::play(CHIME_REFUSED);
+    }
+    return;
+  }
+  g_lockRefusedAnnounced = false;
 
   // A manual hold suppresses automatic CLOSING only. Opening is never blocked:
   // if the beacon turns up mid-hold the door is already open, and a manual `x`
@@ -1421,6 +1853,27 @@ bool applyRemoteCommand(const char *line, String &result) {
              g_door.pulseGapMs() + " ms apart";
     return true;
   }
+  if (strcmp(verb, "travel") == 0) {
+    return applyTravelMs(arg(), result);
+  }
+  if (strcmp(verb, "sensors") == 0) {
+    return applySensorSpec(strtok(nullptr, ""), result);
+  }
+  if (strcmp(verb, "buzzer") == 0) {
+    // Rest of the line: "27", "27 passive low", "off".
+    return applyBuzzerSpec(strtok(nullptr, ""), result);
+  }
+  if (strcmp(verb, "beep") == 0) {
+    // Remote, because "is the buzzer on the right pin" is exactly the question
+    // you want to answer from indoors, with the door still fifty yards away.
+    if (!Chime::enabled()) {
+      result = "no buzzer configured; queue `buzzer <pin>` first";
+      return false;
+    }
+    Chime::play(CHIME_TEST);
+    result = String("beeping on GPIO ") + Chime::pin();
+    return true;
+  }
   if (strcmp(verb, "pulse") == 0) {
     const char *a = arg();
     if (!a || !g_door.setPulseMs(strtoul(a, nullptr, 10))) {
@@ -1563,8 +2016,9 @@ bool applyRemoteCommand(const char *line, String &result) {
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
     g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
+    g_travelMs = DOOR_TRAVEL_MS;
     g_thresholdsStored = g_timingStored = g_filterStored = g_fastFilterStored = false;
-    // The lock is deliberately NOT cleared here. `defaults` is for undoing a
+    // Neither the lock nor the buzzer pin is cleared here. `defaults` is for undoing a
     // bad tuning change; silently unlocking a door as a side effect of that
     // would be a surprise in the one direction that matters.
     result = "reverted to compiled-in defaults (beacon MACs and lock kept)";
@@ -1646,8 +2100,10 @@ void controlTask(void *) {
 
     // 4. Act, then report. Reporting last means a state change is announced on
     //    the same tick it happens rather than one tick later.
+    updatePosition(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
+    updateChime(now);
     if (g_entry == ENTRY_NONE) reportTransitions(now, scanHealthy);
 
     // 4b. Offer the uploader a window. "Idle" means the animal is not around
@@ -1662,10 +2118,10 @@ void controlTask(void *) {
     static uint32_t lastStatusMs = 0;
     if (now - lastStatusMs >= 5000) {
       lastStatusMs = now;
-      char line[192];
+      char line[224];
       snprintf(line, sizeof(line),
                "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
-               "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu",
+               "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu real=%s",
                g_tracker.filteredRssi(), g_tracker.rawRssi(),
                fmt1(g_tracker.distanceM()).c_str(),
                g_tracker.isPresent() ? 1 : 0,
@@ -1676,8 +2132,40 @@ void controlTask(void *) {
                static_cast<unsigned long>(BleScanner::advCount()),
                static_cast<unsigned long>(g_tracker.weakSamples()),
                static_cast<unsigned long>(ESP.getFreeHeap()),
-               static_cast<unsigned long>(millis() / 1000));
+               static_cast<unsigned long>(millis() / 1000),
+               // What the switches SAY, as opposed to what we commanded. "none"
+               // when no switches are fitted; "?" is the normal mid-travel
+               // reading with them.
+               !Position::enabled() ? "none"
+                   : Position::fault() ? "FAULT"
+                   : Position::state() == DOOR_OPEN ? "OPEN"
+                   : Position::state() == DOOR_CLOSED ? "CLOSED" : "?");
       WifiLogger::setStatusLine(line);
+
+      // Every tunable the remote channel can change, so the dashboard's
+      // settings form can show what each one IS rather than a blank box. Built
+      // here for the same reason the status line is: this task owns all of it.
+      char cfg[320];
+      snprintf(cfg, sizeof(cfg),
+               "enter=%d exit=%d dopen=%lu dclose=%lu dmin=%lu pulse=%lu "
+               "pcount=%u pgap=%lu igap=%lu travel=%lu fwin=%u falpha=%s "
+               "owin=%u oalpha=%s bpin=%d bpassive=%d blow=%d "
+               "sopen=%d sshut=%d slow=%d",
+               g_tracker.enterDbm(), g_tracker.exitDbm(),
+               static_cast<unsigned long>(g_tracker.enterConfirmMs()),
+               static_cast<unsigned long>(g_tracker.exitConfirmMs()),
+               static_cast<unsigned long>(g_door.minIntervalMs()),
+               static_cast<unsigned long>(g_door.pulseMs()),
+               g_door.pulseCount(),
+               static_cast<unsigned long>(g_door.pulseGapMs()),
+               static_cast<unsigned long>(g_door.directionGapMs()),
+               static_cast<unsigned long>(g_travelMs),
+               g_tracker.windowSize(), String(g_tracker.alpha(), 2).c_str(),
+               g_tracker.fastWindowSize(), String(g_tracker.fastAlpha(), 2).c_str(),
+               Chime::pin(), Chime::passive() ? 1 : 0, Chime::activeLow() ? 1 : 0,
+               Position::openPin(), Position::closedPin(),
+               Position::activeLow() ? 1 : 0);
+      WifiLogger::setConfigLine(cfg);
     }
 #endif
     WifiLogger::tick(now, idle);
@@ -1764,6 +2252,42 @@ void setup() {
     }
     const uint32_t gap = BleScanner::loadStoredDirectionGap();
     if (gap) g_door.setDirectionGapMs(gap);   // floor enforced inside
+
+    uint32_t travel = DOOR_TRAVEL_MS;
+    if (BleScanner::loadStoredTravelMs(travel)) {
+      g_travelMs = travel;
+      g_timingStored = true;
+    }
+  }
+
+  {
+    // The annunciator, after the relays so that a saved pin colliding with one
+    // of them can be rejected against the pins the door has already claimed.
+    int bp = PIN_BUZZER;
+    bool bpassive = BUZZER_PASSIVE != 0;
+    bool blow = BUZZER_ACTIVE_LOW != 0;
+    const bool stored = BleScanner::loadStoredChime(bp, bpassive, blow);
+    if (!Chime::configure(bp, bpassive, blow)) {
+      Serial.printf("[chime] refusing GPIO %d: %s\r\n", bp,
+                    Chime::pinProblem(bp) ? Chime::pinProblem(bp) : "invalid");
+      Serial.println(F("[chime] annunciator disabled; 'w' then 'buzzer <pin>' to fix"));
+      Chime::configure(-1, false, false);
+    } else if (stored && Chime::enabled()) {
+      const char *warn = Chime::pinProblem(Chime::pin());
+      if (warn) Serial.printf("[chime] GPIO %d: %s\r\n", Chime::pin(), warn);
+    }
+  }
+
+  {
+    // The limit switches, after the buzzer so a saved pin that collides with
+    // it is refused rather than silently fighting over the GPIO.
+    int so = PIN_SENSOR_OPEN, sc = PIN_SENSOR_CLOSED;
+    bool sl = SENSOR_ACTIVE_LOW != 0;
+    BleScanner::loadStoredSensors(so, sc, sl);
+    if (!Position::configure(so, sc, sl)) {
+      Serial.printf("[pos] refusing GPIO %d/%d — check 'w' then 'sensors'\r\n", so, sc);
+      Position::configure(-1, -1, true);
+    }
   }
 
   // Said loudly because it survives a reboot by design, and a door that will

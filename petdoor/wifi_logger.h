@@ -95,6 +95,17 @@ void setAck(const char *text);
 // control task, which owns everything it describes.
 void setStatusLine(const char *text);
 
+// The door's current SETTINGS, as the same key=value text. Sent alongside the
+// status line but kept separate from it, because the two change on completely
+// different timescales: the status is live and churns every few seconds, the
+// settings change when somebody changes them. Splitting them keeps either from
+// crowding the other out of a fixed buffer, and lets the server store the last
+// known configuration rather than re-deriving it from whatever was queued.
+//
+// This is what makes a settings form on the dashboard possible at all: without
+// it the page can offer fields but cannot show what any of them are set to.
+void setConfigLine(const char *text);
+
 // Hand over a discovery-table dump to be uploaded with the next flush, as a
 // separate POST marked X-PetDoor-Kind: scan. Built by the control task, which
 // owns the scanner; the WiFi task only sends the bytes.
