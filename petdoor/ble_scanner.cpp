@@ -718,6 +718,31 @@ void storeSensors(int openPin, int closedPin, bool activeLow) {
   prefs.end();
 }
 
+// settle is never legitimately 0, so it doubles as the nothing-stored sentinel.
+bool loadStoredUpload(uint32_t &settleMs, uint32_t &minIntervalMs, uint32_t &heartbeatMs) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const uint32_t st = prefs.getUInt("upSettle", 0);
+  const uint32_t mi = prefs.getUInt("upMin", 0);
+  const uint32_t hb = prefs.getUInt("upBeat", 0xFFFFFFFF);
+  prefs.end();
+  if (st == 0) return false;
+  settleMs = st;
+  minIntervalMs = mi;
+  // 0 is a legal heartbeat ("off"), so its unset marker is all-ones.
+  heartbeatMs = (hb == 0xFFFFFFFF) ? heartbeatMs : hb;
+  return true;
+}
+
+void storeUpload(uint32_t settleMs, uint32_t minIntervalMs, uint32_t heartbeatMs) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUInt("upSettle", settleMs);
+  prefs.putUInt("upMin", minIntervalMs);
+  prefs.putUInt("upBeat", heartbeatMs);
+  prefs.end();
+}
+
 void storePulseMs(uint32_t ms) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;

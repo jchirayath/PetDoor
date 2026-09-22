@@ -28,6 +28,19 @@ const Step kRefused[] = {{440, 500}};
 // buzzer is responding to you and not to the door.
 const Step kTest[] = {{2000, 150}, {0, 150}, {2000, 150}, {0, 150}, {2000, 150}};
 
+// The acknowledgements. Open and close are each other's mirror, and so are
+// lock and unlock, which is what makes them learnable: one pair differs by
+// DIRECTION, the other by REGISTER.
+// Every step is >= 120 ms because the control task ticks at 100 ms and that is
+// the floor on how precisely a pattern can be timed. Shorter steps would be
+// stretched to a tick and the short-vs-long contrast — the part that survives
+// on an active buzzer — would blur into "two beeps" for all of them.
+const Step kAckOpen[]   = {{1200, 150}, {0, 120}, {1800, 400}};
+const Step kAckClose[]  = {{1800, 400}, {0, 120}, {1200, 150}};
+const Step kAckLock[]   = {{700,  150}, {0, 130}, {700,  150}, {0, 130}, {700, 150}};
+const Step kAckUnlock[] = {{2200, 500}};
+const Step kAckSet[]    = {{2000, 150}};
+
 struct Pattern {
   const Step *steps;
   uint8_t len;
@@ -40,6 +53,11 @@ Pattern patternFor(ChimeTune t) {
     case CHIME_DONE:    return {kDone,    sizeof(kDone)    / sizeof(kDone[0]),    false};
     case CHIME_REFUSED: return {kRefused, sizeof(kRefused) / sizeof(kRefused[0]), false};
     case CHIME_TEST:    return {kTest,    sizeof(kTest)    / sizeof(kTest[0]),    false};
+    case CHIME_ACK_OPEN:   return {kAckOpen,   sizeof(kAckOpen)  /sizeof(Step), false};
+    case CHIME_ACK_CLOSE:  return {kAckClose,  sizeof(kAckClose) /sizeof(Step), false};
+    case CHIME_ACK_LOCK:   return {kAckLock,   sizeof(kAckLock)  /sizeof(Step), false};
+    case CHIME_ACK_UNLOCK: return {kAckUnlock, sizeof(kAckUnlock)/sizeof(Step), false};
+    case CHIME_ACK_SET:    return {kAckSet,    sizeof(kAckSet)   /sizeof(Step), false};
     default:            return {nullptr, 0, false};
   }
 }
@@ -172,6 +190,11 @@ const char *tuneName(ChimeTune t) {
     case CHIME_DONE:    return "done";
     case CHIME_REFUSED: return "refused";
     case CHIME_TEST:    return "test";
+    case CHIME_ACK_OPEN:   return "ack-open";
+    case CHIME_ACK_CLOSE:  return "ack-close";
+    case CHIME_ACK_LOCK:   return "ack-lock";
+    case CHIME_ACK_UNLOCK: return "ack-unlock";
+    case CHIME_ACK_SET:    return "ack-set";
     default:            return "silent";
   }
 }

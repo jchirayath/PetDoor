@@ -37,6 +37,27 @@ enum ChimeTune : uint8_t {
   CHIME_DONE,     // once, rising: the travel time has elapsed
   CHIME_REFUSED,  // once, low: the door declined to move
   CHIME_TEST,     // once: prove the wiring, from the console or the server
+
+  // Acknowledgements — "the door heard you", played the moment a remote
+  // command is applied. Valuable precisely because the channel is slow: a
+  // command sits for up to five minutes, so the beep is how you learn it
+  // landed without walking to a screen.
+  //
+  // Each differs in RHYTHM as well as pitch. An active buzzer has one pitch it
+  // chose at the factory, so a set of tunes distinguished only by pitch would
+  // collapse into one sound on half the hardware this supports. Rhythm
+  // survives that; pitch then makes them nicer on a passive one.
+  //
+  //   open    short-long, rising     .-
+  //   close   long-short, falling    -.
+  //   lock    three short, low       ...
+  //   unlock  one long, high         -
+  //   set     one short              .
+  CHIME_ACK_OPEN,
+  CHIME_ACK_CLOSE,
+  CHIME_ACK_LOCK,
+  CHIME_ACK_UNLOCK,
+  CHIME_ACK_SET,
 };
 
 namespace Chime {
@@ -87,8 +108,8 @@ void stop();
 
 // Advances the pattern. Safe to call at any rate; nothing happens until the
 // current step's time is up. The control task's 100 ms tick is the floor on
-// how precise a pattern can be, which is why no step below is shorter than
-// 120 ms.
+// how precise a pattern can be, which is why no step in chime.cpp is shorter
+// than 120 ms — below that the timing blurs and short-vs-long stops reading.
 void tick(uint32_t nowMs);
 
 ChimeTune playing();

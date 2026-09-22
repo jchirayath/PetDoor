@@ -106,6 +106,11 @@ void storeChime(int pin, bool passive, bool activeLow);
 bool loadStoredSensors(int &openPin, int &closedPin, bool &activeLow);
 void storeSensors(int openPin, int closedPin, bool activeLow);
 
+// How often the door calls in: settle, minimum interval, heartbeat. All three
+// in one record because they only make sense together.
+bool loadStoredUpload(uint32_t &settleMs, uint32_t &minIntervalMs, uint32_t &heartbeatMs);
+void storeUpload(uint32_t settleMs, uint32_t minIntervalMs, uint32_t heartbeatMs);
+
 // "Bluedroid" or "NimBLE" — which host stack this build is using. Reported in
 // the boot banner and in `s`, because it changes the RF code path and is the
 // first thing to state in a bug report.

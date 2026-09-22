@@ -48,6 +48,36 @@ void tick(uint32_t nowMs, bool idle);
 // Force an upload now, regardless of idle state. Console `u`.
 void requestFlushNow();
 
+// How often the door calls in. Three numbers that interact, not one interval:
+//
+//   settleMs     everything must have been quiet this long before an upload is
+//                ALLOWED. Stops a burst landing in the middle of an arrival.
+//   minIntervalMs never upload more often than this, however many events queue.
+//                 This is the one that protects the BLE scan: the radio is
+//                 shared, so every upload is time stolen from listening for the
+//                 collar. A few seconds here would keep WiFi up continuously
+//                 and starve the job the door exists to do.
+//   heartbeatMs   call in at least this often EVEN IF the door never goes idle
+//                 — an animal that stays in all evening would otherwise keep
+//                 the door silent, and a silent door collects no commands.
+//                 0 disables it.
+//
+// Runtime-settable because the right trade between "commands arrive quickly"
+// and "the radio is left alone" depends on the household, not on this firmware.
+void setUploadTiming(uint32_t settleMs, uint32_t minIntervalMs, uint32_t heartbeatMs);
+uint32_t settleMs();
+uint32_t minIntervalMs();
+uint32_t heartbeatMs();
+
+// Bounds, enforced here so the console, the remote channel and the dashboard
+// cannot disagree about them.
+static constexpr uint32_t kMinSettleMs = 5000;
+static constexpr uint32_t kMaxSettleMs = 300000;
+static constexpr uint32_t kMinUploadIntervalMs = 60000;      // protects the scan
+static constexpr uint32_t kMaxUploadIntervalMs = 3600000;
+static constexpr uint32_t kMinHeartbeatMs = 300000;          // or 0 for off
+static constexpr uint32_t kMaxHeartbeatMs = 21600000;
+
 // True while the radio is up — BLE sampling is degraded during this.
 bool busy();
 
