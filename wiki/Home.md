@@ -1,7 +1,7 @@
 # PetDoor
 
 **Opens a pet door when your animal walks up to it, and closes it again once
-they have gone.** No cloud, no app, no subscription — an ESP32 and a Bluetooth
+they have gone.** No subscription, no vendor account — an ESP32 and a Bluetooth
 beacon on the collar are the whole system.
 
 Open source, MIT licensed, and about **$80 all in**.
@@ -27,7 +27,7 @@ fit to a door you already own.
 |---|---|
 | **~$80** | all in — door, board, beacon and cable |
 | **MIT** | open source, build it yourself |
-| **0** | cloud services required |
+| **0** | vendor accounts — any server is your own |
 | **~1 m** | typical open range, fully tunable |
 
 ---
