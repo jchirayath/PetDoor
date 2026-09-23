@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PetDoor</title>
-<meta name="description" content="Open a pet door when your animal walks up to it, and close it again once they have gone. Open source, ESP32, no cloud.">
+<meta name="description" content="Open a pet door when your animal walks up to it, and close it again once they have gone. Open source, ESP32, no subscription. Optional self-hosted control from anywhere.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -40,7 +40,37 @@
   .wrap{max-width:1020px; margin:0 auto; padding-inline:20px; padding-block:0}
   a{color:var(--in)}
 
-  header{padding-block:56px 40px; border-bottom:1px solid var(--line)}
+  /* A soft wash behind the masthead so the page opens on something rather than
+     starting flat. Teal for the door, amber for the radio — the same two
+     colours the rest of the page uses to mean those things, so the gradient is
+     the palette rather than decoration borrowed from elsewhere. */
+  header{position:relative; padding-block:64px 44px; border-bottom:1px solid var(--line)}
+  header::before{
+    content:""; position:absolute; inset:-120px -40% auto -40%; height:460px; z-index:-1;
+    background:
+      radial-gradient(52% 58% at 22% 32%, var(--in-soft), transparent 68%),
+      radial-gradient(44% 52% at 74% 16%, #E9A23B1F, transparent 66%);
+    pointer-events:none;
+  }
+  body{position:relative}
+
+  /* The logo earns a plinth: it is the only mark this project has. */
+  .brand{align-items:center}
+  .brand svg{
+    padding:9px; border-radius:15px; background:var(--panel);
+    border:1px solid var(--line); box-shadow:var(--shadow);
+  }
+  .brand h1{background:linear-gradient(180deg,var(--ink),color-mix(in srgb,var(--ink) 74%,var(--in)));
+    -webkit-background-clip:text; background-clip:text; color:transparent}
+  @supports not (color:color-mix(in srgb,red,blue)){ .brand h1{color:var(--ink)} }
+
+  .btn{transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease}
+  .btn:hover{transform:translateY(-1px); box-shadow:0 2px 4px #17212B14, 0 12px 28px -14px #17212B33}
+  .btn.quiet:hover{transform:none; box-shadow:none}
+  @media (prefers-reduced-motion:reduce){ .btn{transition:none} .btn:hover{transform:none} }
+
+  figure img{transition:box-shadow .16s ease}
+  figure a:hover img{box-shadow:0 4px 10px #17212B1A, 0 18px 44px -20px #17212B45}
   .brand{display:flex; align-items:center; gap:16px; margin-bottom:26px}
   .brand svg{flex:0 0 auto}
   .brand h1{margin:0; font-size:clamp(30px,6vw,44px); letter-spacing:-.02em; font-weight:700}
@@ -69,6 +99,9 @@
   .fact .l{color:var(--muted); font-size:14px; margin-top:3px}
 
   .shots{display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:16px}
+  /* Screenshots need room to be legible; two up on a desktop, stacked on a
+     phone, rather than the three-up the build photographs use. */
+  .shots.wide{grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:20px}
   figure{margin:0; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
   figure img{display:block; width:100%; height:auto}
   figcaption{padding:11px 14px; font-size:13.5px; color:var(--muted); border-top:1px solid var(--line)}
@@ -122,13 +155,30 @@
 
     <p class="tag">
       Opens a pet door when your animal walks up to it, and closes it again once
-      they have gone. <b>No cloud, no app, no subscription</b> — an ESP32 and a
-      Bluetooth beacon on the collar are the whole system.
+      they have gone. <b>No subscription and no vendor account</b> — an ESP32 and
+      a Bluetooth beacon on the collar are the whole system.
+    </p>
+    <p class="tag" style="font-size:clamp(15px,2vw,17px); margin-bottom:30px">
+      Want to open it from your phone? Add <b>your own</b> server. That part is
+      optional, it runs on a Pi in a cupboard or a VM you rent, and the door
+      never listens on the network — it calls out, and the reply to its own
+      upload is the only way anything reaches it.
     </p>
 
     <div class="cta">
       <a class="btn primary" href="/demo">See the dashboard &rarr;</a>
-      <a class="btn" href="https://github.com/jchirayath/PetDoor">Build it yourself</a>
+      <a class="btn" href="https://github.com/jchirayath/PetDoor">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
+            0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01
+            1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95
+            0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0
+            1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0
+            3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01
+            8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
+        </svg>
+        Build it yourself
+      </a>
       <a class="btn quiet" href="/dashboard">Sign in</a>
     </div>
   </header>
@@ -144,7 +194,7 @@
     <div class="facts">
       <div class="fact"><div class="n">~$80</div><div class="l">all in — door, board and cable</div></div>
       <div class="fact"><div class="n">MIT</div><div class="l">open source, build it yourself</div></div>
-      <div class="fact"><div class="n">0</div><div class="l">cloud services required</div></div>
+      <div class="fact"><div class="n">0</div><div class="l">vendor accounts — any server is your own</div></div>
       <div class="fact"><div class="n">~1&nbsp;m</div><div class="l">typical open range, tunable</div></div>
     </div>
   </section>
@@ -253,12 +303,40 @@
     </p>
     <p class="lede">
       What it adds: trip durations, daily rhythm, trips per day, and a beacon
-      battery trend that warns you weeks before the cell dies.
+      battery trend that warns you weeks before the cell dies — and, if you turn
+      it on, the ability to <b>drive the door from a browser</b>.
     </p>
-    <figure style="margin-bottom:22px">
-      <a href="/demo"><img src="/images/dashboard-sample.png" alt="The PetDoor dashboard: trips a day, typical trip, longest trip, time outside, and a daily rhythm strip"></a>
-      <figcaption><b>Sample dashboard</b> — synthetic data. <a href="/demo">Open the live sample &rarr;</a></figcaption>
+
+    <figure style="margin-bottom:26px">
+      <a href="/demo"><img src="/images/screenshot-activity.png" alt="The Activity tab: firmware, event count and last check-in across the top, then trips a day, typical trip, longest trip, and a two-week daily rhythm strip"></a>
+      <figcaption><b>Activity</b> — months of comings and goings, and what the door can see right now.
+        <a href="/demo">Open the live sample &rarr;</a></figcaption>
     </figure>
+
+    <div class="shots wide">
+      <figure>
+        <img src="/images/screenshot-controls.png" alt="The Controls tab: open, close, auto, lock, unlock and beep buttons, with a log of what was asked of the door and what it did" loading="lazy">
+        <figcaption><b>Controls</b> — open, close, lock and unlock, with the door's
+          own verdict on each. Nothing is instant: the door collects commands when
+          it next calls in, and until then you can cancel.</figcaption>
+      </figure>
+      <figure>
+        <img src="/images/screenshot-settings.png" alt="The Settings tab: typed fields for signal thresholds, filters, dwell times, relay pulse, and how often the door reports" loading="lazy">
+        <figcaption><b>Settings</b> — every tunable the door will accept, filled in
+          with what it is set to now. Ranges are checked here and again on the
+          door, so a bad value is refused in a second rather than in five minutes.</figcaption>
+      </figure>
+    </div>
+    <div class="note" style="border-left-color:var(--out)">
+      <b>Coming soon: camera footage.</b> Each event already carries a precise
+      timestamp, which is the hard half — the dashboard has the frames laid out
+      for an outside and an inside view, waiting to be pointed at clips. What is
+      missing is a source: Blink and Wyze both keep footage in their own clouds
+      with no public API, so the honest answer is an RTSP bridge or any NVR that
+      records to files, and then the door's own log tells you exactly which
+      second to scrub to.
+    </div>
+
     <div class="note">
       <b>The real analytics are private.</b> This page and the sample are public;
       the actual door log sits behind sign-in, because when a door opens and

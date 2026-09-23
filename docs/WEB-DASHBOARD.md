@@ -5,7 +5,10 @@ any of this exists. This page is for when you want a web page you can open from
 the sofa instead of plugging in a serial cable.
 
 Everything here runs equally well on a Raspberry Pi on your desk or a VM on the
-internet. Nothing is tied to a hosting provider, and there is no cloud account.
+internet. Nothing is tied to a hosting provider and there is no vendor account —
+this **is** the cloud app, and it is yours. In a cupboard it never leaves the
+house; on a VM you can open the door from anywhere. Same software; the choice is
+yours rather than a vendor's.
 
 ---
 

@@ -20,7 +20,13 @@ door, board and cable.
 An ESP32 listens continuously for a Bluetooth beacon on your pet's collar. When
 the beacon has been convincingly close for a moment it pulses an OPEN relay;
 when it has been convincingly gone for a while it pulses a CLOSE relay. No
-cloud, no app, no subscription — the ESP32 and the beacon are the whole system.
+subscription and no vendor account — the ESP32 and the beacon are the whole
+system, and nothing it depends on can be switched off by somebody else.
+
+Want to reach it from a phone? Add **your own** server. That part is optional,
+it is yours, and the door never listens on the network: it calls out, and the
+reply to its own upload is the only way anything reaches it. See
+[Once it is on a wall](#once-it-is-on-a-wall).
 
 **WiFi, the log server and the portal are all optional and all off by default.**
 Out of the box the door keeps its last 128 events in its own memory, rolling the
@@ -672,6 +678,7 @@ See [docs/CONFIGURATION.md](docs/CONFIGURATION.md) for all of them.
 - [Portal](docs/PORTAL.md) — *optional* — the same charts, hosted, with nothing to run
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — when it does not work
 - [Safety](docs/SAFETY.md) — read before connecting a motor
+- [Roadmap](docs/ROADMAP.md) — what is next, why it is next, and what has been ruled out
 
 ## Contributing
 

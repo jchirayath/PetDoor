@@ -1,7 +1,10 @@
 # Diagnostics
 
-The serial console is the only interface this firmware has. There is no WiFi,
-no app, no cloud — so everything you need to know, you get here.
+The serial console is the door's own interface, and the only one guaranteed to
+be there: WiFi, the log server and remote management are all optional and all
+off by default. On a door with none of them, everything you need to know, you
+get here. On a door that has them, this is still where you go when the network
+is the thing that is broken.
 
 Every example on this page is **real output captured from a running board**,
 not an illustration.

@@ -347,18 +347,110 @@ convenience and plays no part in matching.
 
 ---
 
-## Why no WiFi
+## Position sensors, and why they do not close the loop
 
-There is none, deliberately. No cloud, no MQTT, no app, no OTA. The ESP32 and
-the beacon are the whole system.
+Everything above is **open loop**. The pipeline decides, the relay pulses, and
+the firmware records what it *commanded*. Nothing tells it what the door did.
+Most of this project's honest caveats trace back to that one fact:
 
-A coop door needs to work when the internet is down, when the router is
-rebooting, and in five years when whatever service it depended on has been
-switched off. It also removes a large attack surface from a device whose job is
-deciding when your animals are locked in for the night.
+- a door that jammed halfway still reports as open;
+- the "arrived" chime is a timer expiring, not an arrival;
+- a button press the controller swallowed is indistinguishable from one it
+  obeyed, which is why `RELAY_PULSE_COUNT` is a *blind* retry.
 
-The cost is that the only interface is the serial console, which is why so much
-diagnostic effort goes into it.
+Two normally-open reed switches close that gap. `position.*` debounces them and
+reports `DOOR_OPEN`, `DOOR_CLOSED`, or `DOOR_UNKNOWN` — the last being the
+normal reading mid-travel, and also what you get with none fitted.
+
+```mermaid
+flowchart LR
+    S1["reed switch<br/>OPEN end"] --> P["<b>position.*</b><br/>debounce 50 ms"]
+    S2["reed switch<br/>CLOSED end"] --> P
+    P --> Q{"both made?"}
+    Q -- yes --> F["FAULT<br/><i>believe neither</i>"]
+    Q -- no --> R["measured state"]
+    R -.->|"observePosition()<br/><b>corrects belief only</b>"| D["<b>door.*</b>"]
+    R --> V["travel verification<br/><i>arrived, or STALLED</i>"]
+
+    style S1 fill:#E9A23B,stroke:#C8862A,color:#3b2a10
+    style S2 fill:#E9A23B,stroke:#C8862A,color:#3b2a10
+    style F fill:#C4453B,stroke:#9E3730,color:#ffffff
+    style D fill:#2A9D8F,stroke:#21867A,color:#ffffff
+```
+
+**The dotted arrow is the whole design.** `observePosition()` changes what
+`door.*` believes and nothing else: no relay is pulsed, no lockout started, no
+interlock bypassed. The proximity pipeline remains the only thing that decides
+an actuation.
+
+That restraint is deliberate. A switch that can command a motor fails in a much
+worse way than one that cannot — a stuck contact would drive a door
+indefinitely, and the animal is standing in it. What the switches buy is
+*truth*, not authority:
+
+| Without | With |
+|---|---|
+| State is what we commanded | State is what was measured |
+| A stale belief persists until the next command | Reality corrects it, so the next request actuates |
+| Travel time expires → assume arrival | Travel time expires with no switch made → `STALLED`, logged and sounded |
+
+There is one deliberate omission in the other direction too: `observePosition()`
+does not touch `hasActuated_` or `lastActuationMs_`. Those mean "we pulsed a
+relay", and `lockedOut()` is built on them — setting them from a sensor reading
+would start the actuation lockout at boot, with `lastActuationMs_` still zero,
+and refuse the first close for no reason.
+
+Both pins default to `-1`, so the module is inert and the door behaves exactly
+as it did before sensors existed. They are turned on at runtime, from the
+console or over the network, without a reflash.
+
+---
+
+## Why the network is optional, and what happens when it is off
+
+**The door decides entirely on its own.** Every actuation comes from the BLE
+signal chain above; nothing in that path consults the network, and none of it
+can be blocked by the network being down. A coop door has to work when the
+internet is out, when the router is rebooting, and in five years when whatever
+service it once depended on has been switched off.
+
+That is the invariant. `PETDOOR_ENABLE_WIFI=0` compiles the network out
+entirely — a third of the image — and the door behaves identically.
+
+With it on, the door gains a **one-way, outbound** channel:
+
+| | |
+|---|---|
+| Uploads its event log | to a server **you** run |
+| Collects anything queued for it | in the reply to that upload |
+| Accepts new firmware | during a window it opens itself |
+
+**It never listens.** There is no inbound port, nothing to forward at a router,
+and no service to sign up to. The door calls out, and the answer to its own
+request is the only way anything reaches it — which is why remote management
+works from behind NAT without exposing the door to the internet at all.
+
+The reply is signed with the shared key and bound to a nonce the door chose for
+that request, so an answer recorded off the wire cannot be replayed at it later.
+Credentials — the WiFi, the server address, the key, the firmware password —
+can never be changed this way, because a mistake there takes the door off the
+network permanently.
+
+### What it costs
+
+**Radio time.** WiFi and BLE share one antenna, so every upload is time taken
+from listening for the collar. The door therefore uploads only when the animal
+is away and the door is shut, with a floor between attempts and a heartbeat so
+it cannot go silent altogether. See `WIFI_MIN_UPLOAD_INTERVAL_MS`.
+
+**Attack surface.** A device deciding when your animals are shut in for the
+night now has a network stack. That is why the channel is outbound-only, signed,
+nonce-bound, and refuses to change its own credentials — and why it remains
+entirely optional.
+
+Without it, the only interface is the serial console, which is why so much
+diagnostic effort goes into it — and why, once a door is on a wall, the network
+is usually worth the trade.
 
 ---
 
