@@ -33,6 +33,23 @@ question about a human day.
 
 ---
 
+### The three tabs
+
+![Activity dashboard](https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/screenshot-activity.png)
+
+**Activity** — every open, close, refusal and reboot, with signal strength and
+a real timestamp. Exports are here, one level down.
+
+![Controls tab](https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/screenshot-controls.png)
+
+**Controls** — open, close, lock, unlock, and a maintenance window. Anything
+with a consequence asks before it does it.
+
+![Settings tab](https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/screenshot-settings.png)
+
+**Settings** — every tunable, with the door's *current* values already filled
+in, so you are editing what it actually has rather than guessing.
+
 ## Public page, private analytics
 
 The server splits its routes so a reverse proxy can protect the half that

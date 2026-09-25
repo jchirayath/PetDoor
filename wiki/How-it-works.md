@@ -47,10 +47,38 @@ now" and "ignores dropouts". Two filters do not:
 signal sits near it. Two thresholds with a dead band between them mean the door
 opens at one distance and closes at a further one, and does nothing in between.
 
+![Two thresholds with a dead band between them](https://raw.githubusercontent.com/jchirayath/PetDoor/main/docs/assets/hysteresis.svg)
+
+Above the upper line the door opens; below the lower line it closes; in the
+band between them it does nothing at all. That band is why a collar sitting at
+one distance does not make the door flap.
+
 Then **dwell timers** in both directions: the signal has to stay strong for a
 moment before opening, and stay weak for longer before closing. The asymmetry is
 deliberate — opening is the safe direction, so it is quick; closing is the
 dangerous one, so it is patient.
+
+### The whole decision, as a state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> Away
+    Away --> Arriving : fast filter rises above the open threshold
+    Arriving --> Away : signal falls back before the timer expires
+    Arriving --> Near : held long enough — PULSE OPEN
+    Near --> Leaving : slow filter falls below the close threshold,<br>or the beacon goes silent
+    Leaving --> Near : signal returns — countdown cancelled
+    Leaving --> Away : held long enough — PULSE CLOSE
+```
+
+Three things in that diagram are deliberate and easy to get wrong:
+
+- **Arriving reads the fast filter, Leaving reads the slow one.** Reversing them
+  would mean noticing a departure before an arrival.
+- **A returning animal cancels a pending close**, on the very next
+  advertisement. It does not have to wait for anything.
+- **A silent beacon counts as far, never as near.** A flat battery can therefore
+  close the door, but can never open it.
 
 ## 4. Act
 
