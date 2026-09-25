@@ -36,8 +36,13 @@ MSG
   exit 1
 fi
 
-cp "$here"/*.md "$tmp/wiki/"
-rm -f "$tmp/wiki/publish.sh"
+# README.md documents THIS DIRECTORY — how to edit and publish the wiki. It is
+# not a wiki page, and copying it up would put "run ./wiki/publish.sh" in front
+# of readers who have no checkout. Everything else here is a page.
+for f in "$here"/*.md; do
+  [ "$(basename "$f")" = "README.md" ] && continue
+  cp "$f" "$tmp/wiki/"
+done
 
 cd "$tmp/wiki"
 if git diff --quiet && git diff --cached --quiet && [ -z "$(git status --porcelain)" ]; then
@@ -52,6 +57,6 @@ git -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name)}" \
 git push --quiet origin HEAD
 
 echo "Published:"
-ls -1 "$here"/*.md | sed 's|.*/|  |'
+ls -1 "$here"/*.md | grep -v '/README\.md$' | sed 's|.*/|  |'
 echo
 echo "  https://github.com/jchirayath/PetDoor/wiki"
