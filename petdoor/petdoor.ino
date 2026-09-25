@@ -42,8 +42,10 @@
 #include "ble_scanner.h"
 #include "chime.h"
 #include "config.h"
+#include "console.h"
 #include "door.h"
 #include "eventlog.h"
+#include "maintenance.h"
 #include "position.h"
 #include "proximity.h"
 #include "wifi_logger.h"
@@ -72,6 +74,12 @@ bool g_sensorFaultAnnounced = false;
 // halfway. It exists to turn fifteen seconds of silence into fifteen seconds of
 // visible and audible "yes, I heard you" — nothing more. A limit switch is the
 // only thing that could make this a measurement; see docs/SAFETY.md.
+// Defined further down, beside the rest of the maintenance-window handling,
+// but needed by the console key dispatch above it.
+bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message);
+void endMaintenance(String &message);
+void publishStatusLines();
+
 bool doorTravelling(uint32_t nowMs) {
   if (g_travelMs == 0 || !g_door.hasActuated()) return false;
   return (nowMs - g_door.lastActuationMs()) < g_travelMs;
@@ -133,20 +141,20 @@ bool g_downloadModeArmed = false;
 // the way back out if you change your mind.
 void rebootToDownloadMode() {
 #if PETDOOR_CAN_REBOOT_TO_FLASH
-  Serial.println(F("[sys] rebooting into UART download mode."));
-  Serial.println(F("[sys]   * the door is NOT controlled until you flash"));
-  Serial.println(F("[sys]   * quit your terminal first, then upload"));
-  Serial.println(F("[sys]   * power-cycle the board to cancel"));
-  Serial.flush();
+  Con.println(F("[sys] rebooting into UART download mode."));
+  Con.println(F("[sys]   * the door is NOT controlled until you flash"));
+  Con.println(F("[sys]   * quit your terminal first, then upload"));
+  Con.println(F("[sys]   * power-cycle the board to cancel"));
+  Con.flush();
   delay(400);
   REG_WRITE(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
   esp_restart();
 #else
-  Serial.println(F("[sys] This chip (original ESP32) has no software"));
-  Serial.println(F("[sys] download-mode flag — only the S3/C3/C6 do."));
-  Serial.println(F("[sys] To flash: hold IO0, tap EN, release IO0."));
-  Serial.println(F("[sys] To avoid that for good, wire the adapter's"));
-  Serial.println(F("[sys] DTR->IO0 and RTS->EN so uploads reset the board."));
+  Con.println(F("[sys] This chip (original ESP32) has no software"));
+  Con.println(F("[sys] download-mode flag — only the S3/C3/C6 do."));
+  Con.println(F("[sys] To flash: hold IO0, tap EN, release IO0."));
+  Con.println(F("[sys] To avoid that for good, wire the adapter's"));
+  Con.println(F("[sys] DTR->IO0 and RTS->EN so uploads reset the board."));
 #endif
 }
 
@@ -233,151 +241,153 @@ String fmt1(float v) {
 }
 
 void printBanner() {
-  Serial.println();
-  Serial.println(F("=================================================="));
-  Serial.println(F("  PetDoor — BLE proximity door controller"));
-  if (PETDOOR_GIT[0] != '\0') Serial.printf("  commit        : %s\r\n", PETDOOR_GIT);
-  Serial.printf("  v%s  (built %s, %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD,
+  Con.println();
+  Con.println(F("=================================================="));
+  Con.println(F("  PetDoor — BLE proximity door controller"));
+  if (PETDOOR_GIT[0] != '\0') Con.printf("  commit        : %s\r\n", PETDOOR_GIT);
+  Con.printf("  v%s  (built %s, %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD,
                 BleScanner::stackName());
-  Serial.println(F("=================================================="));
-  Serial.print(F("  target beacon : "));
-  Serial.println(BleScanner::describeTarget());
-  Serial.printf("  open / close  : GPIO %d / GPIO %d (active %s)\r\n", PIN_RELAY_OPEN,
+  Con.println(F("=================================================="));
+  Con.print(F("  target beacon : "));
+  Con.println(BleScanner::describeTarget());
+  Con.printf("  open / close  : GPIO %d / GPIO %d (active %s)\r\n", PIN_RELAY_OPEN,
                 PIN_RELAY_CLOSE, RELAY_ACTIVE_LOW ? "LOW" : "HIGH");
-  Serial.printf("  relay pulse   : %lu ms\r\n",
+  Con.printf("  relay pulse   : %lu ms\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
   if (g_door.pulseCount() > 1) {
-    Serial.printf("  presses       : %u per actuation, %lu ms apart\r\n",
+    Con.printf("  presses       : %u per actuation, %lu ms apart\r\n",
                   g_door.pulseCount(),
                   static_cast<unsigned long>(g_door.pulseGapMs()));
     // Worth saying out loud: this is a blind retry, and the failure it can
     // introduce looks nothing like the one it fixes.
-    Serial.println(F("  !! repeat presses are sent blind — the door cannot tell whether"));
-    Serial.println(F("  !! the first worked. If it did, the second may stop it mid-travel."));
+    Con.println(F("  !! repeat presses are sent blind — the door cannot tell whether"));
+    Con.println(F("  !! the first worked. If it did, the second may stop it mid-travel."));
   }
   if (g_travelMs > 0) {
-    Serial.printf("  door travel   : %lu ms (announced on the LED and buzzer)\r\n",
+    Con.printf("  door travel   : %lu ms (announced on the LED and buzzer)\r\n",
                   static_cast<unsigned long>(g_travelMs));
     // Warned about at boot rather than static_assert'ed, because both values
     // are runtime-adjustable and can be changed long after compiling.
     if (g_door.minIntervalMs() < g_travelMs) {
-      Serial.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
+      Con.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
                     static_cast<unsigned long>(g_door.minIntervalMs()),
                     static_cast<unsigned long>(g_travelMs));
-      Serial.println(F("  !! A reversing command can land mid-travel; most controllers"));
-      Serial.println(F("  !! read that as STOP, leaving the door parked half open."));
-      Serial.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
+      Con.println(F("  !! A reversing command can land mid-travel; most controllers"));
+      Con.println(F("  !! read that as STOP, leaving the door parked half open."));
+      Con.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
     }
   }
-  Serial.printf("  status LED    : GPIO %d\r\n", PIN_STATUS_LED);
+  Con.printf("  status LED    : GPIO %d\r\n", PIN_STATUS_LED);
   if (Chime::enabled()) {
-    Serial.printf("  buzzer        : GPIO %d, %s, active %s\r\n", Chime::pin(),
+    Con.printf("  buzzer        : GPIO %d, %s, active %s\r\n", Chime::pin(),
                   Chime::passive() ? "passive (tones)" : "active (fixed pitch)",
                   Chime::activeLow() ? "LOW" : "HIGH");
   } else {
-    Serial.println(F("  buzzer        : none ('w' then 'buzzer <pin>' to add one)"));
+    Con.println(F("  buzzer        : none ('w' then 'buzzer <pin>' to add one)"));
   }
   if (Position::enabled()) {
-    Serial.printf("  limit switches: open GPIO %d, closed GPIO %d, active %s\r\n",
+    Con.printf("  limit switches: open GPIO %d, closed GPIO %d, active %s\r\n",
                   Position::openPin(), Position::closedPin(),
                   Position::activeLow() ? "LOW" : "HIGH");
-    Serial.printf("  door is really: %s\r\n",
+    Con.printf("  door is really: %s\r\n",
                   DoorController::stateName(Position::state()));
   } else {
-    Serial.println(F("  limit switches: none — the door is OPEN LOOP and only knows"));
-    Serial.println(F("                  what it commanded ('w' then 'sensors' to add)"));
+    Con.println(F("  limit switches: none — the door is OPEN LOOP and only knows"));
+    Con.println(F("                  what it commanded ('w' then 'sensors' to add)"));
   }
-  Serial.printf("  thresholds    : open at >= %d dBm, close at <= %d dBm (%s)\r\n",
+  Con.printf("  thresholds    : open at >= %d dBm, close at <= %d dBm (%s)\r\n",
                 g_tracker.enterDbm(), g_tracker.exitDbm(),
                 g_thresholdsStored ? "saved on device" : "compiled in");
-  Serial.printf("  dwell         : open after %lu ms near, close after %lu ms far (%s)\r\n",
+  Con.printf("  dwell         : open after %lu ms near, close after %lu ms far (%s)\r\n",
                 static_cast<unsigned long>(g_tracker.enterConfirmMs()),
                 static_cast<unsigned long>(g_tracker.exitConfirmMs()),
                 g_timingStored ? "saved on device" : "compiled in");
-  Serial.printf("  scan          : %d ms window / %d ms interval, %s, duplicates ON\r\n",
+  Con.printf("  scan          : %d ms window / %d ms interval, %s, duplicates ON\r\n",
                 SCAN_WINDOW_MS, SCAN_INTERVAL_MS, SCAN_ACTIVE ? "active" : "passive");
-  Serial.printf("  boot          : #%lu, last reset: %s\r\n",
+  Con.printf("  boot          : #%lu, last reset: %s\r\n",
                 static_cast<unsigned long>(g_bootCount), resetReasonName());
-  Serial.println(F("--------------------------------------------------"));
+  Con.println(F("--------------------------------------------------"));
 
   if (esp_reset_reason() == ESP_RST_BROWNOUT) {
-    Serial.println();
-    Serial.println(F("  !! Last restart was a BROWNOUT — the supply sagged. !!"));
-    Serial.println(F("  Use a thicker USB cable, a stronger 5 V supply, or feed"));
-    Serial.println(F("  the relay coils from their own supply with a common ground."));
-    Serial.println();
+    Con.println();
+    Con.println(F("  !! Last restart was a BROWNOUT — the supply sagged. !!"));
+    Con.println(F("  Use a thicker USB cable, a stronger 5 V supply, or feed"));
+    Con.println(F("  the relay coils from their own supply with a common ground."));
+    Con.println();
   }
 
   if (!BleScanner::isConfigured()) {
-    Serial.println();
-    Serial.println(F("  !! NO BEACON CONFIGURED — the door will not be operated. !!"));
-    Serial.println(F("  Discovery mode is on. Find your beacon below, then set"));
-    Serial.println(F("  BEACON_MAC in secrets.h (copy secrets.example.h) and reflash."));
-    Serial.println(F("  A Minew beacon usually shows up as class Minew or iBeacon."));
-    Serial.println();
+    Con.println();
+    Con.println(F("  !! NO BEACON CONFIGURED — the door will not be operated. !!"));
+    Con.println(F("  Discovery mode is on. Find your beacon below, then set"));
+    Con.println(F("  BEACON_MAC in secrets.h (copy secrets.example.h) and reflash."));
+    Con.println(F("  A Minew beacon usually shows up as class Minew or iBeacon."));
+    Con.println();
   }
 
-  Serial.println(F("  Type 'h' for commands."));
-  Serial.println();
+  Con.println(F("  Type 'h' for commands."));
+  Con.println();
 }
 
 void printHelp() {
-  Serial.println(F("commands:"));
-  Serial.println(F("  h  this help"));
-  Serial.println(F("  s  status"));
-  Serial.println(F("  d  toggle discovery mode (list every BLE device in range)"));
-  Serial.println(F("  c  toggle calibration stream (live RSSI + distance)"));
-  Serial.println(F("  r  reset the proximity filter"));
-  Serial.println(F("  l  show the event log (what the door actually did)"));
-  Serial.println(F("  u  upload the log now over WiFi (if configured)"));
-  Serial.println(F("  p  open a firmware update window (OTA, no buttons)"));
-  Serial.println(F("  m  edit the beacon MAC list (saved on the device)"));
-  Serial.println(F("  t  edit the open/close thresholds (saved on the device)"));
-  Serial.println(F("  w  edit the dwell times / how fast it reacts"));
-  Serial.println(F("  f  edit the filter shape (median window, smoothing)"));
+  Con.println(F("commands:"));
+  Con.println(F("  h  this help"));
+  Con.println(F("  s  status"));
+  Con.println(F("  d  toggle discovery mode (list every BLE device in range)"));
+  Con.println(F("  c  toggle calibration stream (live RSSI + distance)"));
+  Con.println(F("  r  reset the proximity filter"));
+  Con.println(F("  l  show the event log (what the door actually did)"));
+  Con.println(F("  u  upload the log now over WiFi (if configured)"));
+  Con.println(F("  p  open a firmware update window (OTA, no buttons)"));
+  Con.println(F("  m  edit the beacon MAC list (saved on the device)"));
+  Con.println(F("  t  edit the open/close thresholds (saved on the device)"));
+  Con.println(F("  w  edit the dwell times / how fast it reacts"));
+  Con.println(F("  f  edit the filter shape (median window, smoothing)"));
 #if PETDOOR_CAN_REBOOT_TO_FLASH
-  Serial.println(F("  !  reboot into flash mode (no IO0/EN buttons needed)"));
+  Con.println(F("  !  reboot into flash mode (no IO0/EN buttons needed)"));
 #else
-  Serial.println(F("  !  flash-mode help (this chip needs the IO0/EN buttons)"));
+  Con.println(F("  !  flash-mode help (this chip needs the IO0/EN buttons)"));
 #endif
 #if ALLOW_MANUAL_SERIAL_CONTROL
-  Serial.println(F("  o  pulse the OPEN relay now, and hold it open (see 'O')"));
-  Serial.println(F("  x  pulse the CLOSE relay now, and clear any hold"));
-  Serial.println(F("  O  clear the manual hold, handing control back to the beacon"));
-  Serial.println(F("  k  LOCK — the beacon may no longer open the door"));
-  Serial.println(F("  K  unlock"));
+  Con.println(F("  o  pulse the OPEN relay now, and hold it open (see 'O')"));
+  Con.println(F("  x  pulse the CLOSE relay now, and clear any hold"));
+  Con.println(F("  O  clear the manual hold, handing control back to the beacon"));
+  Con.println(F("  k  LOCK — the beacon may no longer open the door"));
+  Con.println(F("  M  MAINTENANCE — the door listens but does not move, for a"));
+  Con.println(F("     bounded window; opens the console over WiFi. 'M' again ends it."));
+  Con.println(F("  K  unlock"));
 #endif
-  Serial.println(F("status LED:"));
-  Serial.println(F("  solid        door last OPENED"));
-  Serial.println(F("  brief blip   door last CLOSED"));
-  Serial.println(F("  near-solid   door MOVING (for the configured travel time)"));
-  Serial.println(F("  1 Hz blink   no beacon configured / never heard"));
-  Serial.println(F("  2 Hz flash   beacon battery LOW"));
-  Serial.println(F("  5 Hz flutter radio unhealthy"));
-  Serial.println(F("buzzer (if fitted — 'w' to configure):"));
-  Serial.println(F("  tick .. tick door MOVING"));
-  Serial.println(F("  rising pair  travel time is up"));
-  Serial.println(F("  low buzz     refused: this door is LOCKED"));
+  Con.println(F("status LED:"));
+  Con.println(F("  solid        door last OPENED"));
+  Con.println(F("  brief blip   door last CLOSED"));
+  Con.println(F("  near-solid   door MOVING (for the configured travel time)"));
+  Con.println(F("  1 Hz blink   no beacon configured / never heard"));
+  Con.println(F("  2 Hz flash   beacon battery LOW"));
+  Con.println(F("  5 Hz flutter radio unhealthy"));
+  Con.println(F("buzzer (if fitted — 'w' to configure):"));
+  Con.println(F("  tick .. tick door MOVING"));
+  Con.println(F("  rising pair  travel time is up"));
+  Con.println(F("  low buzz     refused: this door is LOCKED"));
 }
 
 void printStatus(uint32_t nowMs) {
-  Serial.println(F("---- status ----"));
-  Serial.print(F("  target       : "));
-  Serial.println(BleScanner::describeTarget());
-  Serial.printf("  uptime       : %lu s\r\n", static_cast<unsigned long>(nowMs / 1000));
-  Serial.printf("  presence     : %s%s\r\n",
+  Con.println(F("---- status ----"));
+  Con.print(F("  target       : "));
+  Con.println(BleScanner::describeTarget());
+  Con.printf("  uptime       : %lu s\r\n", static_cast<unsigned long>(nowMs / 1000));
+  Con.printf("  presence     : %s%s\r\n",
                 g_tracker.isPresent() ? "PRESENT" : "ABSENT",
                 g_tracker.hasFix(nowMs) ? "" : " (no fix)");
-  Serial.printf("  door         : %s\r\n", DoorController::stateName(g_door.state()));
+  Con.printf("  door         : %s\r\n", DoorController::stateName(g_door.state()));
 
   if (g_tracker.everSeen()) {
-    Serial.printf("  rssi         : %d dBm filtered (raw %d), ~%s m\r\n", g_tracker.filteredRssi(),
+    Con.printf("  rssi         : %d dBm filtered (raw %d), ~%s m\r\n", g_tracker.filteredRssi(),
                   g_tracker.rawRssi(), fmt1(g_tracker.distanceM()).c_str());
-    Serial.printf("  last seen    : %lu ms ago, %lu samples\r\n",
+    Con.printf("  last seen    : %lu ms ago, %lu samples\r\n",
                   static_cast<unsigned long>(g_tracker.sampleAgeMs(nowMs)),
                   static_cast<unsigned long>(g_tracker.totalSamples()));
   } else {
-    Serial.println(F("  rssi         : beacon has never been heard"));
+    Con.println(F("  rssi         : beacon has never been heard"));
   }
 
   const uint32_t enterFor = g_tracker.pendingEnterMs(nowMs);
@@ -387,16 +397,16 @@ void printStatus(uint32_t nowMs) {
   // subtraction underflows to ~4.29e9.
   if (enterFor) {
     const uint32_t total = g_tracker.enterConfirmMs();
-    Serial.printf("  opening in   : %lu ms\r\n",
+    Con.printf("  opening in   : %lu ms\r\n",
                   static_cast<unsigned long>(total > enterFor ? total - enterFor : 0));
   }
   if (exitFor) {
     const uint32_t total = g_tracker.exitConfirmMs();
-    Serial.printf("  closing in   : %lu ms\r\n",
+    Con.printf("  closing in   : %lu ms\r\n",
                   static_cast<unsigned long>(total > exitFor ? total - exitFor : 0));
   }
 
-  Serial.printf("  radio        : %lu adverts, last %lu ms ago, %lu samples dropped\r\n",
+  Con.printf("  radio        : %lu adverts, last %lu ms ago, %lu samples dropped\r\n",
                 static_cast<unsigned long>(BleScanner::advCount()),
                 static_cast<unsigned long>(BleScanner::advAgeMs(nowMs)),
                 static_cast<unsigned long>(BleScanner::droppedSamples()));
@@ -408,13 +418,13 @@ void printStatus(uint32_t nowMs) {
         // A CR2032 is ~3000 mV fresh and considered flat around 2200 mV.
         const int pct = static_cast<int>(
             (static_cast<long>(tlm.batteryMv) - 2200) * 100 / (3000 - 2200));
-        Serial.printf("  beacon batt  : %u mV (~%d%%)%s\r\n", tlm.batteryMv,
+        Con.printf("  beacon batt  : %u mV (~%d%%)%s\r\n", tlm.batteryMv,
                       pct < 0 ? 0 : (pct > 100 ? 100 : pct),
                       tlm.batteryMv < 2400 ? "  << REPLACE SOON" : "");
       } else {
-        Serial.println(F("  beacon batt  : not reported (0 mV = mains powered)"));
+        Con.println(F("  beacon batt  : not reported (0 mV = mains powered)"));
       }
-      Serial.printf("  beacon temp  : %.1f C, up %lu s, %lu adverts sent\r\n",
+      Con.printf("  beacon temp  : %.1f C, up %lu s, %lu adverts sent\r\n",
                     static_cast<double>(tlm.temperatureC),
                     static_cast<unsigned long>(tlm.uptimeSec),
                     static_cast<unsigned long>(tlm.advCount));
@@ -422,93 +432,119 @@ void printStatus(uint32_t nowMs) {
   }
 
   if (g_tracker.minRssi() != 0) {
-    Serial.printf("  weakest heard: %d dBm  (%lu samples at/below -85 dBm)\r\n",
+    Con.printf("  weakest heard: %d dBm  (%lu samples at/below -85 dBm)\r\n",
                   g_tracker.minRssi(), static_cast<unsigned long>(g_tracker.weakSamples()));
   }
-  Serial.printf("  worst gap    : %lu ms between samples%s\r\n",
+  Con.printf("  worst gap    : %lu ms between samples%s\r\n",
                 static_cast<unsigned long>(g_tracker.maxGapMs()),
                 g_tracker.maxGapMs() > SAMPLE_MAX_AGE_MS ? "  << EXCEEDS SAMPLE_MAX_AGE_MS" : "");
-  Serial.printf("  relay pulse  : %lu ms\r\n",
+  Con.printf("  relay pulse  : %lu ms\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
   if (g_travelMs > 0) {
     if (doorTravelling(nowMs)) {
-      Serial.printf("  door travel  : MOVING, %lu ms left of %lu (open loop — a timer)\r\n",
+      Con.printf("  door travel  : MOVING, %lu ms left of %lu (open loop — a timer)\r\n",
                     static_cast<unsigned long>(g_travelMs -
                                                (nowMs - g_door.lastActuationMs())),
                     static_cast<unsigned long>(g_travelMs));
     } else {
-      Serial.printf("  door travel  : %lu ms announced after each actuation\r\n",
+      Con.printf("  door travel  : %lu ms announced after each actuation\r\n",
                     static_cast<unsigned long>(g_travelMs));
     }
   }
   if (Position::enabled()) {
     if (Position::fault()) {
-      Serial.println(F("  position     : !! FAULT — both limit switches made at once"));
+      Con.println(F("  position     : !! FAULT — both limit switches made at once"));
     } else {
-      Serial.printf("  position     : %s (measured)%s\r\n",
+      Con.printf("  position     : %s (measured)%s\r\n",
                     DoorController::stateName(Position::state()),
                     Position::state() == DOOR_UNKNOWN ? "  << between the two switches" : "");
     }
-    Serial.printf("  switches     : open GPIO %d %s, closed GPIO %d %s\r\n",
+    Con.printf("  switches     : open GPIO %d %s, closed GPIO %d %s\r\n",
                   Position::openPin(), Position::openMade() ? "MADE" : "open",
                   Position::closedPin(), Position::closedMade() ? "MADE" : "open");
   } else {
-    Serial.println(F("  position     : not measured — no limit switches fitted"));
+    Con.println(F("  position     : not measured — no limit switches fitted"));
   }
   if (Chime::enabled()) {
-    Serial.printf("  buzzer       : GPIO %d, %s, active %s%s\r\n", Chime::pin(),
+    Con.printf("  buzzer       : GPIO %d, %s, active %s%s\r\n", Chime::pin(),
                   Chime::passive() ? "passive" : "active",
                   Chime::activeLow() ? "LOW" : "HIGH",
                   Chime::playing() != CHIME_NONE ? "  << sounding now" : "");
   }
   if (g_locked) {
-    Serial.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
+    Con.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
+  }
+  if (Maintenance::active(millis())) {
+    const uint32_t left = Maintenance::remainingMs(millis());
+    Con.printf("  MAINTENANCE  : ON — the door will not move for another %lu min %lu s\r\n",
+               static_cast<unsigned long>(left / 60000UL),
+               static_cast<unsigned long>((left / 1000UL) % 60UL));
+#if PETDOOR_ENABLE_WIFI
+    // Only meaningful with WiFi compiled in; without it `Con` is the UART and
+    // there is no network side to report on.
+    Con.printf("  console      : %s\r\n",
+               Con.networkAttached()
+                   ? ("attached from " + Con.clientIp().toString()).c_str()
+                   : NetConsole::listening() ? "listening, nobody attached" : "off");
+#endif
+    // The measurement itself. Percentiles rather than an average because the
+    // tails are what a threshold has to separate: the strongest reading from
+    // away and the weakest from at the door.
+    Maintenance::Stats st;
+    if (Maintenance::stats(st)) {
+      Con.printf("  calibration  : n=%lu  min %d  p5 %d  median %d  p95 %d  max %d\r\n",
+                 static_cast<unsigned long>(st.n), st.min, st.p5, st.median,
+                 st.p95, st.max);
+      Con.println(F("                 ('r' clears this after moving the collar)"));
+    } else {
+      Con.println(F("  calibration  : no samples yet"));
+    }
   }
   {
     const uint32_t heldFor = manualHoldRemainingMs(millis());
     if (heldFor > 0) {
-      Serial.printf("  manual hold  : %lu s left — automatic CLOSING paused ('O' to clear)\r\n",
+      Con.printf("  manual hold  : %lu s left — automatic CLOSING paused ('O' to clear)\r\n",
                     static_cast<unsigned long>(heldFor / 1000));
     }
   }
-  Serial.printf("  actuations   : %lu open, %lu close (%lu locked out, %lu in boot grace)\r\n",
+  Con.printf("  actuations   : %lu open, %lu close (%lu locked out, %lu in boot grace)\r\n",
                 static_cast<unsigned long>(g_door.openCount()),
                 static_cast<unsigned long>(g_door.closeCount()),
                 static_cast<unsigned long>(g_door.lockedOutCount()),
                 static_cast<unsigned long>(g_door.bootGraceCount()));
-  Serial.printf("  scan restarts: %lu\r\n", static_cast<unsigned long>(BleScanner::scanRestarts()));
-  Serial.printf("  firmware     : v%s (built %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD);
-  Serial.printf("  ble stack    : %s\r\n", BleScanner::stackName());
-  Serial.printf("  boot         : #%lu, last reset: %s\r\n",
+  Con.printf("  scan restarts: %lu\r\n", static_cast<unsigned long>(BleScanner::scanRestarts()));
+  Con.printf("  firmware     : v%s (built %s)\r\n", PETDOOR_VERSION, PETDOOR_BUILD);
+  Con.printf("  ble stack    : %s\r\n", BleScanner::stackName());
+  Con.printf("  boot         : #%lu, last reset: %s\r\n",
                 static_cast<unsigned long>(g_bootCount), resetReasonName());
   WifiLogger::printStatus(Serial);
   // Stack headroom, in bytes still unused at the worst moment so far. A task
   // sized much larger than its high-water mark is heap sitting idle; one
   // approaching zero is a crash waiting for the right input.
   if (g_controlTaskHandle) {
-    Serial.printf("  task stacks  : control %lu free of %d",
+    Con.printf("  task stacks  : control %lu free of %d",
                   static_cast<unsigned long>(
                       uxTaskGetStackHighWaterMark(g_controlTaskHandle) * sizeof(StackType_t)),
                   CONTROL_TASK_STACK);
     const uint32_t up = WifiLogger::stackFreeBytes();
-    if (up) Serial.printf(", uploader %lu free of %d", static_cast<unsigned long>(up),
+    if (up) Con.printf(", uploader %lu free of %d", static_cast<unsigned long>(up),
                           WIFI_TASK_STACK);
-    Serial.println();
+    Con.println();
   }
-  Serial.printf("  free heap    : %lu bytes (low-water %lu)\r\n",
+  Con.printf("  free heap    : %lu bytes (low-water %lu)\r\n",
                 static_cast<unsigned long>(ESP.getFreeHeap()),
                 static_cast<unsigned long>(ESP.getMinFreeHeap()));
-  Serial.println();
+  Con.println();
 }
 
 void printMacMenu() {
-  Serial.println();
-  Serial.println(F("---- beacon MAC list ----"));
+  Con.println();
+  Con.println(F("---- beacon MAC list ----"));
   const String csv = BleScanner::targetMacsCsv();
   if (csv.length() == 0) {
-    Serial.println(F("  (none configured — the door will not be operated)"));
+    Con.println(F("  (none configured — the door will not be operated)"));
   } else {
-    Serial.printf("  in use (%s):\r\n",
+    Con.printf("  in use (%s):\r\n",
                   BleScanner::targetMacsAreStored() ? "saved on device" : "compiled in");
     int idx = 1, from = 0;
     while (from < static_cast<int>(csv.length())) {
@@ -516,31 +552,31 @@ void printMacMenu() {
       if (comma < 0) comma = csv.length();
       String one = csv.substring(from, comma);
       one.trim();
-      if (one.length()) Serial.printf("    %d. %s\r\n", idx++, one.c_str());
+      if (one.length()) Con.printf("    %d. %s\r\n", idx++, one.c_str());
       from = comma + 1;
     }
   }
-  Serial.println(F("  type one of:"));
-  Serial.println(F("    aa:bb:cc:dd:ee:ff,11:22:33:44:55:66   replace the whole list"));
-  Serial.println(F("    +aa:bb:cc:dd:ee:ff                    add one"));
-  Serial.println(F("    -2                                    remove entry 2"));
-  Serial.println(F("    clear                                 forget saved list"));
-  Serial.println(F("    q                                     cancel"));
-  Serial.println(F("  (live output is paused while this menu is open)"));
-  Serial.print(F("> "));
+  Con.println(F("  type one of:"));
+  Con.println(F("    aa:bb:cc:dd:ee:ff,11:22:33:44:55:66   replace the whole list"));
+  Con.println(F("    +aa:bb:cc:dd:ee:ff                    add one"));
+  Con.println(F("    -2                                    remove entry 2"));
+  Con.println(F("    clear                                 forget saved list"));
+  Con.println(F("    q                                     cancel"));
+  Con.println(F("  (live output is paused while this menu is open)"));
+  Con.print(F("> "));
 }
 
 void saveAndRestart(const char *csv) {
   String err;
   if (!BleScanner::storeTargetMacs(csv, err)) {
-    Serial.printf("\r\n[mac] rejected: %s\r\n", err.c_str());
-    Serial.println(F("[mac] nothing was changed."));
+    Con.printf("\r\n[mac] rejected: %s\r\n", err.c_str());
+    Con.println(F("[mac] nothing was changed."));
     printMacMenu();
     return;
   }
-  Serial.printf("\r\n[mac] saved: %s\r\n", csv);
-  Serial.println(F("[mac] restarting to apply..."));
-  Serial.flush();
+  Con.printf("\r\n[mac] saved: %s\r\n", csv);
+  Con.println(F("[mac] restarting to apply..."));
+  Con.flush();
   delay(250);
   ESP.restart();
 }
@@ -552,17 +588,17 @@ void processMacLine(char *line) {
   while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = '\0';
 
   if (n == 0 || strcmp(line, "q") == 0) {
-    Serial.println(F("\r\n[mac] cancelled, nothing changed."));
-    Serial.println(F("[mac] live output resumed."));
+    Con.println(F("\r\n[mac] cancelled, nothing changed."));
+    Con.println(F("[mac] live output resumed."));
     g_entry = ENTRY_NONE;
     return;
   }
 
   if (strcmp(line, "clear") == 0) {
     BleScanner::clearStoredTargetMacs();
-    Serial.println(F("\r\n[mac] saved list forgotten; reverting to the compiled-in default."));
-    Serial.println(F("[mac] restarting to apply..."));
-    Serial.flush();
+    Con.println(F("\r\n[mac] saved list forgotten; reverting to the compiled-in default."));
+    Con.println(F("[mac] restarting to apply..."));
+    Con.flush();
     delay(250);
     ESP.restart();
   }
@@ -578,7 +614,7 @@ void processMacLine(char *line) {
   if (line[0] == '-') {
     const int target = atoi(line + 1);
     if (target < 1) {
-      Serial.println(F("\r\n[mac] give an entry number, e.g. -2"));
+      Con.println(F("\r\n[mac] give an entry number, e.g. -2"));
       printMacMenu();
       return;
     }
@@ -600,7 +636,7 @@ void processMacLine(char *line) {
       from = comma + 1;
     }
     if (target >= idx) {
-      Serial.printf("\r\n[mac] there is no entry %d\r\n", target);
+      Con.printf("\r\n[mac] there is no entry %d\r\n", target);
       printMacMenu();
       return;
     }
@@ -608,9 +644,9 @@ void processMacLine(char *line) {
       // Removing the last one means "use the compiled-in default" rather than
       // leaving a list that cannot be stored.
       BleScanner::clearStoredTargetMacs();
-      Serial.println(F("\r\n[mac] last entry removed; reverting to the compiled-in default."));
-      Serial.println(F("[mac] restarting to apply..."));
-      Serial.flush();
+      Con.println(F("\r\n[mac] last entry removed; reverting to the compiled-in default."));
+      Con.println(F("[mac] restarting to apply..."));
+      Con.flush();
       delay(250);
       ESP.restart();
     }
@@ -627,45 +663,45 @@ float distanceForRssi(int rssi) {
 }
 
 void printThresholdMenu() {
-  Serial.println();
-  Serial.println(F("---- proximity thresholds ----"));
-  Serial.printf("  open when  >= %4d dBm  (~%s m)\r\n", g_tracker.enterDbm(),
+  Con.println();
+  Con.println(F("---- proximity thresholds ----"));
+  Con.printf("  open when  >= %4d dBm  (~%s m)\r\n", g_tracker.enterDbm(),
                 fmt1(distanceForRssi(g_tracker.enterDbm())).c_str());
-  Serial.printf("  close when <= %4d dBm  (~%s m)\r\n", g_tracker.exitDbm(),
+  Con.printf("  close when <= %4d dBm  (~%s m)\r\n", g_tracker.exitDbm(),
                 fmt1(distanceForRssi(g_tracker.exitDbm())).c_str());
-  Serial.printf("  source     : %s\r\n", g_thresholdsStored ? "saved on device" : "compiled in");
+  Con.printf("  source     : %s\r\n", g_thresholdsStored ? "saved on device" : "compiled in");
   if (g_tracker.hasFix(millis())) {
-    Serial.printf("  beacon now : %d dBm  (~%s m)\r\n", g_tracker.filteredRssi(),
+    Con.printf("  beacon now : %d dBm  (~%s m)\r\n", g_tracker.filteredRssi(),
                   fmt1(g_tracker.distanceM()).c_str());
   } else {
-    Serial.println(F("  beacon now : no fix"));
+    Con.println(F("  beacon now : no fix"));
   }
-  Serial.println(F("  type one of:"));
-  Serial.println(F("    here        use where the beacon is RIGHT NOW as the open point"));
-  Serial.println(F("    1m          open within 1 m, close beyond ~2.5x that"));
-  Serial.println(F("    1m,3m       open within 1 m, close beyond 3 m"));
-  Serial.println(F("    -59,-69     set directly in dBm (open,close)"));
-  Serial.println(F("    clear       forget saved values"));
-  Serial.println(F("    q           cancel"));
-  Serial.println(F("  (live output is paused while this menu is open)"));
-  Serial.print(F("> "));
+  Con.println(F("  type one of:"));
+  Con.println(F("    here        use where the beacon is RIGHT NOW as the open point"));
+  Con.println(F("    1m          open within 1 m, close beyond ~2.5x that"));
+  Con.println(F("    1m,3m       open within 1 m, close beyond 3 m"));
+  Con.println(F("    -59,-69     set directly in dBm (open,close)"));
+  Con.println(F("    clear       forget saved values"));
+  Con.println(F("    q           cancel"));
+  Con.println(F("  (live output is paused while this menu is open)"));
+  Con.print(F("> "));
 }
 
 void applyThresholds(int enterDbm, int exitDbm) {
   if (!g_tracker.setThresholds(enterDbm, exitDbm)) {
-    Serial.printf("\r\n[thr] rejected: open (%d) must be greater than close (%d).\r\n",
+    Con.printf("\r\n[thr] rejected: open (%d) must be greater than close (%d).\r\n",
                   enterDbm, exitDbm);
-    Serial.println(F("[thr] the gap between them IS the hysteresis band."));
+    Con.println(F("[thr] the gap between them IS the hysteresis band."));
     printThresholdMenu();
     return;
   }
   BleScanner::storeThresholds(enterDbm, exitDbm);
   g_thresholdsStored = true;
-  Serial.printf("\r\n[thr] saved: open >= %d dBm (~%s m), close <= %d dBm (~%s m)\r\n",
+  Con.printf("\r\n[thr] saved: open >= %d dBm (~%s m), close <= %d dBm (~%s m)\r\n",
                 enterDbm, fmt1(distanceForRssi(enterDbm)).c_str(),
                 exitDbm, fmt1(distanceForRssi(exitDbm)).c_str());
-  Serial.println(F("[thr] active immediately; no restart needed."));
-  Serial.println(F("[thr] live output resumed."));
+  Con.println(F("[thr] active immediately; no restart needed."));
+  Con.println(F("[thr] live output resumed."));
   g_entry = ENTRY_NONE;
 }
 
@@ -675,8 +711,8 @@ void processThresholdLine(char *line) {
   while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = '\0';
 
   if (n == 0 || strcmp(line, "q") == 0) {
-    Serial.println(F("\r\n[thr] cancelled, nothing changed."));
-    Serial.println(F("[thr] live output resumed."));
+    Con.println(F("\r\n[thr] cancelled, nothing changed."));
+    Con.println(F("[thr] live output resumed."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -685,7 +721,7 @@ void processThresholdLine(char *line) {
     BleScanner::clearStoredThresholds();
     g_tracker.setThresholds(RSSI_ENTER_DBM, RSSI_EXIT_DBM);
     g_thresholdsStored = false;
-    Serial.println(F("\r\n[thr] reverted to the compiled-in defaults."));
+    Con.println(F("\r\n[thr] reverted to the compiled-in defaults."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -695,7 +731,7 @@ void processThresholdLine(char *line) {
   // signal actually observed at the spot you care about.
   if (strcmp(line, "here") == 0) {
     if (!g_tracker.hasFix(millis())) {
-      Serial.println(F("\r\n[thr] no fix — the beacon is not being heard right now."));
+      Con.println(F("\r\n[thr] no fix — the beacon is not being heard right now."));
       printThresholdMenu();
       return;
     }
@@ -713,7 +749,7 @@ void processThresholdLine(char *line) {
     const char *comma = strchr(line, ',');
     float closeM = comma ? atof(comma + 1) : (openM * 2.5f);
     if (openM <= 0.0f || closeM <= openM) {
-      Serial.println(F("\r\n[thr] need 0 < open < close, e.g. 1m,3m"));
+      Con.println(F("\r\n[thr] need 0 < open < close, e.g. 1m,3m"));
       printThresholdMenu();
       return;
     }
@@ -726,7 +762,7 @@ void processThresholdLine(char *line) {
   // "-59,-69"
   const char *comma = strchr(line, ',');
   if (comma == nullptr) {
-    Serial.println(F("\r\n[thr] give two values, e.g. -59,-69 or 1m,3m"));
+    Con.println(F("\r\n[thr] give two values, e.g. -59,-69 or 1m,3m"));
     printThresholdMenu();
     return;
   }
@@ -965,95 +1001,95 @@ bool applyBuzzerSpec(const char *args, String &msg) {
 }
 
 void printTimingMenu() {
-  Serial.println();
-  Serial.println(F("---- dwell / timing ----"));
-  Serial.printf("  open after   : %5lu ms near\r\n",
+  Con.println();
+  Con.println(F("---- dwell / timing ----"));
+  Con.printf("  open after   : %5lu ms near\r\n",
                 static_cast<unsigned long>(g_tracker.enterConfirmMs()));
-  Serial.printf("  close after  : %5lu ms far\r\n",
+  Con.printf("  close after  : %5lu ms far\r\n",
                 static_cast<unsigned long>(g_tracker.exitConfirmMs()));
-  Serial.printf("  min interval : %5lu ms between actuations (CLOSING only)\r\n",
+  Con.printf("  min interval : %5lu ms between actuations (CLOSING only)\r\n",
                 static_cast<unsigned long>(g_door.minIntervalMs()));
-  Serial.printf("  interlock gap: %5lu ms before any relay fires\r\n",
+  Con.printf("  interlock gap: %5lu ms before any relay fires\r\n",
                 static_cast<unsigned long>(g_door.directionGapMs()));
-  Serial.printf("  relay pulse  : %5lu ms held closed (the \"button press\")\r\n",
+  Con.printf("  relay pulse  : %5lu ms held closed (the \"button press\")\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
   if (g_door.pulseCount() > 1) {
-    Serial.printf("  presses      : %u per actuation, %lu ms apart\r\n",
+    Con.printf("  presses      : %u per actuation, %lu ms apart\r\n",
                   g_door.pulseCount(),
                   static_cast<unsigned long>(g_door.pulseGapMs()));
   }
-  Serial.printf("  calls in     : quiet %lu ms, min gap %lu ms, heartbeat %lu min\r\n",
+  Con.printf("  calls in     : quiet %lu ms, min gap %lu ms, heartbeat %lu min\r\n",
                 static_cast<unsigned long>(WifiLogger::settleMs()),
                 static_cast<unsigned long>(WifiLogger::minIntervalMs()),
                 static_cast<unsigned long>(WifiLogger::heartbeatMs() / 60000));
-  Serial.printf("  door travel  : %5lu ms (0 = do not announce)\r\n",
+  Con.printf("  door travel  : %5lu ms (0 = do not announce)\r\n",
                 static_cast<unsigned long>(g_travelMs));
   if (Chime::enabled()) {
-    Serial.printf("  buzzer       : GPIO %d, %s, active %s\r\n", Chime::pin(),
+    Con.printf("  buzzer       : GPIO %d, %s, active %s\r\n", Chime::pin(),
                   Chime::passive() ? "passive" : "active",
                   Chime::activeLow() ? "LOW" : "HIGH");
   } else {
-    Serial.println(F("  buzzer       : none"));
+    Con.println(F("  buzzer       : none"));
   }
   if (Position::enabled()) {
-    Serial.printf("  sensors      : open GPIO %d, closed GPIO %d, active %s — reads %s\r\n",
+    Con.printf("  sensors      : open GPIO %d, closed GPIO %d, active %s — reads %s\r\n",
                   Position::openPin(), Position::closedPin(),
                   Position::activeLow() ? "LOW" : "HIGH",
                   Position::fault() ? "FAULT: both made"
                                     : DoorController::stateName(Position::state()));
   } else {
-    Serial.println(F("  sensors      : none (open loop)"));
+    Con.println(F("  sensors      : none (open loop)"));
   }
-  Serial.printf("  source       : %s\r\n", g_timingStored ? "saved on device" : "compiled in");
-  Serial.println();
-  Serial.printf("  MEASURED worst gap between samples: %lu ms\r\n",
+  Con.printf("  source       : %s\r\n", g_timingStored ? "saved on device" : "compiled in");
+  Con.println();
+  Con.printf("  MEASURED worst gap between samples: %lu ms\r\n",
                 static_cast<unsigned long>(g_tracker.maxGapMs()));
-  Serial.println(F("  A close dwell at or below that WILL close on a routine"));
-  Serial.println(F("  radio dropout, with the beacon still present."));
-  Serial.println(F("  type one of:"));
-  Serial.println(F("    1000,3000,2000   open ms, close ms, min interval ms"));
-  Serial.println(F("    fast             1000 / 3000 / 2000  (responsive)"));
-  Serial.println(F("    safe             1500 / 15000 / 5000 (the default)"));
-  Serial.println(F("    gap 250          relay interlock dead time, ms (min 100)"));
-  Serial.println(F("    pulse 200        how long the relay stays closed, ms (50-10000)"));
-  Serial.println(F("    presses 2 1000   press N times per actuation, ms apart (N 1-3)"));
-  Serial.println(F("      for a controller that sometimes swallows a press. Blind retry:"));
-  Serial.println(F("      if the first press DID take, the second may stop it mid-travel"));
-  Serial.println(F("      raise this if the relay clicks but the door does not move:"));
-  Serial.println(F("      many controllers debounce their button and ignore a short tap"));
-  Serial.println(F("    travel 15000     how long YOUR door takes to move, ms (0 = off)"));
-  Serial.println(F("      the LED goes near-solid and the buzzer ticks for this long"));
-  Serial.println(F("      after every actuation, then chimes. A STOPWATCH, not a sensor:"));
-  Serial.println(F("      it will chime cheerfully at a door stuck halfway"));
-  Serial.println(F("    buzzer 27        which GPIO the buzzer is on ('buzzer off' = none)"));
-  Serial.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
-  Serial.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
-  Serial.println(F("    beep             three beeps now — find the pin by trying it"));
-  Serial.println(F("    upload 60000 300000 1800000   how often the door calls in:"));
-  Serial.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
-  Serial.println(F("      Lower the middle one for faster commands, at the cost of"));
-  Serial.println(F("      radio time the BLE scan would otherwise have. 0 heartbeat = off"));
-  Serial.println(F("    sensors 32 33    limit switch pins: <open> <closed> ('sensors off')"));
-  Serial.println(F("    sensors 32 33 low   same, for switches that pull the pin to GND"));
-  Serial.println(F("      the door stops guessing where it is. Without them it only"));
-  Serial.println(F("      knows what it COMMANDED, which is why the chime is a timer"));
-  Serial.println(F("    clear            forget saved values"));
-  Serial.println(F("    q                cancel"));
-  Serial.println(F("  (live output is paused while this menu is open)"));
-  Serial.print(F("> "));
+  Con.println(F("  A close dwell at or below that WILL close on a routine"));
+  Con.println(F("  radio dropout, with the beacon still present."));
+  Con.println(F("  type one of:"));
+  Con.println(F("    1000,3000,2000   open ms, close ms, min interval ms"));
+  Con.println(F("    fast             1000 / 3000 / 2000  (responsive)"));
+  Con.println(F("    safe             1500 / 15000 / 5000 (the default)"));
+  Con.println(F("    gap 250          relay interlock dead time, ms (min 100)"));
+  Con.println(F("    pulse 200        how long the relay stays closed, ms (50-10000)"));
+  Con.println(F("    presses 2 1000   press N times per actuation, ms apart (N 1-3)"));
+  Con.println(F("      for a controller that sometimes swallows a press. Blind retry:"));
+  Con.println(F("      if the first press DID take, the second may stop it mid-travel"));
+  Con.println(F("      raise this if the relay clicks but the door does not move:"));
+  Con.println(F("      many controllers debounce their button and ignore a short tap"));
+  Con.println(F("    travel 15000     how long YOUR door takes to move, ms (0 = off)"));
+  Con.println(F("      the LED goes near-solid and the buzzer ticks for this long"));
+  Con.println(F("      after every actuation, then chimes. A STOPWATCH, not a sensor:"));
+  Con.println(F("      it will chime cheerfully at a door stuck halfway"));
+  Con.println(F("    buzzer 27        which GPIO the buzzer is on ('buzzer off' = none)"));
+  Con.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
+  Con.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
+  Con.println(F("    beep             three beeps now — find the pin by trying it"));
+  Con.println(F("    upload 60000 300000 1800000   how often the door calls in:"));
+  Con.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
+  Con.println(F("      Lower the middle one for faster commands, at the cost of"));
+  Con.println(F("      radio time the BLE scan would otherwise have. 0 heartbeat = off"));
+  Con.println(F("    sensors 32 33    limit switch pins: <open> <closed> ('sensors off')"));
+  Con.println(F("    sensors 32 33 low   same, for switches that pull the pin to GND"));
+  Con.println(F("      the door stops guessing where it is. Without them it only"));
+  Con.println(F("      knows what it COMMANDED, which is why the chime is a timer"));
+  Con.println(F("    clear            forget saved values"));
+  Con.println(F("    q                cancel"));
+  Con.println(F("  (live output is paused while this menu is open)"));
+  Con.print(F("> "));
 }
 
 void applyTiming(uint32_t enterMs, uint32_t exitMs, uint32_t lockoutMs) {
   if (enterMs == 0 || exitMs == 0 || lockoutMs == 0) {
-    Serial.println(F("\r\n[dwell] all three must be greater than zero."));
+    Con.println(F("\r\n[dwell] all three must be greater than zero."));
     printTimingMenu();
     return;
   }
   if (lockoutMs >= exitMs) {
-    Serial.printf("\r\n[dwell] rejected: min interval (%lu) must be BELOW the close "
+    Con.printf("\r\n[dwell] rejected: min interval (%lu) must be BELOW the close "
                   "dwell (%lu),\r\n",
                   static_cast<unsigned long>(lockoutMs), static_cast<unsigned long>(exitMs));
-    Serial.println(F("[dwell] otherwise the actuation lockout delays closing."));
+    Con.println(F("[dwell] otherwise the actuation lockout delays closing."));
     printTimingMenu();
     return;
   }
@@ -1063,20 +1099,20 @@ void applyTiming(uint32_t enterMs, uint32_t exitMs, uint32_t lockoutMs) {
   BleScanner::storeTiming(enterMs, exitMs, lockoutMs);
   g_timingStored = true;
 
-  Serial.printf("\r\n[dwell] saved: open after %lu ms, close after %lu ms, "
+  Con.printf("\r\n[dwell] saved: open after %lu ms, close after %lu ms, "
                 "min interval %lu ms\r\n",
                 static_cast<unsigned long>(enterMs), static_cast<unsigned long>(exitMs),
                 static_cast<unsigned long>(lockoutMs));
 
   const uint32_t gap = g_tracker.maxGapMs();
   if (gap && exitMs <= gap) {
-    Serial.printf("[dwell] !! WARNING: close dwell (%lu ms) is at or below the worst\r\n",
+    Con.printf("[dwell] !! WARNING: close dwell (%lu ms) is at or below the worst\r\n",
                   static_cast<unsigned long>(exitMs));
-    Serial.printf("[dwell]    measured gap (%lu ms). A routine radio dropout will now\r\n",
+    Con.printf("[dwell]    measured gap (%lu ms). A routine radio dropout will now\r\n",
                   static_cast<unsigned long>(gap));
-    Serial.println(F("[dwell]    close the door with the beacon still present."));
+    Con.println(F("[dwell]    close the door with the beacon still present."));
   }
-  Serial.println(F("[dwell] active immediately; no restart needed."));
+  Con.println(F("[dwell] active immediately; no restart needed."));
   g_entry = ENTRY_NONE;
 }
 
@@ -1086,7 +1122,7 @@ void processTimingLine(char *line) {
   while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = '\0';
 
   if (n == 0 || strcmp(line, "q") == 0) {
-    Serial.println(F("\r\n[dwell] cancelled, nothing changed."));
+    Con.println(F("\r\n[dwell] cancelled, nothing changed."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1099,8 +1135,8 @@ void processTimingLine(char *line) {
     g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
     g_travelMs = DOOR_TRAVEL_MS;
     g_timingStored = false;
-    Serial.println(F("\r\n[dwell] reverted to the compiled-in defaults."));
-    Serial.println(F("[dwell] the buzzer pin is kept — that is wiring, not tuning."));
+    Con.println(F("\r\n[dwell] reverted to the compiled-in defaults."));
+    Con.println(F("[dwell] the buzzer pin is kept — that is wiring, not tuning."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1109,10 +1145,10 @@ void processTimingLine(char *line) {
     if (!parseBoundedMs(line + 4, DoorController::kMinDirectionGapMs,
                         DoorController::kMaxDirectionGapMs, ms) ||
         !g_door.setDirectionGapMs(ms)) {
-      Serial.printf("\r\n[dwell] rejected: interlock gap must be %lu-%lu ms.\r\n",
+      Con.printf("\r\n[dwell] rejected: interlock gap must be %lu-%lu ms.\r\n",
                     static_cast<unsigned long>(DoorController::kMinDirectionGapMs),
                     static_cast<unsigned long>(DoorController::kMaxDirectionGapMs));
-      Serial.println(F("[dwell] both relays energised at once shorts the motor."));
+      Con.println(F("[dwell] both relays energised at once shorts the motor."));
       printTimingMenu();
       return;
     }
@@ -1120,58 +1156,58 @@ void processTimingLine(char *line) {
                             g_door.minIntervalMs());
     BleScanner::storeDirectionGap(ms);
     g_timingStored = true;
-    Serial.printf("\r\n[dwell] interlock gap now %lu ms (saved on device).\r\n",
+    Con.printf("\r\n[dwell] interlock gap now %lu ms (saved on device).\r\n",
                   static_cast<unsigned long>(ms));
     g_entry = ENTRY_NONE;
     return;
   }
   if (strcmp(line, "beep") == 0) {
     if (!Chime::enabled()) {
-      Serial.println(F("\r\n[dwell] no buzzer configured. 'buzzer <pin>' first."));
+      Con.println(F("\r\n[dwell] no buzzer configured. 'buzzer <pin>' first."));
       printTimingMenu();
       return;
     }
     Chime::play(CHIME_TEST);
-    Serial.printf("\r\n[dwell] three beeps on GPIO %d. Silence means the wrong pin,\r\n",
+    Con.printf("\r\n[dwell] three beeps on GPIO %d. Silence means the wrong pin,\r\n",
                   Chime::pin());
-    Serial.println(F("[dwell] or the wrong kind: try 'buzzer <pin> passive', then this again."));
+    Con.println(F("[dwell] or the wrong kind: try 'buzzer <pin> passive', then this again."));
     g_entry = ENTRY_NONE;
     return;
   }
   if (strncmp(line, "travel", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
     String msg;
     if (!applyTravelMs(line[6] ? line + 7 : nullptr, msg)) {
-      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      Con.printf("\r\n[dwell] %s\r\n", msg.c_str());
       printTimingMenu();
       return;
     }
-    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    Con.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
     g_entry = ENTRY_NONE;
     return;
   }
   if (strncmp(line, "upload", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
     String msg;
     if (!applyUploadTiming(line[6] ? line + 7 : nullptr, msg)) {
-      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      Con.printf("\r\n[dwell] %s\r\n", msg.c_str());
       printTimingMenu();
       return;
     }
-    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    Con.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
     g_entry = ENTRY_NONE;
     return;
   }
   if (strncmp(line, "sensors", 7) == 0 && (line[7] == ' ' || line[7] == '\0')) {
     String msg;
     if (!applySensorSpec(line[7] ? line + 8 : nullptr, msg)) {
-      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      Con.printf("\r\n[dwell] %s\r\n", msg.c_str());
       printTimingMenu();
       return;
     }
-    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    Con.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
     if (Position::enabled()) {
-      Serial.printf("[dwell] reading right now: %s\r\n",
+      Con.printf("[dwell] reading right now: %s\r\n",
                     DoorController::stateName(Position::state()));
-      Serial.println(F("[dwell] move the door by hand and press 's' to watch it change."));
+      Con.println(F("[dwell] move the door by hand and press 's' to watch it change."));
     }
     g_entry = ENTRY_NONE;
     return;
@@ -1179,14 +1215,14 @@ void processTimingLine(char *line) {
   if (strncmp(line, "buzzer", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
     String msg;
     if (!applyBuzzerSpec(line[6] ? line + 7 : nullptr, msg)) {
-      Serial.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      Con.printf("\r\n[dwell] %s\r\n", msg.c_str());
       printTimingMenu();
       return;
     }
-    Serial.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
+    Con.printf("\r\n[dwell] %s (saved on device).\r\n", msg.c_str());
     if (Chime::enabled()) {
       Chime::play(CHIME_TEST);
-      Serial.println(F("[dwell] beeping now — if you hear nothing, it is the wrong pin."));
+      Con.println(F("[dwell] beeping now — if you hear nothing, it is the wrong pin."));
     }
     g_entry = ENTRY_NONE;
     return;
@@ -1194,14 +1230,14 @@ void processTimingLine(char *line) {
   if (strncmp(line, "presses ", 8) == 0) {
     int n = 0; unsigned long g = 0;
     if (sscanf(line + 8, "%d %lu", &n, &g) < 1) {
-      Serial.println(F("\r\n[dwell] give: presses <count> [gap ms], e.g. presses 2 1000"));
+      Con.println(F("\r\n[dwell] give: presses <count> [gap ms], e.g. presses 2 1000"));
       printTimingMenu();
       return;
     }
     if (g == 0) g = g_door.pulseGapMs();
     if (n < 1 || n > DoorController::kMaxPulseCount ||
         !g_door.setPulseTrain(static_cast<uint8_t>(n), g)) {
-      Serial.printf("\r\n[dwell] rejected: count 1-%u, gap %lu-%lu ms.\r\n",
+      Con.printf("\r\n[dwell] rejected: count 1-%u, gap %lu-%lu ms.\r\n",
                     DoorController::kMaxPulseCount,
                     static_cast<unsigned long>(DoorController::kMinPulseGapMs),
                     static_cast<unsigned long>(DoorController::kMaxPulseGapMs));
@@ -1210,11 +1246,11 @@ void processTimingLine(char *line) {
     }
     BleScanner::storePulseTrain(g_door.pulseCount(), g_door.pulseGapMs());
     g_timingStored = true;
-    Serial.printf("\r\n[dwell] %u press(es) per actuation, %lu ms apart (saved).\r\n",
+    Con.printf("\r\n[dwell] %u press(es) per actuation, %lu ms apart (saved).\r\n",
                   g_door.pulseCount(), static_cast<unsigned long>(g_door.pulseGapMs()));
     if (g_door.pulseCount() > 1) {
-      Serial.println(F("[dwell] blind retry: the door cannot tell whether the first"));
-      Serial.println(F("[dwell] press worked. Watch a dozen cycles before trusting it."));
+      Con.println(F("[dwell] blind retry: the door cannot tell whether the first"));
+      Con.println(F("[dwell] press worked. Watch a dozen cycles before trusting it."));
     }
     g_entry = ENTRY_NONE;
     return;
@@ -1224,7 +1260,7 @@ void processTimingLine(char *line) {
     if (!parseBoundedMs(line + 6, DoorController::kMinPulseMs, DoorController::kMaxPulseMs,
                         ms) ||
         !g_door.setPulseMs(ms)) {
-      Serial.printf("\r\n[dwell] rejected: relay pulse must be %lu-%lu ms.\r\n",
+      Con.printf("\r\n[dwell] rejected: relay pulse must be %lu-%lu ms.\r\n",
                     static_cast<unsigned long>(DoorController::kMinPulseMs),
                     static_cast<unsigned long>(DoorController::kMaxPulseMs));
       printTimingMenu();
@@ -1232,13 +1268,13 @@ void processTimingLine(char *line) {
     }
     BleScanner::storePulseMs(ms);
     g_timingStored = true;
-    Serial.printf("\r\n[dwell] relay pulse now %lu ms (saved on device).\r\n",
+    Con.printf("\r\n[dwell] relay pulse now %lu ms (saved on device).\r\n",
                   static_cast<unsigned long>(ms));
-    Serial.println(F("[dwell] test it with 'o' and 'x' before trusting it to the door."));
+    Con.println(F("[dwell] test it with 'o' and 'x' before trusting it to the door."));
     if (ms >= 2000) {
-      Serial.printf("[dwell] note: the control task is blocked for the whole %lu ms — no\r\n",
+      Con.printf("[dwell] note: the control task is blocked for the whole %lu ms — no\r\n",
                     static_cast<unsigned long>(ms));
-      Serial.println(F("[dwell] samples drained and no reversing mid-travel. See WIRING.md."));
+      Con.println(F("[dwell] samples drained and no reversing mid-travel. See WIRING.md."));
     }
     g_entry = ENTRY_NONE;
     return;
@@ -1254,13 +1290,13 @@ void processTimingLine(char *line) {
 
   const char *c1 = strchr(line, ',');
   if (c1 == nullptr) {
-    Serial.println(F("\r\n[dwell] give three values, e.g. 1000,3000,2000"));
+    Con.println(F("\r\n[dwell] give three values, e.g. 1000,3000,2000"));
     printTimingMenu();
     return;
   }
   const char *c2 = strchr(c1 + 1, ',');
   if (c2 == nullptr) {
-    Serial.println(F("\r\n[dwell] give three values, e.g. 1000,3000,2000"));
+    Con.println(F("\r\n[dwell] give three values, e.g. 1000,3000,2000"));
     printTimingMenu();
     return;
   }
@@ -1271,7 +1307,7 @@ void processTimingLine(char *line) {
   if (!parseBoundedMs(line, 1, kMaxDwellMs, en) ||
       !parseBoundedMs(c1 + 1, 1, kMaxDwellMs, ex) ||
       !parseBoundedMs(c2 + 1, 1, kMaxDwellMs, lk)) {
-    Serial.printf("\r\n[dwell] rejected: each value must be 1-%lu ms.\r\n",
+    Con.printf("\r\n[dwell] rejected: each value must be 1-%lu ms.\r\n",
                   static_cast<unsigned long>(kMaxDwellMs));
     printTimingMenu();
     return;
@@ -1280,36 +1316,36 @@ void processTimingLine(char *line) {
 }
 
 void printFilterMenu() {
-  Serial.println();
-  Serial.println(F("---- filter shape (how fast RSSI is tracked) ----"));
-  Serial.println(F("  two filters run over the same samples:"));
-  Serial.printf("  CLOSE window  : %u samples (max %u)\r\n", g_tracker.windowSize(),
+  Con.println();
+  Con.println(F("---- filter shape (how fast RSSI is tracked) ----"));
+  Con.println(F("  two filters run over the same samples:"));
+  Con.printf("  CLOSE window  : %u samples (max %u)\r\n", g_tracker.windowSize(),
                 kMaxMedianWindow);
-  Serial.printf("  CLOSE alpha   : %s  (higher = faster, noisier)\r\n",
+  Con.printf("  CLOSE alpha   : %s  (higher = faster, noisier)\r\n",
                 String(g_tracker.alpha(), 2).c_str());
-  Serial.printf("  OPEN  window  : %u samples\r\n", g_tracker.fastWindowSize());
-  Serial.printf("  OPEN  alpha   : %s\r\n", String(g_tracker.fastAlpha(), 2).c_str());
-  Serial.printf("  source        : %s / %s\r\n",
+  Con.printf("  OPEN  window  : %u samples\r\n", g_tracker.fastWindowSize());
+  Con.printf("  OPEN  alpha   : %s\r\n", String(g_tracker.fastAlpha(), 2).c_str());
+  Con.printf("  source        : %s / %s\r\n",
                 g_filterStored ? "saved" : "compiled",
                 g_fastFilterStored ? "saved" : "compiled");
 
   // Show what this actually costs in time, using the measured sample rate.
   const uint32_t gap = g_tracker.maxGapMs();
-  Serial.printf("  worst sample gap measured: %lu ms\r\n", static_cast<unsigned long>(gap));
-  Serial.println(F("  lag is roughly (window/2 + 1/alpha) x the sample interval."));
-  Serial.println(F("  the CLOSE pair no longer costs open latency, so prefer a"));
-  Serial.println(F("  LONG window here and tune the OPEN pair for speed."));
-  Serial.println(F("  type one of:"));
-  Serial.println(F("    fast        window 3, alpha 0.7  (twitchy close; rarely needed now)"));
-  Serial.println(F("    default     window 7, alpha 0.35 (the shipped shape)"));
-  Serial.println(F("    smooth      window 11, alpha 0.2 (noisy RF)"));
-  Serial.println(F("    3,0.7       window,alpha directly (window odd, 1..15)"));
-  Serial.println(F("    open 1,0.9  set the OPEN pair (window odd, 1..15)"));
-  Serial.println(F("    open same   make OPEN match CLOSE (old single-filter behaviour)"));
-  Serial.println(F("    clear       forget saved values (both pairs)"));
-  Serial.println(F("    q           cancel"));
-  Serial.println(F("  (live output is paused while this menu is open)"));
-  Serial.print(F("> "));
+  Con.printf("  worst sample gap measured: %lu ms\r\n", static_cast<unsigned long>(gap));
+  Con.println(F("  lag is roughly (window/2 + 1/alpha) x the sample interval."));
+  Con.println(F("  the CLOSE pair no longer costs open latency, so prefer a"));
+  Con.println(F("  LONG window here and tune the OPEN pair for speed."));
+  Con.println(F("  type one of:"));
+  Con.println(F("    fast        window 3, alpha 0.7  (twitchy close; rarely needed now)"));
+  Con.println(F("    default     window 7, alpha 0.35 (the shipped shape)"));
+  Con.println(F("    smooth      window 11, alpha 0.2 (noisy RF)"));
+  Con.println(F("    3,0.7       window,alpha directly (window odd, 1..15)"));
+  Con.println(F("    open 1,0.9  set the OPEN pair (window odd, 1..15)"));
+  Con.println(F("    open same   make OPEN match CLOSE (old single-filter behaviour)"));
+  Con.println(F("    clear       forget saved values (both pairs)"));
+  Con.println(F("    q           cancel"));
+  Con.println(F("  (live output is paused while this menu is open)"));
+  Con.print(F("> "));
 }
 
 void applyFilter(int win, float alpha) {
@@ -1325,7 +1361,7 @@ void applyFilter(int win, float alpha) {
   // quiet.
   if (win < 1 || win > kMaxMedianWindow ||
       !g_tracker.setFilter(static_cast<uint8_t>(win), alpha)) {
-    Serial.printf("\r\n[filt] rejected: window must be ODD and 1..%u, alpha 0<a<=1\r\n",
+    Con.printf("\r\n[filt] rejected: window must be ODD and 1..%u, alpha 0<a<=1\r\n",
                   kMaxMedianWindow);
     printFilterMenu();
     return;
@@ -1333,21 +1369,21 @@ void applyFilter(int win, float alpha) {
   BleScanner::storeFilter(static_cast<uint8_t>(win), alpha);
   g_filterStored = true;
   // Report what is actually in force, not what was typed.
-  Serial.printf("\r\n[filt] saved: window %u, alpha %s\r\n", g_tracker.windowSize(),
+  Con.printf("\r\n[filt] saved: window %u, alpha %s\r\n", g_tracker.windowSize(),
                 String(g_tracker.alpha(), 2).c_str());
   if (g_tracker.windowSize() <= 1 || g_tracker.alpha() >= 0.99f) {
-    Serial.println(F("[filt] !! near-unfiltered. A single RSSI spike can now move"));
-    Serial.println(F("[filt]    the door. This is the failure the project fixes."));
+    Con.println(F("[filt] !! near-unfiltered. A single RSSI spike can now move"));
+    Con.println(F("[filt]    the door. This is the failure the project fixes."));
   }
   if (g_tracker.fastWindowSize() != prevFastWin || g_tracker.fastAlpha() != prevFastAlpha) {
     // Persist it, or the clamp would be undone by the stored value at the next
     // boot and the invariant would hold only until a power cut.
     BleScanner::storeFastFilter(g_tracker.fastWindowSize(), g_tracker.fastAlpha());
     g_fastFilterStored = true;
-    Serial.printf("[filt] OPEN pair pulled to %u, %s to stay ahead of CLOSE.\r\n",
+    Con.printf("[filt] OPEN pair pulled to %u, %s to stay ahead of CLOSE.\r\n",
                   g_tracker.fastWindowSize(), String(g_tracker.fastAlpha(), 2).c_str());
   }
-  Serial.println(F("[filt] filter reset; it will re-acquire in a second or two."));
+  Con.println(F("[filt] filter reset; it will re-acquire in a second or two."));
   g_entry = ENTRY_NONE;
 }
 
@@ -1360,18 +1396,18 @@ void applyFastFilter(int win, float alpha) {
   // 257 would truncate to a valid-looking 1.
   if (win < 1 || win > kMaxMedianWindow ||
       !g_tracker.setFastFilter(static_cast<uint8_t>(win), alpha)) {
-    Serial.printf("\r\n[filt] rejected: window must be ODD and 1..%u, alpha 0<a<=1,\r\n",
+    Con.printf("\r\n[filt] rejected: window must be ODD and 1..%u, alpha 0<a<=1,\r\n",
                   kMaxMedianWindow);
-    Serial.printf("[filt] and must not be slower than CLOSE (window <= %u, alpha >= %s).\r\n",
+    Con.printf("[filt] and must not be slower than CLOSE (window <= %u, alpha >= %s).\r\n",
                   g_tracker.windowSize(), String(g_tracker.alpha(), 2).c_str());
     printFilterMenu();
     return;
   }
   BleScanner::storeFastFilter(static_cast<uint8_t>(win), alpha);
   g_fastFilterStored = true;
-  Serial.printf("\r\n[filt] saved: OPEN window %u, alpha %s\r\n", g_tracker.fastWindowSize(),
+  Con.printf("\r\n[filt] saved: OPEN window %u, alpha %s\r\n", g_tracker.fastWindowSize(),
                 String(g_tracker.fastAlpha(), 2).c_str());
-  Serial.println(F("[filt] the close path is unchanged; only open latency moved."));
+  Con.println(F("[filt] the close path is unchanged; only open latency moved."));
   g_entry = ENTRY_NONE;
 }
 
@@ -1381,7 +1417,7 @@ void processFilterLine(char *line) {
   while (n > 0 && (line[n - 1] == ' ' || line[n - 1] == '\t')) line[--n] = '\0';
 
   if (n == 0 || strcmp(line, "q") == 0) {
-    Serial.println(F("\r\n[filt] cancelled, nothing changed."));
+    Con.println(F("\r\n[filt] cancelled, nothing changed."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1392,7 +1428,7 @@ void processFilterLine(char *line) {
     g_tracker.setFastFilter(RSSI_FAST_WINDOW, RSSI_FAST_ALPHA);
     g_filterStored = false;
     g_fastFilterStored = false;
-    Serial.println(F("\r\n[filt] reverted to the compiled-in defaults (both pairs)."));
+    Con.println(F("\r\n[filt] reverted to the compiled-in defaults (both pairs)."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1407,7 +1443,7 @@ void processFilterLine(char *line) {
     }
     const char *c = strchr(arg, ',');
     if (c == nullptr) {
-      Serial.println(F("\r\n[filt] give: open window,alpha e.g. open 1,0.9"));
+      Con.println(F("\r\n[filt] give: open window,alpha e.g. open 1,0.9"));
       printFilterMenu();
       return;
     }
@@ -1420,7 +1456,7 @@ void processFilterLine(char *line) {
 
   const char *comma = strchr(line, ',');
   if (comma == nullptr) {
-    Serial.println(F("\r\n[filt] give window,alpha e.g. 3,0.7"));
+    Con.println(F("\r\n[filt] give window,alpha e.g. 3,0.7"));
     printFilterMenu();
     return;
   }
@@ -1431,7 +1467,7 @@ void handleMacEntryChar(int c) {
   if (c == '\r' || c == '\n') {
     if (g_macLineLen == 0) {
       // A bare Enter (or the \n of a \r\n pair) cancels rather than submits.
-      Serial.println(F("\r\n[mac] cancelled, nothing changed."));
+      Con.println(F("\r\n[mac] cancelled, nothing changed."));
       g_entry = ENTRY_NONE;
       return;
     }
@@ -1452,20 +1488,20 @@ void handleMacEntryChar(int c) {
   if (c == 0x08 || c == 0x7F) {  // backspace / delete
     if (g_macLineLen > 0) {
       g_macLineLen--;
-      Serial.print(F("\b \b"));
+      Con.print(F("\b \b"));
     }
     return;
   }
 
   if (c >= 0x20 && g_macLineLen < sizeof(g_macLine) - 1) {
     g_macLine[g_macLineLen++] = static_cast<char>(c);
-    Serial.write(static_cast<char>(c));  // echo, so typing is visible
+    Con.write(static_cast<char>(c));  // echo, so typing is visible
   }
 }
 
 void handleSerial(uint32_t nowMs) {
-  while (Serial.available() > 0) {
-    const int c = Serial.read();
+  while (Con.available() > 0) {
+    const int c = Con.read();
 
     if (g_entry != ENTRY_NONE) {
       handleMacEntryChar(c);
@@ -1475,10 +1511,10 @@ void handleSerial(uint32_t nowMs) {
     if (g_downloadModeArmed) {
       g_downloadModeArmed = false;
       if (c == 'y' || c == 'Y') {
-        Serial.println(F("y"));
+        Con.println(F("y"));
         rebootToDownloadMode();
       } else {
-        Serial.println(F("\r\n[sys] cancelled."));
+        Con.println(F("\r\n[sys] cancelled."));
       }
       continue;
     }
@@ -1493,24 +1529,32 @@ void handleSerial(uint32_t nowMs) {
         break;
       case 'd':
         BleScanner::setDiscoverEnabled(!BleScanner::discoverEnabled());
-        Serial.printf("[cmd] discovery %s\r\n", BleScanner::discoverEnabled() ? "ON" : "OFF");
+        Con.printf("[cmd] discovery %s\r\n", BleScanner::discoverEnabled() ? "ON" : "OFF");
         break;
       case 'c':
         g_calibrate = !g_calibrate;
-        Serial.printf("[cmd] calibration stream %s\r\n", g_calibrate ? "ON" : "OFF");
+        Con.printf("[cmd] calibration stream %s\r\n", g_calibrate ? "ON" : "OFF");
         if (g_calibrate) {
-          Serial.print(F("  tracking: "));
-          Serial.println(BleScanner::describeTarget());
-          Serial.println(F("  Walk to where the door should open and note the filtered value."));
-          Serial.println(F("  Set RSSI_ENTER_DBM a little below it, RSSI_EXIT_DBM 8-12 dBm lower."));
+          Con.print(F("  tracking: "));
+          Con.println(BleScanner::describeTarget());
+          Con.println(F("  Walk to where the door should open and note the filtered value."));
+          Con.println(F("  Set RSSI_ENTER_DBM a little below it, RSSI_EXIT_DBM 8-12 dBm lower."));
         }
         break;
       case 'r':
         g_tracker.reset();
-        Serial.println(F("[cmd] proximity filter reset"));
-        Serial.println(F("[cmd] range stats cleared — walk the beacon out and"));
-        Serial.println(F("[cmd] back, then press 's' to see weakest RSSI and"));
-        Serial.println(F("[cmd] worst sample gap."));
+        // Also start the calibration distribution over, so the workflow at a
+        // mounted door is: stand at a position, 'r', wait, 's'. Without this
+        // the previous position's readings stay mixed into the percentiles and
+        // quietly widen every band.
+        if (Maintenance::active(nowMs)) {
+          Maintenance::resetStats();
+          Con.println(F("[cmd] calibration distribution cleared for this position"));
+        }
+        Con.println(F("[cmd] proximity filter reset"));
+        Con.println(F("[cmd] range stats cleared — walk the beacon out and"));
+        Con.println(F("[cmd] back, then press 's' to see weakest RSSI and"));
+        Con.println(F("[cmd] worst sample gap."));
         break;
       case 'l':
         EventLog::dump(Serial);
@@ -1555,46 +1599,58 @@ void handleSerial(uint32_t nowMs) {
 #endif
         g_downloadModeArmed = true;
         g_calibrate = false;  // otherwise [cal] lines scroll the prompt away
-        Serial.println(F("[sys] reboot into flash mode?"));
-        Serial.println(F("[sys] the door will NOT be controlled until you flash."));
-        Serial.print(F("[sys] press 'y' to confirm, anything else cancels: "));
+        Con.println(F("[sys] reboot into flash mode?"));
+        Con.println(F("[sys] the door will NOT be controlled until you flash."));
+        Con.print(F("[sys] press 'y' to confirm, anything else cancels: "));
         break;
 #if ALLOW_MANUAL_SERIAL_CONTROL
       case 'o':
-        Serial.println(F("[cmd] forcing OPEN"));
+        Con.println(F("[cmd] forcing OPEN"));
         g_door.forcePulseOpen();
         if (MANUAL_HOLD_MS > 0) {
           g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
           if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;  // 0 means "off"
-          Serial.printf("[cmd] holding open for %lu s — automatic closing is paused.\r\n",
+          Con.printf("[cmd] holding open for %lu s — automatic closing is paused.\r\n",
                         static_cast<unsigned long>(MANUAL_HOLD_MS / 1000));
-          Serial.println(F("[cmd] 'x' closes now, 'O' hands control back immediately."));
+          Con.println(F("[cmd] 'x' closes now, 'O' hands control back immediately."));
         }
         break;
       case 'x':
-        Serial.println(F("[cmd] forcing CLOSE"));
+        Con.println(F("[cmd] forcing CLOSE"));
         // Clearing the hold here is what makes `x` mean "I am done" rather than
         // "close it, and then let the hold quietly keep it from closing again".
         g_manualHoldUntilMs = 0;
         g_door.forcePulseClose();
         break;
+      case 'M': {
+        String msg;
+        if (Maintenance::active(nowMs)) {
+          endMaintenance(msg);
+        } else {
+          // No argument from a single keypress, so the default window. The
+          // remote `maint <minutes>` form takes one.
+          beginMaintenance(nowMs, MAINT_DEFAULT_MS, msg);
+        }
+        Con.printf("[cmd] %s\r\n", msg.c_str());
+        break;
+      }
       case 'k':
         g_locked = true;
         BleScanner::storeLock(true);
-        Serial.println(F("[cmd] LOCKED — the beacon can no longer open this door"));
-        Serial.println(F("[cmd] 'o' still opens it by hand; 'K' unlocks."));
+        Con.println(F("[cmd] LOCKED — the beacon can no longer open this door"));
+        Con.println(F("[cmd] 'o' still opens it by hand; 'K' unlocks."));
         break;
       case 'K':
         g_locked = false;
         BleScanner::storeLock(false);
-        Serial.println(F("[cmd] unlocked — the beacon controls the door again"));
+        Con.println(F("[cmd] unlocked — the beacon controls the door again"));
         break;
       case 'O':
         if (g_manualHoldUntilMs != 0) {
           g_manualHoldUntilMs = 0;
-          Serial.println(F("[cmd] manual hold cleared; automatic control resumed."));
+          Con.println(F("[cmd] manual hold cleared; automatic control resumed."));
         } else {
-          Serial.println(F("[cmd] no manual hold was active."));
+          Con.println(F("[cmd] no manual hold was active."));
         }
         break;
 #endif
@@ -1645,10 +1701,10 @@ void updatePosition(uint32_t nowMs) {
   if (Position::fault()) {
     if (!g_sensorFaultAnnounced) {
       g_sensorFaultAnnounced = true;
-      Serial.println(F("[pos] !! BOTH limit switches are made at once."));
-      Serial.println(F("[pos] !! That cannot happen on a working door — suspect a"));
-      Serial.println(F("[pos] !! shorted wire, a stuck switch, or a stray magnet."));
-      Serial.println(F("[pos] !! Position is being ignored until it clears."));
+      Con.println(F("[pos] !! BOTH limit switches are made at once."));
+      Con.println(F("[pos] !! That cannot happen on a working door — suspect a"));
+      Con.println(F("[pos] !! shorted wire, a stuck switch, or a stray magnet."));
+      Con.println(F("[pos] !! Position is being ignored until it clears."));
     }
     return;
   }
@@ -1661,7 +1717,7 @@ void updatePosition(uint32_t nowMs) {
       // Arriving at an end is what confirms a travel actually completed.
       if (doorTravelling(nowMs)) g_travelVerified = true;
       if (g_door.observePosition(seen)) {
-        Serial.printf("[pos] switch says %s — correcting what the door believed\r\n",
+        Con.printf("[pos] switch says %s — correcting what the door believed\r\n",
                       DoorController::stateName(seen));
       }
     }
@@ -1677,10 +1733,10 @@ void updatePosition(uint32_t nowMs) {
 // dashboard shows the old value while insisting the command succeeded.
 void publishStatusLines() {
 #if PETDOOR_ENABLE_WIFI
-  char line[224];
+  char line[256];
   snprintf(line, sizeof(line),
            "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
-           "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu real=%s",
+           "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -1692,6 +1748,14 @@ void publishStatusLines() {
            static_cast<unsigned long>(g_tracker.weakSamples()),
            static_cast<unsigned long>(ESP.getFreeHeap()),
            static_cast<unsigned long>(millis() / 1000),
+           // Seconds left in the maintenance window, 0 when there is none. The
+           // dashboard needs this to say the door is deliberately not moving —
+           // otherwise a window looks exactly like a door that has died.
+           static_cast<unsigned long>(Maintenance::remainingMs(millis()) / 1000),
+           // The door's own address, so the dashboard can tell you where to
+           // point a console during a maintenance window. You cannot look it
+           // up on the door itself without already being on the door.
+           WifiLogger::localIp().c_str(),
            // What the switches SAY, as opposed to what we commanded. "none"
            // when no switches are fitted; "?" is the normal mid-travel
            // reading with them.
@@ -1749,9 +1813,9 @@ void updateChime(uint32_t nowMs) {
       // running out — and a travel that ends with neither switch made is a
       // door that did NOT get there. Say so differently.
       if (Position::enabled() && !g_travelVerified) {
-        Serial.println(F("[pos] !! travel time elapsed and NO limit switch was reached."));
-        Serial.println(F("[pos] !! The door did not complete its travel: a swallowed"));
-        Serial.println(F("[pos] !! button press, an obstruction, or a jam."));
+        Con.println(F("[pos] !! travel time elapsed and NO limit switch was reached."));
+        Con.println(F("[pos] !! The door did not complete its travel: a swallowed"));
+        Con.println(F("[pos] !! button press, an obstruction, or a jam."));
         EventLog::record(LOG_STALLED, static_cast<uint8_t>(g_door.state()),
                          g_tracker.filteredRssi());
         Chime::play(CHIME_REFUSED);
@@ -1811,7 +1875,102 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
   digitalWrite(PIN_STATUS_LED, on ? HIGH : LOW);
 }
 
+// Opens a maintenance window and, with it, the network console. Shared by the
+// console key and the remote command so the two cannot drift apart.
+bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message) {
+  const char *problem = nullptr;
+  if (!Maintenance::start(nowMs, durationMs, problem)) {
+    message = problem != nullptr ? problem : "maintenance window refused";
+    return false;
+  }
+#if PETDOOR_ENABLE_WIFI
+  // Ask for the radio, but do NOT start the console here. holdRadio() only
+  // sets a flag — the uploader task is what actually associates, moments from
+  // now. Calling WiFiServer::begin() against a network stack that is still
+  // down panics the chip, which is precisely how boot #504 happened. The
+  // listener is started from serviceMaintenance() once WiFi is really up.
+  WifiLogger::holdRadio(true);
+#endif
+  EventLog::record(LOG_MAINT, 1, g_tracker.filteredRssi());
+  Chime::play(CHIME_ACK_SET);
+  char buf[160];
+  snprintf(buf, sizeof(buf),
+           "maintenance ON for %lu min — the beacon cannot move the door until "
+           "it expires%s",
+           static_cast<unsigned long>(Maintenance::remainingMs(nowMs) / 60000UL),
+           // The console comes up a moment later, with the radio.
+           PETDOOR_ENABLE_WIFI ? "; console opening" : "");
+  message = buf;
+  return true;
+}
+
+void endMaintenance(String &message) {
+  Maintenance::stop();
+  NetConsole::stop();
+#if PETDOOR_ENABLE_WIFI
+  WifiLogger::holdRadio(false);
+#endif
+  EventLog::record(LOG_MAINT, 2, g_tracker.filteredRssi());
+  Chime::play(CHIME_ACK_SET);
+  message = "maintenance OFF — the beacon controls the door again";
+}
+
+// Runs the maintenance window: its expiry, the network console it carries, and
+// the periodic upload of the distribution being measured.
+void serviceMaintenance(uint32_t nowMs) {
+  // Expiry is announced, never silent. The door starts obeying the beacon
+  // again at this moment, and somebody standing at it with the collar needs to
+  // know that before it moves rather than by watching it move.
+  if (Maintenance::consumeExpired(nowMs)) {
+    Con.println(F("[maint] window expired — the beacon controls the door again"));
+    EventLog::record(LOG_MAINT, 0, g_tracker.filteredRssi());
+    Chime::play(CHIME_DONE);
+    NetConsole::stop();
+#if PETDOOR_ENABLE_WIFI
+    // The radio goes back to BLE with the window. Leaving it up would quietly
+    // degrade BLE sampling forever after one calibration session.
+    WifiLogger::holdRadio(false);
+    publishStatusLines();
+    WifiLogger::requestFlushNow();
+#endif
+  }
+
+  if (!Maintenance::active(nowMs)) return;
+
+#if PETDOOR_ENABLE_WIFI
+  // Start listening only once there is a network to listen on, and stop again
+  // if the link drops — a listening socket on a down stack is a crash, not an
+  // inconvenience. Idempotent, so this is safe to evaluate every tick.
+  if (WifiLogger::radioAssociated()) {
+    NetConsole::start();
+  } else if (NetConsole::listening()) {
+    NetConsole::stop();
+  }
+#endif
+
+  NetConsole::tick(nowMs);
+
+#if PETDOOR_ENABLE_WIFI
+  // Push the distribution periodically so it can be read from a browser. This
+  // is the whole point of the window for anyone without a cable.
+  static uint32_t lastReportMs = 0;
+  if (nowMs - lastReportMs >= MAINT_REPORT_MS) {
+    lastReportMs = nowMs;
+    WifiLogger::queueScanUpload(Maintenance::summary(nowMs));
+    WifiLogger::requestFlushNow();
+  }
+#endif
+}
+
 void driveDoor(uint32_t nowMs) {
+  // Maintenance mode: the door listens but does not act. Checked before
+  // everything else, and it blocks BOTH directions — unlike the lock below,
+  // which deliberately still lets a locked door close when the beacon leaves.
+  // That distinction is the point: somebody calibrating is standing at the door
+  // holding the collar, and a door that shuts on them is both useless for
+  // measurement and unsafe. The window expires by itself; see maintenance.h.
+  if (Maintenance::active(nowMs)) return;
+
   // Never operate the door without a configured beacon.
   if (!BleScanner::isConfigured()) return;
 
@@ -1870,18 +2029,18 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
     g_lastReportedFix = fix;
     EventLog::record(fix ? LOG_FIX_GOT : LOG_FIX_LOST, 0, g_tracker.filteredRssi());
     if (fix) {
-      Serial.printf("[fix] acquired  (rssi %d dBm, ~%s m, %lu samples)\r\n",
+      Con.printf("[fix] acquired  (rssi %d dBm, ~%s m, %lu samples)\r\n",
                     g_tracker.filteredRssi(), fmt1(g_tracker.distanceM()).c_str(),
                     static_cast<unsigned long>(g_tracker.totalSamples()));
     } else {
-      Serial.printf("[fix] lost  (last heard %lu ms ago) — counts as FAR\r\n",
+      Con.printf("[fix] lost  (last heard %lu ms ago) — counts as FAR\r\n",
                     static_cast<unsigned long>(g_tracker.sampleAgeMs(nowMs)));
     }
   }
 
   if (g_tracker.state() != g_lastReportedPresence) {
     g_lastReportedPresence = g_tracker.state();
-    Serial.printf("[presence] %s  (rssi %d dBm, ~%s m, %lu samples)\r\n",
+    Con.printf("[presence] %s  (rssi %d dBm, ~%s m, %lu samples)\r\n",
                   g_tracker.isPresent() ? "PRESENT" : "ABSENT", g_tracker.filteredRssi(),
                   fmt1(g_tracker.distanceM()).c_str(),
                   static_cast<unsigned long>(g_tracker.totalSamples()));
@@ -1890,7 +2049,7 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
   if (g_door.state() != g_lastReportedDoorState) {
     g_lastReportedDoorState = g_door.state();
     const bool manual = g_door.lastSource() == SRC_MANUAL;
-    Serial.printf("[door] %s  (%s, rssi %d dBm, ~%s m)\r\n",
+    Con.printf("[door] %s  (%s, rssi %d dBm, ~%s m)\r\n",
                   DoorController::stateName(g_door.state()),
                   manual ? "manual" : "beacon", g_tracker.filteredRssi(),
                   fmt1(g_tracker.distanceM()).c_str());
@@ -1902,9 +2061,9 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
   if (scanHealthy != g_lastReportedScanHealthy) {
     g_lastReportedScanHealthy = scanHealthy;
     if (scanHealthy) {
-      Serial.println(F("[radio] healthy — advertisements resumed"));
+      Con.println(F("[radio] healthy — advertisements resumed"));
     } else {
-      Serial.printf("[radio] UNHEALTHY — nothing heard from any device for %lu ms\r\n",
+      Con.printf("[radio] UNHEALTHY — nothing heard from any device for %lu ms\r\n",
                     static_cast<unsigned long>(BleScanner::advAgeMs(nowMs)));
     }
   }
@@ -2104,6 +2263,29 @@ bool applyRemoteCommand(const char *line, String &result) {
     result = "door takes open, close or auto";
     return false;
   }
+  if (strcmp(verb, "maint") == 0) {
+    const char *a = arg();
+    const bool wantOff = a != nullptr && (strcmp(a, "off") == 0 || strcmp(a, "0") == 0);
+    String msg;
+    if (wantOff) {
+      endMaintenance(msg);
+      result = msg;
+      return true;
+    }
+    // A bare `maint` uses the default window; `maint <minutes>` names one.
+    // Minutes rather than milliseconds because this is typed by a person
+    // standing at a door, and a mistyped zero in milliseconds is a window
+    // that ends before they have walked back.
+    uint32_t ms = MAINT_DEFAULT_MS;
+    if (a != nullptr && strcmp(a, "on") != 0) {
+      const long mins = strtol(a, nullptr, 10);
+      if (mins <= 0) { result = "maint takes <minutes>, 'on' or 'off'"; return false; }
+      ms = static_cast<uint32_t>(mins) * 60000UL;
+    }
+    const bool ok = beginMaintenance(millis(), ms, msg);
+    result = msg;
+    return ok;
+  }
   if (strcmp(verb, "lock") == 0 || strcmp(verb, "unlock") == 0) {
     const bool want = (verb[0] == 'l');
     g_locked = want;
@@ -2198,7 +2380,7 @@ void serviceRemoteCommands() {
   for (int i = 0; i < 4 && WifiLogger::popCommand(line); i++) {
     String result;
     const bool ok = applyRemoteCommand(line, result);
-    Serial.printf("[cmd] %s -> %s\r\n", line, result.c_str());
+    Con.printf("[cmd] %s -> %s\r\n", line, result.c_str());
     if (ok) {
       applied++;
       // `beep` already sounds; a second tune on top would cut it off.
@@ -2250,9 +2432,19 @@ void controlTask(void *) {
     //    when the beacon is silent, so a disappearing beacon is still noticed.
     BleSample sample;
     if (BleScanner::waitForSample(sample, CONTROL_TICK_MS)) {
+      // The raw reading, not the filtered one: calibration is about what the
+      // radio actually delivers at this mounting. Filtering is a choice made
+      // afterwards, and folding it in here would hide the spikes that decide
+      // where a threshold can safely go.
+      //
+      // Fed from BOTH paths. The drain loop below only has anything in it when
+      // samples arrived faster than the tick, which at ~2 Hz is almost never —
+      // so feeding only the loop meant the distribution stayed empty.
       g_tracker.addSample(sample.rssi, sample.measuredPower, sample.atMs);
+      Maintenance::addSample(sample.atMs, sample.rssi);
       while (BleScanner::popSample(sample)) {
         g_tracker.addSample(sample.rssi, sample.measuredPower, sample.atMs);
+        Maintenance::addSample(sample.atMs, sample.rssi);
       }
     }
 
@@ -2261,6 +2453,8 @@ void controlTask(void *) {
     // 2. Re-evaluate presence. Must run even with no new samples — that is how
     //    a beacon that has gone silent gets noticed.
     g_tracker.update(now);
+
+    serviceMaintenance(now);
 
 #if REMOTE_CONFIG && PETDOOR_ENABLE_WIFI
     // Anything the server sent back with the last upload. Applied here rather
@@ -2279,8 +2473,8 @@ void controlTask(void *) {
     // and never reboot with the door open on a present animal.
     if (g_restartAtMs != 0 && static_cast<int32_t>(now - g_restartAtMs) >= 0 &&
         !WifiLogger::busy()) {
-      Serial.println(F("[cmd] restarting to apply a new beacon list"));
-      Serial.flush();
+      Con.println(F("[cmd] restarting to apply a new beacon list"));
+      Con.flush();
       delay(200);
       ESP.restart();
     }
@@ -2301,8 +2495,14 @@ void controlTask(void *) {
     // 4b. Offer the uploader a window. "Idle" means the animal is not around
     //     and the door is shut, so sharing the antenna cannot cost us a
     //     detection that matters. See wifi_logger.h.
-    const bool idle = !g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
-                      g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen();
+    // Nothing can actuate during a maintenance window, so sharing the antenna
+    // cannot cost a detection that matters — and the network console needs the
+    // radio up for the whole window. Without this the ordinary rule would hand
+    // BLE the antenna precisely when the collar is held at the door, which is
+    // the one time calibration needs the link.
+    const bool idle = Maintenance::active(now) ||
+                      (!g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
+                       g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen());
 #if PETDOOR_ENABLE_WIFI
     static uint32_t lastStatusMs = 0;
     if (now - lastStatusMs >= 5000) {
@@ -2327,11 +2527,11 @@ void controlTask(void *) {
     if (g_entry == ENTRY_NONE && g_calibrate && (now - g_lastCalibrateMs) >= CALIBRATE_INTERVAL_MS) {
       g_lastCalibrateMs = now;
       if (g_tracker.hasFix(now)) {
-        Serial.printf("[cal] raw %4d  filtered %4d dBm  ~%s m  %s\r\n", g_tracker.rawRssi(),
+        Con.printf("[cal] raw %4d  filtered %4d dBm  ~%s m  %s\r\n", g_tracker.rawRssi(),
                       g_tracker.filteredRssi(), fmt1(g_tracker.distanceM()).c_str(),
                       g_tracker.isPresent() ? "PRESENT" : "absent");
       } else {
-        Serial.printf("[cal] no fix (last seen %lu ms ago)\r\n",
+        Con.printf("[cal] no fix (last seen %lu ms ago)\r\n",
                       static_cast<unsigned long>(g_tracker.sampleAgeMs(now)));
       }
     }
@@ -2343,7 +2543,7 @@ void controlTask(void *) {
 }  // namespace
 
 void setup() {
-  Serial.begin(SERIAL_BAUD);
+  Con.begin(SERIAL_BAUD);
   delay(200);
 
   // Relays first: get the outputs into a known-safe state before anything else
@@ -2417,13 +2617,13 @@ void setup() {
     bool blow = BUZZER_ACTIVE_LOW != 0;
     const bool stored = BleScanner::loadStoredChime(bp, bpassive, blow);
     if (!Chime::configure(bp, bpassive, blow)) {
-      Serial.printf("[chime] refusing GPIO %d: %s\r\n", bp,
+      Con.printf("[chime] refusing GPIO %d: %s\r\n", bp,
                     Chime::pinProblem(bp) ? Chime::pinProblem(bp) : "invalid");
-      Serial.println(F("[chime] annunciator disabled; 'w' then 'buzzer <pin>' to fix"));
+      Con.println(F("[chime] annunciator disabled; 'w' then 'buzzer <pin>' to fix"));
       Chime::configure(-1, false, false);
     } else if (stored && Chime::enabled()) {
       const char *warn = Chime::pinProblem(Chime::pin());
-      if (warn) Serial.printf("[chime] GPIO %d: %s\r\n", Chime::pin(), warn);
+      if (warn) Con.printf("[chime] GPIO %d: %s\r\n", Chime::pin(), warn);
     }
   }
 
@@ -2434,7 +2634,7 @@ void setup() {
     bool sl = SENSOR_ACTIVE_LOW != 0;
     BleScanner::loadStoredSensors(so, sc, sl);
     if (!Position::configure(so, sc, sl)) {
-      Serial.printf("[pos] refusing GPIO %d/%d — check 'w' then 'sensors'\r\n", so, sc);
+      Con.printf("[pos] refusing GPIO %d/%d — check 'w' then 'sensors'\r\n", so, sc);
       Position::configure(-1, -1, true);
     }
   }
@@ -2444,12 +2644,12 @@ void setup() {
   // about before they start wondering why the animal is outside.
   g_locked = BleScanner::loadStoredLock();
   if (g_locked) {
-    Serial.println(F("  !! THIS DOOR IS LOCKED — the beacon cannot open it"));
-    Serial.println(F("  !! 'K' unlocks, or queue `unlock` from the log server"));
+    Con.println(F("  !! THIS DOOR IS LOCKED — the beacon cannot open it"));
+    Con.println(F("  !! 'K' unlocks, or queue `unlock` from the log server"));
   }
 
   if (!BleScanner::begin()) {
-    Serial.println(F("[fatal] BLE scanner failed to start; rebooting in 5 s"));
+    Con.println(F("[fatal] BLE scanner failed to start; rebooting in 5 s"));
     delay(5000);
     ESP.restart();
   }
@@ -2460,7 +2660,7 @@ void setup() {
   WifiLogger::begin();
   xTaskCreatePinnedToCore(controlTask, "petdoor", CONTROL_TASK_STACK, nullptr, 1,
                           &g_controlTaskHandle, 1);
-  Serial.println(F("[system] running"));
+  Con.println(F("[system] running"));
 }
 
 void loop() {

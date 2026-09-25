@@ -65,6 +65,10 @@ uint32_t epochNow() {
 }
 
 void record(LogEventType type, uint8_t detail, int rssi) {
+  record(type, detail, rssi, 0);
+}
+
+void record(LogEventType type, uint8_t detail, int rssi, int16_t reserved) {
   LogEntry &e = g_ring[g_head];
   e.epochSec = epochNow();
   e.uptimeSec = millis() / 1000;
@@ -72,7 +76,7 @@ void record(LogEventType type, uint8_t detail, int rssi) {
   e.type = static_cast<uint8_t>(type);
   e.detail = detail;
   e.rssi = static_cast<int16_t>(rssi);
-  e.reserved = 0;
+  e.reserved = reserved;
 
   g_head = static_cast<uint16_t>((g_head + 1) % EVENT_LOG_CAPACITY);
   if (g_count < EVENT_LOG_CAPACITY) g_count++;
@@ -110,6 +114,8 @@ const char *typeName(uint8_t type) {
     case LOG_FIX_LOST: return "FIX_LOST";
     case LOG_FIX_GOT: return "FIX_GOT";
     case LOG_STALLED: return "STALLED";
+    case LOG_MAINT: return "MAINT";
+    case LOG_CONSOLE: return "CONSOLE";
     default: return "?";
   }
 }
@@ -150,6 +156,21 @@ void dump(Stream &out) {
       out.printf(" reason=%u", e.detail);
     } else if (e.type == LOG_OPEN || e.type == LOG_CLOSE) {
       out.printf(" %s", e.detail ? "manual" : "beacon");
+    } else if (e.type == LOG_MAINT) {
+      out.printf(" %s", e.detail == 1   ? "started"
+                        : e.detail == 2 ? "ended by hand"
+                                        : "expired");
+    } else if (e.type == LOG_CONSOLE) {
+      // Spelled out rather than left as a number. This is the line somebody
+      // scans when they want to know whether anything was knocking on a port
+      // that can open the door, and "detail=0" does not answer that question.
+      out.printf(" %s", e.detail == 1   ? "attached"
+                        : e.detail == 2 ? "refused, already in session"
+                        : e.detail == 3 ? "no password given"
+                                        : "** WRONG PASSWORD **");
+      // The last octet of whoever it was, which only exists on the door: the
+      // upload format carries type/detail/rssi and has no room for it.
+      if (e.reserved != 0) out.printf(" from .%d", e.reserved);
     }
     if (e.rssi != 0) out.printf(" rssi=%d", e.rssi);
     out.println();
@@ -160,13 +181,20 @@ void dump(Stream &out) {
 }
 
 void dumpCsv(Stream &out) {
-  out.println(F("epoch,uptime_s,boot,event,detail,rssi"));
+  // `src` is the seventh and newest column. A server that predates it splits on
+  // commas and ignores anything past the sixth field, so adding it here cannot
+  // break an installation that has not been updated yet.
+  //
+  // It carries whatever the event wanted to say about its origin and is 0 for
+  // almost everything; today only CONSOLE entries set it, to the last octet of
+  // the address that connected.
+  out.println(F("epoch,uptime_s,boot,event,detail,rssi,src"));
   LogEntry e;
   for (uint16_t i = 0; i < g_count; i++) {
     if (!get(i, e)) break;
-    out.printf("%lu,%lu,%u,%s,%u,%d\r\n", static_cast<unsigned long>(e.epochSec),
+    out.printf("%lu,%lu,%u,%s,%u,%d,%d\r\n", static_cast<unsigned long>(e.epochSec),
                static_cast<unsigned long>(e.uptimeSec), e.bootNum, typeName(e.type),
-               e.detail, e.rssi);
+               e.detail, e.rssi, e.reserved);
   }
 }
 
