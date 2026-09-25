@@ -538,6 +538,65 @@
 #define OTA_PASSWORD ""
 #endif
 
+// ---------------------------------------------------------------------------
+// Maintenance mode — a bounded window in which the beacon cannot move the door
+// ---------------------------------------------------------------------------
+//
+// Proximity thresholds are only meaningful for the door where it is MOUNTED:
+// the ESP32's antenna is a PCB trace and it is directional, so the same beacon
+// at the same distance reads several dB apart depending on which way the board
+// faces. Calibrating in place means standing at the door with the collar, which
+// is exactly what makes the door actuate — so a window is needed in which it
+// listens but does not act. See maintenance.h.
+
+// How long a maintenance window lasts when no duration is given. Long enough to
+// walk the boundary a few times and read the numbers back.
+#ifndef MAINT_DEFAULT_MS
+#define MAINT_DEFAULT_MS 3600000UL   // 60 minutes
+#endif
+
+// Floor and ceiling on a requested window. The ceiling is the safety property:
+// a door that cannot let an animal in must not stay that way indefinitely, and
+// every window ends by itself. Raising this is raising how long the door can be
+// left unable to do its job with nobody watching.
+#ifndef MAINT_MIN_MS
+#define MAINT_MIN_MS 60000UL         // 1 minute
+#endif
+#ifndef MAINT_MAX_MS
+#define MAINT_MAX_MS 14400000UL      // 4 hours
+#endif
+
+// How often the accumulated RSSI distribution is uploaded while a window is
+// open, so it can be read from a browser rather than a cable.
+#ifndef MAINT_REPORT_MS
+#define MAINT_REPORT_MS 30000UL
+#endif
+
+// ---------------------------------------------------------------------------
+// Network console
+// ---------------------------------------------------------------------------
+//
+// The console, reachable over WiFi during a maintenance window. It only listens
+// while that window is open, and it is the same console the UART offers — so it
+// can open the door. See console.h for why it is bound to the window.
+
+#ifndef CONSOLE_PORT
+#define CONSOLE_PORT 23
+#endif
+
+// Required before any byte reaches the console. Empty DISABLES the network
+// console entirely, which is the default: this firmware must not ship a way
+// onto your door that works out of the box. Set it in secrets.h.
+#ifndef CONSOLE_PASSWORD
+#define CONSOLE_PASSWORD ""
+#endif
+
+// How long a connected client has to produce that password before it is
+// dropped, so a half-open connection cannot hold the single client slot.
+#ifndef CONSOLE_AUTH_TIMEOUT_MS
+#define CONSOLE_AUTH_TIMEOUT_MS 15000UL
+#endif
+
 // NTP server used to set the clock, so log entries carry real timestamps.
 #ifndef NTP_SERVER
 #define NTP_SERVER "pool.ntp.org"

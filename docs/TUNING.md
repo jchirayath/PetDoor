@@ -36,8 +36,101 @@ once: `-65` is *greater* than `-75`.
 - Put the beacon **where it will actually be** — on the collar, in the pocket,
   wherever. A beacon in your hand at chest height reads very differently from
   one at ground level on a bird.
-- Have the door mechanism **disconnected** for the walking-around part. You are
-  measuring signal, not cycling a motor.
+- Have the door mechanism **disconnected** for the walking-around part — or
+  better, use **maintenance mode** (below), which stops the door acting without
+  anybody unplugging anything.
+
+---
+
+## Calibrating a door that is already mounted
+
+The two bullets above pull in opposite directions. The numbers are only valid
+for the door **where it lives** — the ESP32's antenna is a trace on the PCB and
+it is directional, so the same beacon at the same distance can read 7 dB apart
+depending on which way the board faces and what metal is beside it. A threshold
+calibrated on a bench describes the bench.
+
+But calibrating in place means standing at the door holding the collar, which is
+exactly the condition that makes the door actuate. Measuring it changes it, and
+the relay cycles the whole time you are trying to read a number.
+
+**Maintenance mode is the way out.** For a bounded window the door keeps
+listening to the beacon and stops acting on it:
+
+```
+M                      on the console — a 60-minute window
+maint 30               from the server or the Controls tab — 30 minutes
+maint off              end it early
+```
+
+While a window is open:
+
+- **the beacon cannot open or close the door.** Note this blocks *both*
+  directions, unlike `lock`, which still lets a locked door close when the
+  collar leaves. You are standing at the door holding the collar; a door that
+  shuts on you is no use for measuring and no fun to stand in.
+- **`o` and `x` still work.** The window stops the *beacon* commanding the
+  door. It does not take the door away from you.
+- **the console is reachable over WiFi**, which is the point — see below.
+- **the door accumulates the RSSI distribution** at whatever position the
+  collar is in. `s` shows it; `r` clears it when you move.
+
+### It ends by itself, and that is deliberate
+
+Every window has a deadline. It is capped by `MAINT_MAX_MS` (4 hours), it is
+never written to flash, and it does not survive a reboot. A door left inert by a
+forgotten flag, a dropped network, or a brownout is a door that cannot let an
+animal in that night — so "I will turn it off later" is not something this mode
+lets you rely on. The dashboard shows the remaining minutes for the same reason.
+
+### The console, without a cable
+
+Set `CONSOLE_PASSWORD` in `secrets.h`, then during a window:
+
+```
+nc 192.168.1.42 23           # the door's address; telnet works too
+password: ...
+```
+
+The door's address is on the **Controls tab** while a window is open, and the
+serial log prints it when the window opens. Do not count on `petdoor.local` —
+mDNS is only registered while an OTA window is running, not for this.
+
+You get the **whole** console — `c`, `t`, `f`, `s`, `l`, everything this page
+describes. That is the difference between calibrating a mounted door and taking
+it off the wall to do it.
+
+Two things worth being clear about. This is the same console the cable offers,
+so **it can open your door**; that is why it only listens during a window, why
+the window expires, and why an unset `CONSOLE_PASSWORD` disables it entirely.
+And it is **plaintext on your LAN** — an acceptable trade for a bounded window
+on a home network, and not something to forward through your router.
+
+### The measurement itself
+
+Percentiles, not averages. The average is what misleads: a collar sitting a hair
+off the close threshold has a perfectly reasonable-looking mean and still never
+produces an unbroken stretch long enough to act on. What sets a usable threshold
+is the **tails** — the strongest reading from away, and the weakest from at the
+door — because those are what the door has to tell apart.
+
+```
+calibration  : n=482  min -104  p5 -74  median -63  p95 -47  max -42
+```
+
+Walk the collar to a position, press **`r`**, wait a minute, press **`s`**.
+Repeat for each position that matters. Then:
+
+- the **open** threshold must sit above the *strongest* reading you saw from
+  away (its `max`, or `p95` if you are willing to discard outliers);
+- the **close** threshold must sit below the *weakest* reading you saw at the
+  door (its `min`, or `p5`).
+
+**If those two overlap, no threshold pair works** and no amount of tuning will
+fix it. That is a real result, not a failed measurement: it means the radio
+cannot distinguish those two positions from where the board is mounted. The
+answers are to move or reorient the board, or to fit the limit switches in
+[HARDWARE.md](HARDWARE.md) and stop inferring position from signal strength.
 
 ---
 

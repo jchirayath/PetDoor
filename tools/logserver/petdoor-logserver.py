@@ -88,13 +88,18 @@ SMTP_CRYPTO = os.environ.get("SMTP_CRYPTO", "tls").strip().lower()
 #
 # Settings changes are deliberately absent. They are recorded on the Settings
 # tab, they are reversible, and none of them is a thing happening AT the door.
-NOTIFY_VERBS = ("door", "lock", "unlock", "defaults", "macs", "reboot", "ota")
+NOTIFY_VERBS = ("door", "lock", "unlock", "defaults", "macs", "reboot", "ota",
+                # A maintenance window stops the door guarding the animal and
+                # opens a console on it. Both halves deserve an email.
+                "maint")
 NOTIFY_DOOR_ARGS = ("open",)   # `door close`/`auto` are the safe direction
 
 EVENT_LABEL = {
     "OPEN": "came in", "CLOSE": "went out", "BOOT": "restarted",
     "REFUSED": "refused", "FIX_GOT": "beacon found", "FIX_LOST": "beacon lost",
     "STALLED": "did not complete its travel",
+    "MAINT": "maintenance mode",
+    "CONSOLE": "network console",
 }
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
@@ -120,6 +125,11 @@ def init_db():
             detail   INTEGER NOT NULL,
             rssi     INTEGER NOT NULL,
             received INTEGER NOT NULL,
+            -- Origin, when the event has one. 0 for almost everything; today
+            -- only CONSOLE rows set it, to the last octet of the address that
+            -- connected. Deliberately not part of the primary key: it says
+            -- something ABOUT the event, it does not identify it.
+            src      INTEGER NOT NULL DEFAULT 0,
             -- The door has no unique event id, so identity is the tuple that
             -- cannot repeat for one device: which boot, how far into it, what
             -- happened. Re-uploading the same ring is therefore idempotent.
@@ -196,7 +206,7 @@ FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
 VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
                "scan", "reboot", "lock", "unlock", "presses",
-               "travel", "buzzer", "beep", "sensors", "upload")
+               "travel", "buzzer", "beep", "sensors", "upload", "maint")
 
 # ---------------------------------------------------------------- web control
 #
@@ -288,6 +298,10 @@ WEB_COMMANDS = {
     "beep":       ([], 0, None, False),
     "scan":       ([], 0, None, False),
     "resetstats": ([], 0, None, False),
+    # Needs confirming because for its duration the door deliberately ignores
+    # the collar — an animal outside cannot let itself in. The firmware bounds
+    # the window; this bounds the surprise.
+    "maint":      ([_whole(1, 240, " min")], 0, None, True),
 
     # --- detection ---------------------------------------------------------
     "thresholds": ([_whole(-120, 0, " dBm"), _whole(-120, 0, " dBm")], 2,
@@ -371,6 +385,11 @@ def web_command_allowed(command):
     # Same for the switches.
     if verb == "sensors" and args and args[0].lower() in ("off", "none"):
         return (True, "") if len(args) == 1 else (False, "'sensors off' takes nothing else")
+
+    # "maint off" ends the window; "maint" alone takes the firmware's default
+    # duration; "maint <minutes>" names one and is range-checked below.
+    if verb == "maint" and args and args[0].lower() in ("off", "on"):
+        return (True, "") if len(args) == 1 else (False, f"'maint {args[0].lower()}' takes nothing else")
 
     # macs takes the rest of the line as one comma-separated value.
     if verb == "macs":
@@ -548,6 +567,9 @@ def migrate():
         # settings form shows "not reported yet" rather than guessing.
         _ensure_column(conn, "devices", "config", "TEXT")
         _ensure_column(conn, "firmware", "git", "TEXT")
+        # Rows uploaded before the door sent a seventh CSV column keep
+        # src = 0, which reads as "not reported" rather than an address.
+        _ensure_column(conn, "events", "src", "INTEGER NOT NULL DEFAULT 0")
 
 
 def get_key():
@@ -610,15 +632,55 @@ def note_device(device, version, build, boots, ip, git=None):
 def store(device, rows):
     added = 0
     now = int(time.time())
+    fresh = []
     with db() as conn:
         for r in rows:
             cur = conn.execute(
-                "INSERT OR IGNORE INTO events(device,epoch,uptime,boot,type,detail,rssi,received)"
-                " VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO events"
+                "(device,epoch,uptime,boot,type,detail,rssi,received,src)"
+                " VALUES(?,?,?,?,?,?,?,?,?)",
                 (device, r["epoch"], r["uptime"], r["boot"], r["type"],
-                 r["detail"], r["rssi"], now))
+                 r["detail"], r["rssi"], now, r.get("src", 0)))
+            if cur.rowcount:
+                fresh.append(r)
             added += cur.rowcount
+    # INSERT OR IGNORE means the door can re-upload its whole ring without repeats;
+    # only genuinely new rows reach here, so this cannot mail the same failed
+    # attempt twice.
+    notify_events(device, fresh)
     return added
+
+
+# Events the door reports that are worth an email on arrival. Kept deliberately
+# tiny: the door uploads its whole ring repeatedly, and a chatty rule here is
+# how PetDoor mail ends up in a folder nobody opens — at which point the one
+# message that mattered is lost with the rest. See notify_command().
+def notify_events(device, rows):
+    if not NOTIFY_TO:
+        return
+    for r in rows:
+        # A wrong password against the network console. That port can open the
+        # door, so a failed attempt is the single event here you would want to
+        # hear about the same day rather than next time you open a dashboard.
+        if r["type"] == "CONSOLE" and r["detail"] == 0:
+            body = (
+                "Somebody tried the door's network console and gave the wrong "
+                "password.\n\n"
+                f"  door    : {device}\n"
+                f"  uptime  : {r['uptime']}s (boot #{r['boot']})\n"
+                + (f"  from    : an address ending .{r['src']} on your network\n\n"
+                   if r.get("src") else
+                   "  from    : not reported (door firmware predates this)\n\n")
+                + "The console only listens during a maintenance window, and it "
+                "drops a client\nthat fails to authenticate. If you were not "
+                "calibrating the door just now,\nsomething on your network was "
+                "knocking on it.\n\n"
+                "https://petdoor.aspl.net/dashboard\n"
+            )
+            ok, why = send_notification(
+                f"wrong console password on {device}", body)
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for console reject: {why}\n")
 
 
 def parse_csv(text):
@@ -632,7 +694,10 @@ def parse_csv(text):
             continue
         try:
             rows.append({"epoch": int(p[0]), "uptime": int(p[1]), "boot": int(p[2]),
-                         "type": p[3].strip()[:16], "detail": int(p[4]), "rssi": int(p[5])})
+                         "type": p[3].strip()[:16], "detail": int(p[4]), "rssi": int(p[5]),
+                         # Seventh column, added later. A door on older firmware
+                         # sends six, and reads as "not reported".
+                         "src": int(p[6]) if len(p) > 6 else 0})
         except ValueError:
             continue
     return rows
@@ -723,7 +788,7 @@ def render():
         for k, v in [("Events", f"{total:,}"), ("Trips outside", f"{trips:,}"),
                      ("Doors", devices), ("Brownouts", brown)])
 
-    cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b"}
+    cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -736,6 +801,22 @@ def render():
         elif r["type"] == "REFUSED":
             detail = {1: "already there", 2: "too soon", 3: "boot grace"}.get(
                 r["detail"], f'reason {r["detail"]}')
+        elif r["type"] == "MAINT":
+            detail = {0: "expired", 1: "started", 2: "ended"}.get(
+                r["detail"], f'detail {r["detail"]}')
+        elif r["type"] == "CONSOLE":
+            # A wrong password against a port that can open the door is the one
+            # entry here worth making loud; the rest are ordinary bookkeeping.
+            detail = {1: "attached", 2: "refused, already in session",
+                      3: "no password given"}.get(r["detail"])
+            if detail is None:
+                detail = ('<strong style="color:var(--bad)">WRONG PASSWORD</strong>'
+                          if r["detail"] == 0 else f'detail {r["detail"]}')
+            # Rendered as ".188" rather than a bare number: it is the last
+            # octet of an address, and the door cannot send the other three.
+            src = r["src"] if "src" in r.keys() else 0
+            if src:
+                detail += f' from .{src}'
         out.append(
             f'<tr><td class="mono">{html.escape(when)}</td>'
             f'<td style="color:var(--dim)">{html.escape(r["device"])}</td>'

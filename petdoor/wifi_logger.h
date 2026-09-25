@@ -104,6 +104,20 @@ void beginOtaWindow(bool petPresent);
 uint32_t stackFreeBytes();
 
 bool otaWindowOpen();
+
+// The door's address on the network, or "-" when the radio is down. Needed
+// because the network console cannot be reached without it, and there is
+// nowhere else to read it from short of the router's lease table.
+String localIp();
+
+// Keep the radio associated regardless of the idle gate, for as long as `on`.
+// Used by a maintenance window, whose network console cannot survive the radio
+// being handed back to BLE after each upload.
+void holdRadio(bool on);
+
+// Is the radio actually associated right now? Distinct from holdRadio(), which
+// only expresses an intent — anything that binds a socket must wait for this.
+bool radioAssociated();
 void closeOtaWindow();
 
 #if REMOTE_CONFIG
