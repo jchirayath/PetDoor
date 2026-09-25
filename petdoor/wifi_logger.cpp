@@ -212,16 +212,18 @@ void syncClock() {
 String buildBody() {
   String body;
   body.reserve(1024);
-  body += F("epoch,uptime_s,boot,event,detail,rssi\n");
+  // Formatted by EventLog, not here. This function used to hand-assemble the
+  // same columns independently, which is how the door came to log a new field,
+  // display it locally, and keep uploading the old six.
+  body += EventLog::csvHeader();
+  body += '\n';
   LogEntry e;
+  char row[96];
   for (uint16_t i = 0; i < EventLog::count(); i++) {
     if (!EventLog::get(i, e)) break;
-    body += String(e.epochSec);   body += ',';
-    body += String(e.uptimeSec);  body += ',';
-    body += String(e.bootNum);    body += ',';
-    body += EventLog::typeName(e.type); body += ',';
-    body += String(e.detail);     body += ',';
-    body += String(e.rssi);       body += '\n';
+    if (EventLog::formatCsvRow(e, row, sizeof(row)) == 0) continue;
+    body += row;
+    body += '\n';
   }
   return body;
 }

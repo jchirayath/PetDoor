@@ -77,6 +77,14 @@ uint32_t epochNow();
 uint16_t count();
 uint16_t capacity();
 
+// The upload wire format, in ONE place. It used to be written out twice —
+// once by dumpCsv() for the console and once by the uploader — and the two
+// drifted the moment a column was added: the door logged the new field, showed
+// it locally, and quietly kept uploading the old six. Anything that serialises
+// an entry must go through these.
+const char *csvHeader();
+size_t formatCsvRow(const LogEntry &e, char *out, size_t n);
+
 // Oldest-first iteration. Returns false once `index` runs past the end.
 bool get(uint16_t index, LogEntry &out);
 
