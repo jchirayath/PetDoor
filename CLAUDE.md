@@ -34,10 +34,16 @@ Two compile-time switches move the size a lot. Measured on min_spiffs:
 
 | | flash | of 1.875 MB |
 |---|---|---|
-| default (Bluedroid + WiFi) | 1,760,679 | 89% |
-| `-DPETDOOR_USE_NIMBLE=1` | 1,295,523 | 65% |
-| `-DPETDOOR_ENABLE_WIFI=0` | 1,121,163 | 57% |
-| both | 650,567 | 33% |
+| default (Bluedroid + WiFi) | 1,811,907 | 92% |
+| `-DPETDOOR_USE_NIMBLE=1` | 1,355,435 | 68% |
+| `-DPETDOOR_ENABLE_WIFI=0` | 1,152,923 | 58% |
+| both | 694,099 | 35% |
+
+**The default build is at 92% and that is close enough to matter.** The network
+console and maintenance mode cost ~51 KB. There is room for a little more, but
+anyone adding a feature to the Bluedroid build should check this number rather
+than assume; `PETDOOR_USE_NIMBLE=1` buys back 24 percentage points and is the
+recommended way out of a full image.
 
 Measure with `compiler.cpp.extra_flags`, **not** `build.extra_flags` — the
 latter carries `-DCORE_DEBUG_LEVEL`, `-DESP32` and the loop/event core settings,
@@ -77,6 +83,8 @@ the folder name and `petdoor.ino` in sync or Arduino IDE stops recognising it.
 | `beacon.*` | iBeacon parsing, classification, distance estimate — pure functions |
 | `chime.*` | Optional buzzer: non-blocking patterns, pin/type discovery at runtime |
 | `position.*` | Optional limit switches: debounce, measured state. Never commands the motor |
+| `maintenance.*` | Bounded window in which the beacon cannot move the door; RSSI histogram for calibration |
+| `console.*` | The console as a Stream, fanned out to the UART and a window-bounded network client |
 
 ## The bug this project exists to fix
 
@@ -123,8 +131,24 @@ comment above it explains why; keep the comment with the code.
    it.
 9. **Door state is owned by one task.** `controlTask` is the only caller of
    `DoorController`. Do not actuate from `loop()` or from a callback.
+10. **A maintenance window expires by itself.** It is stored as a deadline, is
+    bounded by `MAINT_MAX_MS`, and is never written to NVS — a door left inert
+    by a forgotten flag, a lost network or a brownout is a door that cannot let
+    an animal in. It also blocks *both* directions, unlike the lock, because the
+    person calibrating is standing at the door holding the collar.
+11. **The network console never listens outside a maintenance window**, and
+    never without `CONSOLE_PASSWORD`. It is the full console, so it can open the
+    door. Do not start it at boot.
 
 ## Conventions
+
+- **Console output in `petdoor.ino` goes to `Con`, not `Serial`.** `Con` is a
+  `Stream` that writes to the UART and, during a maintenance window, to an
+  authenticated network client as well. A bare `Serial.print` still compiles and
+  still works — it just cannot be read by anyone without a cable, which defeats
+  the point. `wifi_logger.cpp` and `ble_scanner.cpp` deliberately keep using
+  `Serial`: they log transport-level events, and routing those through a
+  transport-dependent sink invites recursion.
 
 - Config goes in `config.h` wrapped in `#ifndef`, never hard-coded at the use
   site. Users override via `secrets.h` or `-D` flags.

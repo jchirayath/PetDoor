@@ -49,6 +49,17 @@
 // push firmware to the door.
 // #define OTA_PASSWORD     "something-only-you-know"
 
+// Password for the network console, which is how the door is calibrated once it
+// is mounted and a USB cable is no longer an option. It is the SAME console the
+// cable offers, so it can open your door — set it to something real.
+//
+// The console only listens during a maintenance window (see docs/TUNING.md),
+// and that window expires by itself, so the port is not open permanently. It is
+// still plaintext on your LAN: fine for a bounded window at home, not something
+// to expose to the internet. Leave this unset and the network console is
+// disabled entirely, which is the default.
+// #define CONSOLE_PASSWORD "something-else-only-you-know"
+
 // Optional, if one server collects from more than one door.
 // #define LOG_DEVICE_ID    "back-door"
 
