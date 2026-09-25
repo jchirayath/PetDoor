@@ -147,6 +147,12 @@ volatile bool g_idleNow = false;
 // having failed.
 volatile bool g_flushForced = false;
 
+// Holds the radio up regardless of what the uploader is doing. A maintenance
+// window sets this because the network console lives on that radio, and a
+// console that vanishes the moment the first upload finishes is no use for
+// calibrating a mounted door. Same idea as g_otaOpen, minus ArduinoOTA.
+volatile bool g_radioHold = false;
+
 bool configured() {
   return WIFI_SSID[0] != '\0';
 }
@@ -154,6 +160,12 @@ bool configured() {
 // Brings the radio up. Returns false on timeout so a missing access point
 // cannot hold BLE hostage indefinitely.
 bool radioUp() {
+  // Already associated: say so and touch nothing. WiFi.begin() on a live
+  // station forces a reassociation, which drops every open TCP socket — and
+  // during a maintenance window one of those is the console somebody is
+  // typing into. Before this, any upload mid-window killed the session.
+  if (WiFi.status() == WL_CONNECTED) return true;
+
   WiFi.mode(WIFI_STA);
   // Modem sleep: lets the BLE controller have the airtime between beacons.
   WiFi.setSleep(true);
@@ -174,6 +186,9 @@ bool radioUp() {
 }
 
 void radioDown() {
+  // Every path that would drop the radio comes through here, which is why the
+  // hold is enforced at this single point rather than at each caller.
+  if (g_radioHold) return;
   WiFi.disconnect(true, true);
   WiFi.mode(WIFI_OFF);
 }
@@ -471,6 +486,12 @@ void doFlush() {
     Serial.println(F("[wifi] could not associate; giving the radio back to BLE"));
     radioDown();
     g_failures++;
+    // Must be cleared on THIS path too, not only at the end of a completed
+    // flush. Without it a forced flush that cannot associate leaves the flag
+    // set, radioUp()'s idle gate keeps passing, and the door retries on every
+    // 100 ms tick — a hot loop that cycles WiFi init/deinit twice a second,
+    // starves BLE, and has been observed to end in a panic.
+    g_flushForced = false;
     g_busy = false;
     return;
   }
@@ -518,7 +539,7 @@ void doFlush() {
     // new event, which would arm another upload, which could fail again.
     Serial.println(F("[wifi] events are kept locally and will be retried"));
   }
-  Serial.println(F("[wifi] radio down"));
+  if (!g_radioHold) Serial.println(F("[wifi] radio down"));
   // One forced attempt per request. Cleared here rather than on success, so a
   // flush that genuinely could not associate does not leave the door ignoring
   // the idle gate on every upload thereafter.
@@ -585,6 +606,12 @@ void uploaderTask(void *) {
       if ((millis() - g_otaOpenedMs) > OTA_WINDOW_MS) stopOta("timed out");
       vTaskDelay(pdMS_TO_TICKS(20));
       continue;  // an update window takes precedence over log uploads
+    }
+
+    // Re-associate if the link dropped while held — a window can outlast an
+    // AP hiccup, and the console has to survive one.
+    if (g_radioHold && !g_busy && WiFi.status() != WL_CONNECTED) {
+      if (!radioUp()) vTaskDelay(pdMS_TO_TICKS(2000));
     }
 
     if (g_flushRequested) {
@@ -678,6 +705,24 @@ uint32_t stackFreeBytes() {
 
 bool otaWindowOpen() { return g_otaOpen; }
 
+bool radioAssociated() { return WiFi.status() == WL_CONNECTED; }
+
+void holdRadio(bool on) {
+  if (g_radioHold == on) return;
+  g_radioHold = on;
+  if (!on) {
+    // Released: put it back to sleep now rather than waiting for whatever
+    // would next have called radioDown().
+    radioDown();
+    Serial.println(F("[wifi] radio released"));
+  }
+}
+
+String localIp() {
+  if (WiFi.status() != WL_CONNECTED) return String("-");
+  return WiFi.localIP().toString();
+}
+
 void beginOtaWindow(bool petPresent) {
   if (!configured()) {
     Serial.println(F("[ota] no WIFI_SSID configured — use the IO0/EN buttons"));
@@ -748,7 +793,12 @@ void printStatus(Stream &out) {
              String(LOG_ENDPOINT_URL).startsWith("https:") ? " (TLS)" : "");
   if (g_lastHttpCode) out.printf("  last response: HTTP %d\r\n", g_lastHttpCode);
   out.printf("  wifi         : %s, %lu uploads, %lu failures%s\r\n",
-             g_busy ? "RADIO UP" : "idle (radio off)",
+             g_busy ? "RADIO UP"
+                    : WiFi.status() == WL_CONNECTED
+                          // Held up by a maintenance window; otherwise the
+                          // radio really is off between uploads.
+                          ? (g_radioHold ? "idle (radio held up)" : "idle (radio on)")
+                          : "idle (radio off)",
              static_cast<unsigned long>(g_uploads),
              static_cast<unsigned long>(g_failures),
              g_clockSynced ? ", clock synced" : ", clock not set");
@@ -779,6 +829,9 @@ bool imageConfirmed() { return true; }
 bool busy() { return false; }
 uint32_t stackFreeBytes() { return 0; }
 bool otaWindowOpen() { return false; }
+String localIp() { return String("-"); }
+void holdRadio(bool) {}
+bool radioAssociated() { return false; }
 void closeOtaWindow() {}
 void beginOtaWindow(bool) {
   Serial.println(F("[ota] not compiled in — use the IO0/EN buttons"));
