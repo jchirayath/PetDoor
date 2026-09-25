@@ -38,6 +38,16 @@ Use **COM and NO**, never NC. NC inverts everything: the controller sees its
 button held down permanently and the pulse becomes a momentary *release*, which
 is a motor that runs continuously or starts the instant power is applied.
 
+### Wiring
+
+![ESP32 with two relays wired to the door controller](https://raw.githubusercontent.com/jchirayath/PetDoor/main/docs/assets/wiring-esp32-2relay.svg)
+
+Each relay is wired **in parallel with an existing button**, so the door cannot
+tell the difference between the ESP32 and a finger. The two are interlocked in
+firmware — energising both at once would short the motor's direction contacts.
+
+![The relays wired to the door's switch](https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/WiringRelaystoSwitch.jpeg)
+
 ## Measure your door's travel time
 
 Time a full open and close with a stopwatch. The reference door takes about
