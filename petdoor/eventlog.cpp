@@ -180,21 +180,30 @@ void dump(Stream &out) {
   }
 }
 
-void dumpCsv(Stream &out) {
+const char *csvHeader() {
   // `src` is the seventh and newest column. A server that predates it splits on
-  // commas and ignores anything past the sixth field, so adding it here cannot
-  // break an installation that has not been updated yet.
-  //
-  // It carries whatever the event wanted to say about its origin and is 0 for
-  // almost everything; today only CONSOLE entries set it, to the last octet of
-  // the address that connected.
-  out.println(F("epoch,uptime_s,boot,event,detail,rssi,src"));
+  // commas and ignores anything past the sixth field, so adding a column here
+  // cannot break an installation that has not been updated yet.
+  return "epoch,uptime_s,boot,event,detail,rssi,src";
+}
+
+size_t formatCsvRow(const LogEntry &e, char *out, size_t n) {
+  const int w = snprintf(out, n, "%lu,%lu,%u,%s,%u,%d,%d",
+                         static_cast<unsigned long>(e.epochSec),
+                         static_cast<unsigned long>(e.uptimeSec), e.bootNum,
+                         typeName(e.type), e.detail, e.rssi, e.reserved);
+  return (w < 0 || static_cast<size_t>(w) >= n) ? 0 : static_cast<size_t>(w);
+}
+
+void dumpCsv(Stream &out) {
+  out.println(csvHeader());
   LogEntry e;
+  char row[96];
   for (uint16_t i = 0; i < g_count; i++) {
     if (!get(i, e)) break;
-    out.printf("%lu,%lu,%u,%s,%u,%d,%d\r\n", static_cast<unsigned long>(e.epochSec),
-               static_cast<unsigned long>(e.uptimeSec), e.bootNum, typeName(e.type),
-               e.detail, e.rssi, e.reserved);
+    if (formatCsvRow(e, row, sizeof(row)) == 0) continue;
+    out.print(row);
+    out.print("\r\n");
   }
 }
 
