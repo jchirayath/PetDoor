@@ -842,6 +842,14 @@ function renderDoors(devs){
           // worth shouting about, because from the outside it looks identical
           // to a door that is simply shut.
           +(st.locked==="1"?`<span class="pill lock">LOCKED — collar cannot open it</span>`:"")
+          // Same reasoning as the lock pill, more so: during a maintenance
+          // window the door ignores the collar entirely, which from out here
+          // is indistinguishable from a door that has stopped working. Say how
+          // long is left, because "it ends by itself" is the whole safety
+          // argument and it is worthless if nobody can see the clock.
+          +((Number(st.maint||0)||0)>0
+             ? `<span class="pill lock">MAINTENANCE — not moving for ${Math.ceil(Number(st.maint)/60)} more min</span>`
+             : "")
           +`</div>`;
       }
 
@@ -1136,6 +1144,9 @@ function renderControl(){
   const d=devices[0]||{};
   const st=parseStatus(d.status);
   const locked=st.locked==="1";
+  // Seconds left in a maintenance window; absent on firmware older than this
+  // field, which reads as 0 and simply offers to start one.
+  const maintLeft=Number(st.maint||0)||0;
   const stand=doorStanding(d);
 
   // Disabled rather than hidden when it would be a no-op: a button that
@@ -1157,6 +1168,18 @@ function renderControl(){
        +b("unlock","Unlock","b-quiet",!locked))
     +group("Check",
         b("beep","Beep","b-quiet",false))
+    // Its own group because it is not an action on the door so much as a
+    // change to what the door is: for the window's duration the collar stops
+    // working. Saying how long it lasts on the button itself matters — the
+    // safety property here is that it ends by itself, and a control that does
+    // not say so invites somebody to leave it on.
+    +group("Maintenance",
+        (maintLeft>0
+          ? `<button class="b-danger" data-cmd="maint off">End maintenance (${Math.ceil(maintLeft/60)} min left)</button>`
+            // Where to point a console. Shown only while a window is open,
+            // because that is the only time anything is listening there.
+            +(st.ip&&st.ip!=="-"?`<span class="glabel" style="align-self:center">console: ${esc(st.ip)}:23</span>`:"")
+          : `<button class="b-quiet" data-cmd="maint 30" data-confirm="Start a 30-minute maintenance window? The collar will NOT open or close the door until it expires, and the console opens over WiFi. The window ends by itself.">Maintenance (30 min)</button>`))
     +'</div>';
 
   let queue="";
