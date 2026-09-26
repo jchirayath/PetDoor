@@ -35,11 +35,15 @@ one.
 
 Any board with the ESP32 Arduino core 3.x support will work. Note:
 
-- **Classic ESP32** uses the **Bluedroid** BLE stack.
-- **ESP32-S3 / C3 / C6** use **NimBLE**.
+- **This firmware uses NimBLE on every chip**, including the classic ESP32,
+  because Bluedroid leaves it with under 7 KB of free heap and that panics it.
+  One library — see [ESP32-PRIMER.md](ESP32-PRIMER.md#the-one-library-you-must-install).
+- **Classic ESP32** also ships a **Bluedroid** stack in the core, still
+  selectable with `PETDOOR_USE_NIMBLE 0`.
+- **ESP32-S3 / C3 / C6** only have NimBLE, so there is nothing to choose.
 
-The firmware builds on both, and deliberately only uses BLE APIs common to the
-two stacks. If you contribute code here, keep it that way.
+The firmware builds on both stacks, and deliberately only uses BLE APIs common
+to the two. If you contribute code here, keep it that way.
 
 **ESP32-S2 will not work** — it has no Bluetooth radio at all. This catches
 people out because the board looks identical to an S3.

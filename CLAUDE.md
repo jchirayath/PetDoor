@@ -34,33 +34,45 @@ Two compile-time switches move the size a lot. Measured on min_spiffs:
 
 | | flash | of 1.875 MB |
 |---|---|---|
-| default (Bluedroid + WiFi) | 1,811,907 | 92% |
-| `-DPETDOOR_USE_NIMBLE=1` | 1,355,435 | 68% |
-| `-DPETDOOR_ENABLE_WIFI=0` | 1,152,923 | 58% |
-| both | 694,099 | 35% |
+| **default (NimBLE + WiFi)** | **1,358,607** | **69%** |
+| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,815,239 | 92% |
+| `-DPETDOOR_ENABLE_WIFI=0` | 694,099 | 35% |
 
-**The default build is at 92% and that is close enough to matter.** The network
-console and maintenance mode cost ~51 KB. There is room for a little more, but
-anyone adding a feature to the Bluedroid build should check this number rather
-than assume; `PETDOOR_USE_NIMBLE=1` buys back 24 percentage points and is the
-recommended way out of a full image.
+**NimBLE is the default.** It was opt-in until a door in service panicked on
+three consecutive boots (`reset=4`) and the cause turned out to be heap
+exhaustion:
+
+| | Bluedroid | NimBLE |
+|---|---|---|
+| flash | 92% | 69% |
+| free heap | 63 KB | 134 KB |
+| **heap low-water** | **6.9 KB** | **80 KB** |
+
+6.9 KB is the least free RAM that door ever had. An allocation failing down
+there panics the chip. Bluedroid still builds and still works, but it has no
+headroom left once WiFi, the uploader, OTA and the network console are all
+resident — so it is a supported option, not a sensible default.
 
 Measure with `compiler.cpp.extra_flags`, **not** `build.extra_flags` — the
 latter carries `-DCORE_DEBUG_LEVEL`, `-DESP32` and the loop/event core settings,
 and overriding it drops them and inflates the image by ~33 KB.
 
-`PETDOOR_USE_NIMBLE=1` needs the NimBLE-Arduino library installed and is
-opt-in; the default build must keep working with no extra libraries. It has been
-validated on the reference hardware: same target sample rate as Bluedroid, and
-free heap 66 KB -> 138 KB (low-water 7.9 KB -> 88 KB), with WiFi, NTP, signed
-upload and OTA all working. Do not quote the static-RAM delta as the benefit —
-it is heap, and it is an order of magnitude larger. **Both
-stacks must keep compiling** — check both before claiming a BLE change works:
+The default now **requires the NimBLE-Arduino library**. That reverses a
+long-standing rule that a clean checkout must compile with no extra libraries,
+and it was not given up lightly — but a default that panics is worse than a
+default that needs one Library Manager entry. PlatformIO installs it from
+`platformio.ini`; Arduino IDE users add it by hand, and `ble_scanner.cpp` emits
+an `#error` naming the library and the opt-out flag rather than letting them
+hit a bare "NimBLEDevice.h: No such file".
+
+Do not quote the static-RAM delta as NimBLE's benefit — it is heap, and it is
+an order of magnitude larger. **Both stacks must keep compiling** — check both
+before claiming a BLE change works:
 
 ```bash
 "$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs petdoor
 "$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs \
-  --build-property "build.extra_flags=-DPETDOOR_USE_NIMBLE=1" petdoor
+  --build-property "build.extra_flags=-DPETDOOR_USE_NIMBLE=0" petdoor
 ```
 
 Do not flash hardware unless the user explicitly asks. Uploading drives a real

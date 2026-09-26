@@ -52,8 +52,10 @@ TX↔RX **crossed**. TX-to-TX gives a silent port and no error message.
 does not fit the default layout at all — this is required, not an optimisation.
 
 **BLE stack.** The default build uses Bluedroid, which ships with the Arduino
-core. An optional one-library switch to **NimBLE** takes flash usage from 89% to
-65% and frees about 72 KB of heap, with no change in detection performance.
+core. The default build uses **NimBLE**, which needs one library and takes flash
+usage from 92% to 69% while freeing about 71 KB of heap, with no change in
+detection performance. Bluedroid is still selectable, but it left doors with
+under 7 KB of free heap at their worst moment, which panicked them.
 
 Full primer:
 **[ESP32-PRIMER.md](https://github.com/jchirayath/PetDoor/blob/main/docs/ESP32-PRIMER.md)**
