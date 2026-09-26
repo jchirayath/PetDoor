@@ -469,17 +469,19 @@ half the image, so the difference is large:
 
 | Full firmware, `min_spiffs`, WiFi on | flash | | RAM |
 |---|---|---|---|
-| Bluedroid | 1,760,679 | 89% | 72,924 |
-| NimBLE | 1,295,523 | 65% | 67,740 |
-| **saving** | **465,156** (454 KB) | | **5,184** |
+| **NimBLE** *(default)* | 1,358,607 | 69% | 69,184 |
+| Bluedroid (`PETDOOR_USE_NIMBLE=0`) | 1,815,239 | 92% | 74,400 |
+| **saving** | **456,632** (446 KB) | | **5,216** |
 
 Bluedroid's host (`libbt.a`, 521 KB linked) is what goes away; the controller
 (`libbtdm_app.a`, 133 KB) is shared and stays.
 
 Those are link-time figures. On hardware the *heap* difference is larger than
 the static RAM column suggests, because most of what Bluedroid costs it takes at
-runtime — 66,304 bytes free versus 138,480, and a low-water mark of 7,912 versus
-88,064. Detection speed is unchanged (1.93 versus 1.89 target samples/sec over
+runtime — 62,824 bytes free versus 134,144, and a low-water mark of 6,968
+versus 80,152. That low-water figure is why NimBLE is the default: an
+allocation failing at 7 KB panics the chip, and it did, on three consecutive
+boots of a door in service. Detection speed is unchanged (1.93 versus 1.89 target samples/sec over
 matched windows); the beacon's advertising interval sets that, not the stack.
 See [CONFIGURATION.md](CONFIGURATION.md#ble-host-stack) for the full run.
 

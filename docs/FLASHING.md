@@ -50,7 +50,7 @@ arduino-cli core install esp32:esp32
 This project is developed against **arduino-cli 1.3.1** and **esp32 core
 3.3.5**. Core 2.x will not compile it.
 
-If you are using the NimBLE build (recommended — 89% of flash drops to 65%):
+If you are using the NimBLE build (the default — 92% of flash drops to 69%):
 
 ```bash
 arduino-cli lib install NimBLE-Arduino@2.5.1

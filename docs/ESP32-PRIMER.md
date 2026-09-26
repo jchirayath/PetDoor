@@ -118,11 +118,11 @@ does not fit in it:
 |---|---|---|---|
 | `default` | 1.25 MB | **136% — will not build** | 86% |
 | `no_ota` | 2.0 MB | 85% | 53% |
-| `min_spiffs` | 1.875 MB | 89% | 57% |
+| `min_spiffs` | 1.875 MB | 69% | 35% |
 
-(Those are the default Bluetooth stack. See *a much smaller build* below —
-switching to NimBLE takes the WiFi-on figure from 89% to 65%, and the default
-scheme then fits too.)
+(Those are the default NimBLE stack. Building the older Bluedroid stack instead
+takes the WiFi-on figure from 69% to 92%, and the `default` scheme still will
+not fit either way.)
 
 `min_spiffs` is the recommendation because it keeps a second app slot, which is
 what makes over-the-air flashing possible — worth having once the board is
@@ -132,29 +132,34 @@ headroom and are happy to flash over USB forever.
 If you build with `-DPETDOOR_ENABLE_WIFI=0`, every scheme fits comfortably,
 including the default.
 
-### Optional: a much smaller build
+### The one library you must install
 
-The Bluetooth stack bundled with the Arduino core (Bluedroid) is over half the
-firmware. Swapping it for NimBLE takes the build from **89% to 65%** with WiFi
-still on, and costs one library:
+This firmware uses **NimBLE** as its Bluetooth stack, and it is the only
+dependency that does not ship with the ESP32 core. Install it before your first
+build or the compile stops with a message telling you exactly this:
 
 1. **Tools → Manage Libraries**, search `NimBLE-Arduino`, install **2.5.1** or
    later
-2. Add one line to `petdoor/secrets.h` (create the file if it is not there):
-   ```c
-   #define PETDOOR_USE_NIMBLE 1
-   ```
-3. Upload as normal
+2. Upload as normal
 
-Same radio, same behaviour, same Arduino IDE. The boot banner tells you which
-stack is running. Leave it off if you are not short of space — the default build
-needs no extra libraries at all.
+(PlatformIO users need do nothing — `platformio.ini` lists it.)
+
+**Why it is not optional.** The Bluetooth stack bundled with the Arduino core,
+Bluedroid, is over half the firmware and leaves almost no RAM spare. A door
+running it reached a low-water mark of **under 7 KB of free heap** and panicked
+on three consecutive boots. NimBLE leaves **80 KB**. Same radio, same
+behaviour, same detection speed — just room to breathe.
+
+You *can* build the Bluedroid version by adding `#define PETDOOR_USE_NIMBLE 0`
+to `petdoor/secrets.h`, and it needs no libraries at all. It is supported, but
+it is not what you want unless you have a specific reason. The boot banner
+tells you which stack is running.
 
 | | flash on `min_spiffs` | |
 |---|---|---|
-| default (Bluedroid + WiFi) | 1,760,679 | 89% |
-| NimBLE + WiFi | 1,295,523 | 65% |
-| NimBLE, no WiFi | 650,567 | 33% |
+| **default (NimBLE + WiFi)** | **1,358,607** | **69%** |
+| Bluedroid + WiFi | 1,815,239 | 92% |
+| NimBLE, no WiFi | 694,099 | 35% |
 
 In the Arduino IDE this is
 **Tools → Partition Scheme → Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)**;

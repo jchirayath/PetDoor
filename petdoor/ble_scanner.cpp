@@ -1,6 +1,13 @@
 #include "ble_scanner.h"
 
 #if PETDOOR_USE_NIMBLE
+#if defined(__has_include) && !__has_include(<NimBLEDevice.h>)
+#error "NimBLE-Arduino is not installed, and it is now the default BLE stack. \
+Install it (Arduino IDE: Library Manager -> 'NimBLE-Arduino'; PlatformIO picks \
+it up from platformio.ini automatically), or build the older Bluedroid stack \
+with -DPETDOOR_USE_NIMBLE=0. Bluedroid still works but leaves the door with \
+about 7 KB of free heap at its worst moment, which is what used to panic it."
+#endif
 #include <NimBLEDevice.h>
 #else
 #include <BLEAdvertisedDevice.h>
