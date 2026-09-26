@@ -11,6 +11,9 @@
     .gpio { font: 600 11px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
     .note { font: 12px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
     .box  { fill:none; stroke:#7A8794; stroke-width:1; opacity:0.45; }
+    .grp  { font: 600 11px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+            fill:#7A8794; letter-spacing:0.08em; }
+    .zone { fill:#7A8794; opacity:0.05; }
   </style>
 
   <text x="20" y="30" class="h1">ESP32 2-relay board — what connects where</text>
@@ -80,7 +83,14 @@
   <g fill="#2A6B41"><circle cx="596" cy="341" r="5"/><circle cx="620" cy="341" r="5"/></g>
   <text x="608" y="374" class="onbd" text-anchor="middle" opacity="0.8">power in</text>
 
-  <!-- ================= left callouts ================= -->
+  <!-- ================= left callouts =================
+       Split by WHERE THE PART PHYSICALLY LIVES, not by what it plugs into.
+       Drawn as one undifferentiated column, the limit switches and the
+       vibration sensor read as board peripherals like the LED — which is
+       exactly the mistake that matters, because a vibration sensor bolted
+       to this board hears its own relay and is useless. -->
+  <rect x="14" y="118" width="262" height="150" rx="8" class="zone"/>
+  <text x="20" y="134" class="grp">AT THE BOARD</text>
   <g>
     <rect x="20" y="138" width="250" height="52" rx="6" class="box"/>
     <rect x="20" y="138" width="4" height="52" rx="2" fill="#9AA5B1"/>
@@ -92,32 +102,34 @@
     <rect x="20" y="208" width="250" height="52" rx="6" class="box"/>
     <rect x="20" y="208" width="4" height="52" rx="2" fill="#9B72CF"/>
     <text x="36" y="228" class="ttl" fill="#9B72CF">Piezo buzzer</text>
-    <text x="36" y="248" class="wire">GPIO 27 ──[100 Ω]──[piezo]── GND</text>
+    <text x="36" y="248" class="wire">GPIO 27 ──[100 Ω]──[piezo] GND</text>
     <path d="M270 234 H306 V214 H334" fill="none" stroke="#9B72CF" stroke-width="2"/>
   </g>
+  <rect x="14" y="272" width="262" height="216" rx="8" class="zone"/>
+  <text x="20" y="288" class="grp">ON THE DOOR ITSELF — wired back to these pins</text>
   <g>
-    <rect x="20" y="288" width="250" height="52" rx="6" class="box" stroke-dasharray="5 4"/>
+    <rect x="20" y="296" width="250" height="52" rx="6" class="box" stroke-dasharray="5 4"/>
     <rect x="20" y="288" width="4" height="52" rx="2" fill="#E9A23B"/>
-    <text x="36" y="308" class="ttl" fill="#E9A23B">OPEN limit sensor</text>
-    <text x="36" y="328" class="wire">GPIO 32 ──[reed switch]── GND</text>
-    <path d="M270 314 H306 V302 H334" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
+    <text x="36" y="316" class="ttl" fill="#E9A23B">OPEN limit sensor</text>
+    <text x="36" y="336" class="wire">GPIO 32 ──[reed switch]── GND</text>
+    <path d="M270 322 H306 V306 H334" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
   </g>
   <g>
-    <rect x="20" y="358" width="250" height="52" rx="6" class="box" stroke-dasharray="5 4"/>
-    <rect x="20" y="358" width="4" height="52" rx="2" fill="#E9A23B"/>
-    <text x="36" y="378" class="ttl" fill="#E9A23B">CLOSED limit sensor</text>
-    <text x="36" y="398" class="wire">GPIO 33 ──[reed switch]── GND</text>
-    <path d="M270 384 H306 V368 H334" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
+    <rect x="20" y="366" width="250" height="52" rx="6" class="box" stroke-dasharray="5 4"/>
+    <rect x="20" y="366" width="4" height="52" rx="2" fill="#E9A23B"/>
+    <text x="36" y="386" class="ttl" fill="#E9A23B">CLOSED limit sensor</text>
+    <text x="36" y="406" class="wire">GPIO 33 ──[reed switch]── GND</text>
+    <path d="M270 392 H306 V372 H334" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4"/>
   </g>
   <g>
-    <rect x="20" y="428" width="250" height="52" rx="6" class="box" stroke-dasharray="2 3"/>
-    <rect x="20" y="428" width="4" height="52" rx="2" fill="#7A8794"/>
-    <text x="36" y="448" class="ttl" fill="#A9B4C0">Vibration sensor</text>
-    <text x="36" y="468" class="wire">GPIO 25 ──[SW-420 OUT]  3V3, GND</text>
-    <path d="M270 454 H300 V404 H334" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="2 3"/>
+    <rect x="20" y="436" width="250" height="52" rx="6" class="box" stroke-dasharray="2 3"/>
+    <rect x="20" y="436" width="4" height="52" rx="2" fill="#7A8794"/>
+    <text x="36" y="456" class="ttl" fill="#A9B4C0">Vibration sensor</text>
+    <text x="36" y="476" class="wire">GPIO 25 ──[SW-420 DO] 3V3 GND</text>
+    <path d="M270 462 H300 V412 H334" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="2 3"/>
   </g>
-  <text x="24" y="496" class="note" fill="#E9A23B">Both use INPUT_PULLUP: the switch shorts to GND when the door reaches that end.</text>
-  <text x="24" y="514" class="note" fill="#A9B4C0">Mount the vibration sensor ON THE DOOR, not on this board — here it would hear its own relay click every time.</text>
+  <text x="24" y="504" class="note" fill="#E9A23B">Both use INPUT_PULLUP: the switch shorts to GND when the door reaches that end.</text>
+  <text x="24" y="522" class="note" fill="#A9B4C0">On the board it would hear its own relay click every time — which is the very thing it exists to tell apart from movement.</text>
 
   <!-- ================= right callouts ================= -->
   <g>
