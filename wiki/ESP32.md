@@ -51,11 +51,14 @@ TX↔RX **crossed**. TX-to-TX gives a silent port and no error message.
 **Partition scheme.** Choose **Minimal SPIFFS**. With WiFi enabled the firmware
 does not fit the default layout at all — this is required, not an optimisation.
 
-**BLE stack.** The default build uses Bluedroid, which ships with the Arduino
-core. The default build uses **NimBLE**, which needs one library and takes flash
-usage from 92% to 69% while freeing about 71 KB of heap, with no change in
-detection performance. Bluedroid is still selectable, but it left doors with
-under 7 KB of free heap at their worst moment, which panicked them.
+**BLE stack.** This firmware uses **NimBLE**, which needs one library from
+Library Manager. That is the only dependency outside the ESP32 core.
+
+We used the core's own Bluedroid stack for most of this project's life and
+moved after a door panicked three times in a row: it had under 7 KB of free
+heap at its worst moment, where NimBLE leaves 80 KB. Flash went from 92% to
+69% too. Detection speed is identical — the beacon's advertising interval sets
+that, not the stack.
 
 Full primer:
 **[ESP32-PRIMER.md](https://github.com/jchirayath/PetDoor/blob/main/docs/ESP32-PRIMER.md)**

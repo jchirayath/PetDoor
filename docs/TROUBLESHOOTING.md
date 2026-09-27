@@ -388,7 +388,7 @@ wrong:
 | `The fast filter must not be slower than the slow one` | `RSSI_FAST_WINDOW` ≤ `RSSI_MEDIAN_WINDOW` **and** `RSSI_FAST_ALPHA` ≥ `RSSI_EWMA_ALPHA`. |
 | `SCAN_WINDOW_MS must be <= SCAN_INTERVAL_MS` | Window cannot exceed interval. |
 | `PIN_RELAY_OPEN and PIN_RELAY_CLOSE must be different pins` | Self-explanatory. |
-| `NimBLE-Arduino is not installed...` | NimBLE is the default stack. Library Manager → **NimBLE-Arduino** (2.5.1+), or build the older Bluedroid stack with `#define PETDOOR_USE_NIMBLE 0` in `secrets.h`. |
+| `NimBLE-Arduino is not installed...` | The one library this firmware needs. Library Manager → **NimBLE-Arduino** (2.5.1+). |
 | `Sketch too big` | You are on the default partition scheme. Switch to **Minimal SPIFFS** — see [ESP32-PRIMER.md](ESP32-PRIMER.md#what-you-need-to-program-it). |
 
 **Sketch folder not recognised by the Arduino IDE** — the folder must be named

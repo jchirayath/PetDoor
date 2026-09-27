@@ -137,8 +137,8 @@ comment above it explains why; keep the comment with the code.
 7. **Relays are interlocked.** `DoorController::pulse()` always releases the
    opposite relay and waits `DIRECTION_CHANGE_GAP_MS` first. Both relays
    energised at once is a short across the motor's direction contacts.
-8. **The BLE callback stays cheap and never blocks.** It runs in the Bluedroid
-   task. Samples go over a queue; the discovery table is taken with a zero
+8. **The BLE callback stays cheap and never blocks.** It runs in the BLE host
+   task (NimBLE). Samples go over a queue; the discovery table is taken with a zero
    timeout and skipped if busy. Do not add `Serial` output or blocking waits to
    it.
 9. **Door state is owned by one task.** `controlTask` is the only caller of

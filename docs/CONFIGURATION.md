@@ -159,12 +159,17 @@ How near is "near". See [TUNING.md](TUNING.md) for the procedure.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `PETDOOR_USE_NIMBLE` | `1` | `1` = NimBLE, via the **NimBLE-Arduino** library (PlatformIO installs it; Arduino IDE users add it from Library Manager). `0` = Bluedroid, bundled with the core — builds with nothing installed, but see the heap figures below. |
+| `PETDOOR_USE_NIMBLE` | `1` | Leave it alone. `1` = NimBLE, the stack this firmware uses, via the **NimBLE-Arduino** library. `0` selects the core's old Bluedroid stack, kept only as a fallback — see below for why we stopped using it. |
 | `NIMBLE_SCAN_RSP_TIMEOUT_MS` | `100` | NimBLE only. How long to wait for a scan response before reporting the advertisement anyway. |
 
-Both stacks drive the same radio through the same controller; only the host
-changes. Bluedroid is over half the firmware image, so the difference is large.
-Measured on `min_spiffs` (1.875 MB app partition):
+We ran Bluedroid, the stack bundled with the Arduino core, for most of this
+project's life. A door in service then panicked on three consecutive boots,
+and the cause was heap: its low-water mark was under 7 KB, where NimBLE leaves
+80 KB. We moved and did not look back.
+
+Both drive the same radio through the same controller; only the host changes,
+and Bluedroid is over half the firmware image. Measured on `min_spiffs`
+(1.875 MB app partition):
 
 | `PETDOOR_USE_NIMBLE` | `PETDOOR_ENABLE_WIFI` | flash | | RAM |
 |---|---|---|---|---|
