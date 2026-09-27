@@ -35,12 +35,11 @@ one.
 
 Any board with the ESP32 Arduino core 3.x support will work. Note:
 
-- **This firmware uses NimBLE on every chip**, including the classic ESP32,
-  because Bluedroid leaves it with under 7 KB of free heap and that panics it.
-  One library — see [ESP32-PRIMER.md](ESP32-PRIMER.md#the-one-library-you-must-install).
-- **Classic ESP32** also ships a **Bluedroid** stack in the core, still
-  selectable with `PETDOOR_USE_NIMBLE 0`.
-- **ESP32-S3 / C3 / C6** only have NimBLE, so there is nothing to choose.
+- **This firmware uses NimBLE on every chip**, so there is nothing to choose.
+  It is one library — see
+  [ESP32-PRIMER.md](ESP32-PRIMER.md#the-one-library-you-must-install).
+  (We used the core's Bluedroid stack until it ran a door out of heap and
+  panicked it three times in a row.)
 
 The firmware builds on both stacks, and deliberately only uses BLE APIs common
 to the two. If you contribute code here, keep it that way.

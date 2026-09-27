@@ -55,7 +55,7 @@ Get a **classic ESP32 (WROOM-32) dev board**. They are the cheapest, the most
 common, and the reference build for this project.
 
 - **ESP32-S3 / C3 / C6** also work. They use a different Bluetooth stack
-  internally (NimBLE rather than Bluedroid); the firmware supports both.
+  internally; the firmware uses NimBLE on every chip, so there is nothing to choose.
 - **ESP32-S2 will not work.** It has no Bluetooth radio at all, despite looking
   identical to an S3. This catches people out constantly.
 - **ESP8266 will not work.** It has WiFi but no Bluetooth.
@@ -120,9 +120,7 @@ does not fit in it:
 | `no_ota` | 2.0 MB | 85% | 53% |
 | `min_spiffs` | 1.875 MB | 69% | 35% |
 
-(Those are the default NimBLE stack. Building the older Bluedroid stack instead
-takes the WiFi-on figure from 69% to 92%, and the `default` scheme still will
-not fit either way.)
+(The `default` scheme will not fit whatever you do — use `min_spiffs`.)
 
 `min_spiffs` is the recommendation because it keeps a second app slot, which is
 what makes over-the-air flashing possible — worth having once the board is
@@ -150,15 +148,15 @@ running it reached a low-water mark of **under 7 KB of free heap** and panicked
 on three consecutive boots. NimBLE leaves **80 KB**. Same radio, same
 behaviour, same detection speed — just room to breathe.
 
-You *can* build the Bluedroid version by adding `#define PETDOOR_USE_NIMBLE 0`
-to `petdoor/secrets.h`, and it needs no libraries at all. It is supported, but
-it is not what you want unless you have a specific reason. The boot banner
-tells you which stack is running.
+There is a fallback — `#define PETDOOR_USE_NIMBLE 0` in `petdoor/secrets.h`
+builds against the core's old Bluedroid stack and needs no libraries. We kept
+it because throwing away something that works is easy and getting it back is
+not, but it is not a choice worth making: it is the build that was panicking.
 
 | | flash on `min_spiffs` | |
 |---|---|---|
 | **default (NimBLE + WiFi)** | **1,358,607** | **69%** |
-| Bluedroid + WiFi | 1,815,239 | 92% |
+| the old Bluedroid fallback | 1,815,239 | 92% |
 | NimBLE, no WiFi | 694,099 | 35% |
 
 In the Arduino IDE this is
