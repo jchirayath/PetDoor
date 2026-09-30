@@ -163,12 +163,27 @@
 // over half the image. Turn it on if you are short of flash, especially with
 // PETDOOR_ENABLE_WIFI on.
 //
-// It is opt-in rather than automatic on purpose. Switching BLE stacks changes
-// the code that drives the radio on a device that moves a door; that should be
-// a decision you made, not a side effect of which libraries happen to be
-// installed. The boot banner and `s` both report which stack is running.
+// DEFAULT SINCE THE BLUEDROID BUILD STARTED PANICKING. This was opt-in for a
+// long time, on the reasoning that changing the radio stack under a door should
+// be a deliberate choice rather than a side effect of which libraries happen to
+// be installed. That reasoning was sound; it was simply outweighed by
+// measurements from a door in service:
+//
+//                        Bluedroid        NimBLE
+//   flash (min_spiffs)   92%              69%
+//   free heap            63 KB            134 KB
+//   heap LOW-WATER       6.9 KB           80 KB
+//
+// 6.9 KB is the least free RAM the door ever had, and an allocation failing
+// down there panics the chip — which is what reset reason 4 on three
+// consecutive boots turned out to be. Bluedroid still builds and still works;
+// it simply has no headroom left once WiFi, the uploader, OTA and the network
+// console are all resident.
+//
+// Set this to 0 for the Bluedroid build. The boot banner and `s` both report
+// which stack is running, so a door can always be asked rather than assumed.
 #ifndef PETDOOR_USE_NIMBLE
-#define PETDOOR_USE_NIMBLE 0
+#define PETDOOR_USE_NIMBLE 1
 #endif
 
 // NimBLE only. How long to wait for a scan response before reporting an

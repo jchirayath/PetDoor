@@ -115,7 +115,7 @@ Roughly in order, because the sequence explains the shape of the thing.
 | | |
 |---|---|
 | Dual-rate filtering | Open on the fast filter, close on the slow one — so a departure is never noticed before an arrival |
-| NimBLE build | 89% of flash down to 65%, and free heap 66 KB up to 138 KB |
+| NimBLE build | Now the default: 92% of flash down to 69%, and the heap low-water mark from 6.9 KB to 80 KB — Bluedroid had been panicking doors |
 | Event log + signed upload | The door keeps its own history; a server is optional |
 | Remote configuration | Every tunable, over the network, on a door you cannot reach |
 | Lock / unlock | Stop the collar opening it, without taking the collar off |
