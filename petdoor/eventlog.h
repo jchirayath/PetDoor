@@ -44,6 +44,11 @@ enum LogEventType : uint8_t {
   // only reports attempts down a serial cable reports them to nobody: the
   // whole point of it is that nobody is holding a cable.
   LOG_CONSOLE = 8,
+  // The relay fired and the vibration sensor heard nothing for the whole
+  // travel: the door never started. Distinct from STALLED, which means it
+  // started and did not arrive — different causes, different fixes. detail =
+  // the state the door believed it was moving to.
+  LOG_NO_MOVEMENT = 9,
 };
 
 struct LogEntry {

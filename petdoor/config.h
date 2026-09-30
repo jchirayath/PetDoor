@@ -554,6 +554,63 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// Scheduled lockout
+// ---------------------------------------------------------------------------
+//
+// Windows in which the beacon may not open the door — a night lockout, most
+// obviously. Gates opening only, exactly like the manual lock. See schedule.h
+// for the four rules that shape it, the first of which is that an unset clock
+// disables every window rather than applying them to a guess.
+
+// How many windows can be stored. Four covers "weeknights", "weekends" and a
+// couple of exceptions; each costs 6 bytes of NVS and a comparison per tick.
+#ifndef SCHEDULE_MAX_WINDOWS
+#define SCHEDULE_MAX_WINDOWS 4
+#endif
+
+// Minutes east of UTC, because the door keeps UTC and windows are wall time.
+// -480 is US Pacific standard, -420 daylight. There is NO DST handling: adjust
+// this twice a year, or leave an hour of slack at each end of your windows.
+#ifndef SCHEDULE_UTC_OFFSET_MIN
+#define SCHEDULE_UTC_OFFSET_MIN 0
+#endif
+
+// ---------------------------------------------------------------------------
+// Vibration sensor
+// ---------------------------------------------------------------------------
+//
+// Answers "did the door start moving?" within about a second, where a limit
+// switch cannot answer "did it arrive?" until the whole travel has elapsed.
+// See vibration.h. Disabled by default; mount it ON THE DOOR, never on the
+// controller board, or it will hear the relay instead of the door.
+
+#ifndef PIN_VIBRATION
+#define PIN_VIBRATION -1
+#endif
+
+// Most SW-420/801S modules idle HIGH and pull LOW on movement, but this varies
+// by manufacturer and is not reliably printed on the board. Either setting
+// works — the sensor is read as EDGES, not levels — so this only decides
+// whether the internal pull-up is enabled.
+#ifndef VIBRATION_ACTIVE_LOW
+#define VIBRATION_ACTIVE_LOW 1
+#endif
+
+// How long after a relay pulse to ignore the sensor. The relay's own click and
+// the structure ringing from it are not the door moving, and on a sensor
+// mounted anywhere near the board they are the loudest thing it will ever hear.
+#ifndef VIBRATION_BLANK_MS
+#define VIBRATION_BLANK_MS 400
+#endif
+
+// Edges needed before a travel counts as "the door moved". More than one, so a
+// single spurious reading — wind, a bird landing on it, a passing lorry — is
+// not mistaken for a door that worked.
+#ifndef VIBRATION_MIN_PULSES
+#define VIBRATION_MIN_PULSES 3
+#endif
+
+// ---------------------------------------------------------------------------
 // Maintenance mode — a bounded window in which the beacon cannot move the door
 // ---------------------------------------------------------------------------
 //

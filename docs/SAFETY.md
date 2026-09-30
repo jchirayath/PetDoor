@@ -71,6 +71,33 @@ your mechanism.
 
 ---
 
+## A scheduled lockout will shut an animal out
+
+If you set a lockout window, understand what it does: **while the window is in
+force the door will not open for the collar, including for an animal that is
+still outside.** That is not a flaw, it is the entire purpose — a door that let
+anything wearing the collar in at 3 a.m. would not be a lockout. But it means a
+straggler stays out until the window ends.
+
+Before you rely on one:
+
+- **Count your animals in** before the window starts, the same way you would if
+  you were bolting the door by hand. The door cannot count.
+- **Leave slack at both ends.** There is no daylight-saving handling: the offset
+  is a fixed number of minutes. A window that starts half an hour after dusk and
+  ends half an hour before you get up costs nothing and forgives a clock that is
+  an hour out twice a year.
+- **The window is inert until the door has a clock.** With no network, or before
+  NTP answers, there is no lockout at all — the door reports this in `s` and in
+  the schedule editor. Do not assume a door locked itself; check.
+- **It never prevents closing**, and nothing in a schedule can hold a door shut
+  against an animal standing in the doorway. Closing is governed by the same
+  proximity logic as always.
+
+The door sounds the refusal chime and logs a `REFUSED` entry each time a window
+turns the collar away, so "it would not let her in last night" is answerable
+from the log rather than from memory.
+
 ## Choose a door mechanism that fails safe
 
 The single most important decision in this build is not in the code.
