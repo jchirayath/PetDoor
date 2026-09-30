@@ -45,24 +45,22 @@ no reflash.
 They deliberately **cannot** drive the motor — see
 [ARCHITECTURE.md](ARCHITECTURE.md#position-sensors-and-why-they-do-not-close-the-loop).
 
-### 2. Vibration sensing — *not started*
+### 2. Vibration sensing — *firmware done, hardware pending*
 
 A vibration switch (SW-420, ~$1) answers a **different and faster** question
-than a limit switch: not "did it arrive" but "did it *start*".
+than a limit switch: not "did it arrive" but "did it *start*". **The firmware
+supports it**; the pin defaults to `-1` and it is switched on with one command
+once wired — `vibration 25`, from the console or the browser, no reflash.
 
-That matters because it arrives in about a second, where a limit switch cannot
-report until the full travel time has elapsed. For the swallowed-press problem
-it is the better signal, and it makes retry *safe*: today's `presses 2` is blind
-and can stop a moving door, whereas a vibration-gated retry only fires when the
-door demonstrably did not move.
+A travel that produces no vibration at all is logged as `NO_MOVE` and sounded,
+distinct from `STALLED`, which means the door started and never arrived. The
+relay's own click is blanked for `VIBRATION_BLANK_MS` after each pulse.
 
-The two compose — vibration says "started", the reed switch says "finished", and
-between them a jam is detectable as started-but-never-arrived.
-
-**Open questions before building it:** where it must be mounted to hear the
-motor (the ESP32 is on the controller housing, which may be coupled enough), and
-how much false triggering comes from wind and from the relay's own click. Both
-want testing on the bench before the logic is written.
+**Still open: retry.** Today's `presses 2` is blind and can stop a door that was
+already moving. Vibration is what would make a retry safe — fire a second press
+only when the door demonstrably did not move — but that is a decision to drive a
+motor based on a sensor, and it has not been made. Detection first, then a
+season of watching whether wind and passing traffic trigger it.
 
 ### 3. A dedicated sender address — *small, cosmetic*
 
