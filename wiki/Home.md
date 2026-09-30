@@ -32,6 +32,23 @@ fit to a door you already own.
 
 ---
 
+## How the pieces fit
+
+```mermaid
+flowchart LR
+    collar(["Beacon on the collar"]) -. "BLE advertisements" .-> esp["ESP32"]
+    esp -- "momentary pulse" --> relays["Two relays"]
+    relays -- "the same two wires as the wall button" --> ctrl["The door's own controller"]
+    ctrl -- "runs the motor to its own limit switches" --> door["Door"]
+    esp -. "optional, outbound only" .-> srv["Log server"]
+    srv -.-> br(["Browser"])
+```
+
+Solid arrows are the door working. The dotted ones are optional: the beacon
+only ever *advertises*, and the log server is something the door **calls out
+to** — never something that reaches in. Unplug the server and the door carries
+on opening and closing exactly as before.
+
 ## Start here
 
 | If you… | Go to |
