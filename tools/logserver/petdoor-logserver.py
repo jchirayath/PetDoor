@@ -100,6 +100,7 @@ EVENT_LABEL = {
     "STALLED": "did not complete its travel",
     "MAINT": "maintenance mode",
     "CONSOLE": "network console",
+    "NO_MOVE": "did not move at all",
 }
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
@@ -206,7 +207,8 @@ FORBIDDEN = ("wifi", "ssid", "endpoint", "key", "otapass", "password")
 VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
                "scan", "reboot", "lock", "unlock", "presses",
-               "travel", "buzzer", "beep", "sensors", "upload", "maint")
+               "travel", "buzzer", "beep", "sensors", "upload", "maint",
+               "schedule", "vibration")
 
 # ---------------------------------------------------------------- web control
 #
@@ -302,6 +304,12 @@ WEB_COMMANDS = {
     # the collar — an animal outside cannot let itself in. The firmware bounds
     # the window; this bounds the surprise.
     "maint":      ([_whole(1, 240, " min")], 0, None, True),
+    # Confirmed, because a window that is wrong locks an animal out overnight
+    # and nobody finds out until morning. Arguments are free-form
+    # ("add 22:00-06:00 Mon-Fri"), so the firmware does the parsing — which it
+    # must anyway, since anyone can run a server.
+    "schedule":   ([], 0, None, True),
+    "vibration":  ([_whole(0, 39, "")], 1, None, False),
 
     # --- detection ---------------------------------------------------------
     "thresholds": ([_whole(-120, 0, " dBm"), _whole(-120, 0, " dBm")], 2,
@@ -388,6 +396,14 @@ def web_command_allowed(command):
 
     # "maint off" ends the window; "maint" alone takes the firmware's default
     # duration; "maint <minutes>" names one and is range-checked below.
+    # The schedule sub-verbs carry their own arguments; the door validates
+    # them and reports what it did.
+    if verb == "schedule":
+        return (True, "")
+
+    if verb == "vibration" and args and args[0].lower() in ("off", "none"):
+        return (True, "") if len(args) == 1 else (False, "'vibration off' takes nothing else")
+
     if verb == "maint" and args and args[0].lower() in ("off", "on"):
         return (True, "") if len(args) == 1 else (False, f"'maint {args[0].lower()}' takes nothing else")
 
@@ -788,7 +804,8 @@ def render():
         for k, v in [("Events", f"{total:,}"), ("Trips outside", f"{trips:,}"),
                      ("Doors", devices), ("Brownouts", brown)])
 
-    cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b"}
+    cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b",
+           "NO_MOVE": "b", "STALLED": "b"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -799,8 +816,13 @@ def render():
             if r["detail"] == 9:
                 detail = f'<strong style="color:var(--bad)">{detail}</strong>'
         elif r["type"] == "REFUSED":
-            detail = {1: "already there", 2: "too soon", 3: "boot grace"}.get(
+            detail = {1: "already there", 2: "too soon", 3: "boot grace",
+                      5: "scheduled lockout"}.get(
                 r["detail"], f'reason {r["detail"]}')
+        elif r["type"] == "NO_MOVE":
+            # The relay fired and nothing moved. Louder than STALLED, which at
+            # least means the door tried.
+            detail = ('<strong style="color:var(--bad)">relay fired, door never moved</strong>')
         elif r["type"] == "MAINT":
             detail = {0: "expired", 1: "started", 2: "ended"}.get(
                 r["detail"], f'detail {r["detail"]}')

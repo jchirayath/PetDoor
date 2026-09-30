@@ -47,7 +47,9 @@
 #include "eventlog.h"
 #include "maintenance.h"
 #include "position.h"
+#include "vibration.h"
 #include "proximity.h"
+#include "schedule.h"
 #include "wifi_logger.h"
 
 namespace {
@@ -76,6 +78,8 @@ bool g_sensorFaultAnnounced = false;
 // only thing that could make this a measurement; see docs/SAFETY.md.
 // Defined further down, beside the rest of the maintenance-window handling,
 // but needed by the console key dispatch above it.
+bool applyScheduleLine(const char *line, String &result);
+void printScheduleMenu();
 bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message);
 void endMaintenance(String &message);
 void publishStatusLines();
@@ -158,7 +162,8 @@ void rebootToDownloadMode() {
 #endif
 }
 
-enum EntryMode { ENTRY_NONE, ENTRY_MAC, ENTRY_THRESH, ENTRY_TIMING, ENTRY_FILTER };
+enum EntryMode { ENTRY_NONE, ENTRY_MAC, ENTRY_THRESH, ENTRY_TIMING, ENTRY_FILTER,
+                 ENTRY_SCHEDULE };
 EntryMode g_entry = ENTRY_NONE;
 char g_macLine[192];
 uint16_t g_macLineLen = 0;
@@ -341,6 +346,7 @@ void printHelp() {
   Con.println(F("  p  open a firmware update window (OTA, no buttons)"));
   Con.println(F("  m  edit the beacon MAC list (saved on the device)"));
   Con.println(F("  t  edit the open/close thresholds (saved on the device)"));
+  Con.println(F("  n  edit the scheduled lockout windows (e.g. locked overnight)"));
   Con.println(F("  w  edit the dwell times / how fast it reacts"));
   Con.println(F("  f  edit the filter shape (median window, smoothing)"));
 #if PETDOOR_CAN_REBOOT_TO_FLASH
@@ -473,6 +479,14 @@ void printStatus(uint32_t nowMs) {
   }
   if (g_locked) {
     Con.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
+  }
+  Schedule::describe(Con, EventLog::haveEpoch(), EventLog::epochNow());
+  if (Vibration::enabled()) {
+    Con.printf("  vibration    : GPIO %d, %lu edges since boot%s\r\n",
+               Vibration::pin(), static_cast<unsigned long>(Vibration::pulses()),
+               Vibration::activeLow() ? " (pull-up on)" : "");
+  } else {
+    Con.println(F("  vibration    : no sensor ('w' then 'vibration <pin>' to add one)"));
   }
   if (Maintenance::active(millis())) {
     const uint32_t left = Maintenance::remainingMs(millis());
@@ -1479,6 +1493,16 @@ void handleMacEntryChar(int c) {
       processTimingLine(g_macLine);
     } else if (g_entry == ENTRY_FILTER) {
       processFilterLine(g_macLine);
+    } else if (g_entry == ENTRY_SCHEDULE) {
+      String msg;
+      applyScheduleLine(g_macLine, msg);
+      Con.printf("[sched] %s\r\n", msg.c_str());
+      if (strcasecmp(g_macLine, "q") == 0) {
+        g_entry = ENTRY_NONE;
+        Con.println(F("[sched] done."));
+      } else {
+        printScheduleMenu();
+      }
     } else {
       processMacLine(g_macLine);
     }
@@ -1621,6 +1645,11 @@ void handleSerial(uint32_t nowMs) {
         // "close it, and then let the hold quietly keep it from closing again".
         g_manualHoldUntilMs = 0;
         g_door.forcePulseClose();
+        break;
+      case 'n':
+        g_entry = ENTRY_SCHEDULE;
+        g_macLineLen = 0;
+        printScheduleMenu();
         break;
       case 'M': {
         String msg;
@@ -1803,6 +1832,7 @@ void updateChime(uint32_t nowMs) {
     g_travelling = moving;
     if (moving) {
       g_travelVerified = false;   // a fresh travel has to earn its confirmation
+      Vibration::travelStarted(nowMs);
       // Do not start the travel pattern on top of an acknowledgement. The ack
       // is the half-second that tells you the door HEARD you, and a `door
       // open` produces both in the same tick — starting the loop immediately
@@ -1812,6 +1842,19 @@ void updateChime(uint32_t nowMs) {
       // With switches fitted, "arrived" is a measurement rather than a timer
       // running out — and a travel that ends with neither switch made is a
       // door that did NOT get there. Say so differently.
+      // Vibration answers a DIFFERENT question from the limit switches, and a
+      // more damning one: not "did it arrive" but "did it ever start". Checked
+      // first, because a door that never moved makes the arrival question moot.
+      if (Vibration::enabled() && !Vibration::movedThisTravel()) {
+        Con.println(F("[vib] !! the relay fired and the door never moved."));
+        Con.println(F("[vib] !! Nothing was felt for the whole travel time: the"));
+        Con.println(F("[vib] !! controller swallowed the press, or the door is"));
+        Con.println(F("[vib] !! jammed solid. NOT the same as failing to arrive."));
+        EventLog::record(LOG_NO_MOVEMENT, static_cast<uint8_t>(g_door.state()),
+                         g_tracker.filteredRssi());
+        Chime::play(CHIME_REFUSED);
+        return;
+      }
       if (Position::enabled() && !g_travelVerified) {
         Con.println(F("[pos] !! travel time elapsed and NO limit switch was reached."));
         Con.println(F("[pos] !! The door did not complete its travel: a swallowed"));
@@ -1915,6 +1958,85 @@ void endMaintenance(String &message) {
   message = "maintenance OFF — the beacon controls the door again";
 }
 
+// One implementation of the schedule commands, shared by the console editor and
+// the remote verb so the two cannot drift apart.
+void printScheduleMenu() {
+  Con.println(F("\r\n---- scheduled lockout ----"));
+  Schedule::describe(Con, EventLog::haveEpoch(), EventLog::epochNow());
+  Con.println(F("  type one of:"));
+  Con.println(F("    add 22:00-06:00               every night"));
+  Con.println(F("    add 22:00-06:00 Mon-Fri       weeknights only"));
+  Con.println(F("    add 13:00-14:00 Sat,Sun       any window, any days"));
+  Con.println(F("    del <n>                       remove one, by its number"));
+  Con.println(F("    clear                         remove all"));
+  Con.println(F("    tz -420                       minutes east of UTC"));
+  Con.println(F("    q                             done"));
+  Con.println(F("  A window stops the BEACON opening the door. It never stops the"));
+  Con.println(F("  door closing, and it cannot let an animal back in — decide with"));
+  Con.println(F("  that in mind."));
+}
+
+bool applyScheduleLine(const char *line, String &result) {
+  while (*line == ' ') line++;
+  char buf[96];
+  strncpy(buf, line, sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+
+  char *verb = strtok(buf, " \t");
+  if (verb == nullptr || strcasecmp(verb, "list") == 0 || strcasecmp(verb, "q") == 0) {
+    result = String(Schedule::count()) + " window(s) stored";
+    return true;
+  }
+  if (strcasecmp(verb, "clear") == 0) {
+    Schedule::clear();
+    result = "all windows removed — the beacon may open the door at any hour";
+    return true;
+  }
+  if (strcasecmp(verb, "tz") == 0) {
+    const char *a = strtok(nullptr, " \t");
+    if (a == nullptr) { result = "tz takes minutes east of UTC, e.g. -420"; return false; }
+    const long m = strtol(a, nullptr, 10);
+    if (m < -840 || m > 840) { result = "offset must be -840..+840 minutes"; return false; }
+    Schedule::setUtcOffsetMinutes(static_cast<int16_t>(m));
+    char msg[96];
+    snprintf(msg, sizeof(msg), "local time is now UTC%+ld:%02ld", m / 60, labs(m % 60));
+    result = msg;
+    return true;
+  }
+  if (strcasecmp(verb, "del") == 0 || strcasecmp(verb, "rm") == 0) {
+    const char *a = strtok(nullptr, " \t");
+    if (a == nullptr) { result = "del takes a window number from `list`"; return false; }
+    if (!Schedule::removeAt(static_cast<uint8_t>(strtol(a, nullptr, 10)))) {
+      result = "no window with that number";
+      return false;
+    }
+    result = "window removed";
+    return true;
+  }
+  if (strcasecmp(verb, "add") == 0) {
+    char *rest = strtok(nullptr, "");
+    if (rest == nullptr) { result = "add takes HH:MM-HH:MM [days]"; return false; }
+    while (*rest == ' ') rest++;
+    Schedule::Window w;
+    const char *problem = nullptr;
+    if (!Schedule::parseSpec(rest, w, problem)) {
+      result = problem != nullptr ? problem : "could not read that window";
+      return false;
+    }
+    if (!Schedule::add(w.startMin, w.endMin, w.days, problem)) {
+      result = problem != nullptr ? problem : "window refused";
+      return false;
+    }
+    // Said on every add rather than buried in a doc. This is the consequence
+    // people do not think through until it happens to a straggler.
+    result = "window added — NOTE: while it is in force the door will not open "
+             "for the collar, including for an animal caught outside";
+    return true;
+  }
+  result = "schedule takes add / del / list / clear / tz";
+  return false;
+}
+
 // Runs the maintenance window: its expiry, the network console it carries, and
 // the periodic upload of the distribution being measured.
 void serviceMaintenance(uint32_t nowMs) {
@@ -1986,7 +2108,13 @@ void driveDoor(uint32_t nowMs) {
   // because it is the strongest statement about what this door is allowed to
   // do — but note it gates only the OPEN path below. A locked door that is
   // open still closes normally when the beacon goes away.
-  if (g_locked && g_tracker.isPresent()) {
+  // A schedule is an ADDITIONAL reason to refuse, never a reason to permit:
+  // `lock` set by hand stays absolute. An unset clock yields false here rather
+  // than applying windows to a guessed time — see schedule.h.
+  uint8_t schedWindow = 0;
+  const bool schedLocked = Schedule::lockedNow(EventLog::haveEpoch(),
+                                               EventLog::epochNow(), &schedWindow);
+  if ((g_locked || schedLocked) && g_tracker.isPresent()) {
     // Say so, once per arrival. Someone standing at a locked door with the
     // collar in their hand cannot tell "locked" from "broken", and that is
     // exactly the moment they start taking the thing apart. Edge-triggered:
@@ -1995,6 +2123,14 @@ void driveDoor(uint32_t nowMs) {
     if (!g_lockRefusedAnnounced) {
       g_lockRefusedAnnounced = true;
       Chime::play(CHIME_REFUSED);
+      if (schedLocked && !g_locked) {
+        // Logged, unlike a manual lock, because nobody was there to decide it.
+        // "The door refused at 3 a.m." is only explicable if the log says a
+        // window did it. Edge-triggered: the condition holds for as long as the
+        // animal stands there, and an entry per tick would fill the ring.
+        Con.printf("[sched] refused: window [%u] is in force\r\n", schedWindow);
+        EventLog::record(LOG_REFUSED, 5, g_tracker.filteredRssi());
+      }
     }
     return;
   }
@@ -2263,6 +2399,34 @@ bool applyRemoteCommand(const char *line, String &result) {
     result = "door takes open, close or auto";
     return false;
   }
+  if (strcmp(verb, "schedule") == 0) {
+    char *rest = strtok(nullptr, "");
+    String msg;
+    const bool ok = applyScheduleLine(rest != nullptr ? rest : "list", msg);
+    result = msg;
+    return ok;
+  }
+  if (strcmp(verb, "vibration") == 0) {
+    const char *a = arg();
+    if (a == nullptr) { result = "vibration takes <pin> or off"; return false; }
+    if (strcmp(a, "off") == 0 || strcmp(a, "none") == 0) {
+      Vibration::configure(-1, false);
+      result = "vibration sensor disabled";
+      return true;
+    }
+    const int p = atoi(a);
+    const char *problem = Vibration::pinProblem(p);
+    if (!Vibration::configure(p, VIBRATION_ACTIVE_LOW != 0)) {
+      result = problem != nullptr ? problem : "pin refused";
+      return false;
+    }
+    char msg[120];
+    snprintf(msg, sizeof(msg), "vibration sensor on GPIO %d%s%s", p,
+             problem != nullptr ? " — warning: " : "",
+             problem != nullptr ? problem : "");
+    result = msg;
+    return true;
+  }
   if (strcmp(verb, "maint") == 0) {
     const char *a = arg();
     const bool wantOff = a != nullptr && (strcmp(a, "off") == 0 || strcmp(a, "0") == 0);
@@ -2487,6 +2651,7 @@ void controlTask(void *) {
     // 4. Act, then report. Reporting last means a state change is announced on
     //    the same tick it happens rather than one tick later.
     updatePosition(now);
+    Vibration::tick(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);
@@ -2552,6 +2717,8 @@ void setup() {
   g_tracker.begin();
   recordBoot();
   EventLog::begin(static_cast<uint16_t>(g_bootCount));
+  Schedule::begin();
+  Vibration::begin(PIN_VIBRATION, VIBRATION_ACTIVE_LOW != 0);
   EventLog::record(LOG_BOOT, static_cast<uint8_t>(esp_reset_reason()), 0);
 
   {

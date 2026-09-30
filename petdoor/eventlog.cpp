@@ -116,6 +116,7 @@ const char *typeName(uint8_t type) {
     case LOG_STALLED: return "STALLED";
     case LOG_MAINT: return "MAINT";
     case LOG_CONSOLE: return "CONSOLE";
+    case LOG_NO_MOVEMENT: return "NO_MOVE";
     default: return "?";
   }
 }

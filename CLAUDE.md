@@ -97,6 +97,8 @@ the folder name and `petdoor.ino` in sync or Arduino IDE stops recognising it.
 | `position.*` | Optional limit switches: debounce, measured state. Never commands the motor |
 | `maintenance.*` | Bounded window in which the beacon cannot move the door; RSSI histogram for calibration |
 | `console.*` | The console as a Stream, fanned out to the UART and a window-bounded network client |
+| `schedule.*` | Time windows in which the beacon may not open the door. Inert without a clock |
+| `vibration.*` | Optional sensor answering "did it START moving", by counting edges in an ISR |
 
 ## The bug this project exists to fix
 
@@ -148,7 +150,12 @@ comment above it explains why; keep the comment with the code.
     by a forgotten flag, a lost network or a brownout is a door that cannot let
     an animal in. It also blocks *both* directions, unlike the lock, because the
     person calibrating is standing at the door holding the collar.
-11. **The network console never listens outside a maintenance window**, and
+11. **A scheduled lockout is inert without a clock, and gates opening only.**
+    `Schedule::lockedNow()` returns false whenever `EventLog::haveEpoch()` is
+    false — a door that guesses the time can lock an animal out at noon
+    believing it is midnight. A schedule is an additional reason to refuse,
+    never a reason to permit: the manual lock stays absolute.
+12. **The network console never listens outside a maintenance window**, and
     never without `CONSOLE_PASSWORD`. It is the full console, so it can open the
     door. Do not start it at boot.
 
