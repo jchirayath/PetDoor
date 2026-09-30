@@ -409,6 +409,58 @@ Signing added **zero flash**, because mbedTLS is already linked for WPA2.
 For an endpoint across the internet, put it behind a VPN or a TLS-terminating
 proxy rather than asking the ESP32 to do TLS.
 
+### Scheduled lockout
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SCHEDULE_MAX_WINDOWS` | `4` | How many windows can be stored. Each costs 6 bytes of NVS. |
+| `SCHEDULE_UTC_OFFSET_MIN` | `0` | Minutes east of UTC. `-480` is US Pacific standard time, `-420` daylight. |
+
+Windows themselves are set on the door, not compiled in — `n` on the console,
+or `schedule add 22:00-06:00 Mon-Fri` from the browser. They survive reboots.
+
+Three behaviours worth knowing before you use it:
+
+- **No clock, no lockout.** Every window is inert until NTP has answered. A door
+  that guesses the time can lock an animal out at noon believing it is midnight,
+  so it refuses to guess. `s` says so plainly.
+- **It gates opening only.** A window can never stop the door closing, and it
+  cannot let an animal back in — see
+  [SAFETY.md](SAFETY.md#a-scheduled-lockout-will-shut-an-animal-out).
+- **There is no daylight-saving handling.** The offset is a fixed number of
+  minutes, deliberately: a zoneinfo database on a microcontroller is a lot of
+  machinery whose failure mode is a door locking an hour early twice a year.
+  Change the offset yourself, or leave slack at both ends of your windows.
+
+Refusals caused by a window are logged as `REFUSED` and sounded on the buzzer,
+so a door that turned the collar away overnight can be asked about afterwards.
+
+### Vibration sensor
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `PIN_VIBRATION` | `-1` | GPIO for an SW-420/801S digital output. `-1` disables it. Runtime-settable with `vibration <pin>`. |
+| `VIBRATION_ACTIVE_LOW` | `1` | Only decides whether the internal pull-up is on — the sensor is read as *edges*, so either polarity works. |
+| `VIBRATION_BLANK_MS` | `400` | How long after a relay pulse to ignore the sensor, so the relay's own click is not mistaken for the door. |
+| `VIBRATION_MIN_PULSES` | `3` | Edges needed before a travel counts as movement, so one spurious reading is not enough. |
+
+It answers **"did the door start moving?"** — within about a second, where a
+limit switch cannot answer "did it arrive?" until the whole travel has elapsed.
+A travel with no vibration at all is logged as `NO_MOVE`, which is distinct from
+`STALLED`: one means the door never started, the other that it started and did
+not finish. Different causes, different fixes.
+
+Use the **digital** output, not the analog one: the free pins on a typical relay
+board are on ADC2, which cannot be read while WiFi is active. Power the module
+from **3.3 V**, not 5 V — its output swings to its supply, and 5 V exceeds what
+an ESP32 pin will tolerate.
+
+**Mount it on the door, not on the controller board.** A sensor sitting beside
+the relay hears the relay on every actuation, whether or not the door moved,
+which is exactly the signal it exists to distinguish from movement. Blanking
+helps with vibration arriving through the structure; it cannot rescue a sensor
+sitting on top of the thing making the noise.
+
 ### Two switches, and they do different jobs
 
 | | Controls | When |
