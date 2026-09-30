@@ -20,7 +20,7 @@ switch a motor on.
 
 ```mermaid
 flowchart TD
-    A["BLE advertisement<br/><i>Bluedroid / NimBLE task</i>"] --> B{"matches a<br/>configured MAC?"}
+    A["BLE advertisement<br/><i>NimBLE task</i>"] --> B{"matches a<br/>configured MAC?"}
     B -- no --> X["discard"]
     B -- yes --> C["push to queue<br/><i>non-blocking, depth 32</i>"]
     C ==> D["<b>median filter</b><br/>rejects isolated spikes<br/>and deep fades"]
@@ -69,7 +69,7 @@ is why losing the beacon can only ever close the door.
        │  every advertisement, ~10/s from a typical beacon
        ▼
   ┌──────────────────────────────────────────┐
-  │ ScanCallbacks::onResult()                │  Bluedroid/NimBLE task
+  │ ScanCallbacks::onResult()                │  NimBLE task
   │   match against the configured beacon    │  must stay cheap, never block
   │   push {rssi, measuredPower, atMs}       │
   └──────────────────┬───────────────────────┘
@@ -213,7 +213,7 @@ harder**, never the reverse.
 
 Two tasks touch the interesting state.
 
-**The BLE callback task** (Bluedroid or NimBLE, depending on the chip) runs
+**The BLE callback task** (NimBLE) runs
 `ScanCallbacks::onResult()`. It must stay short — it is on the stack's own
 callback path, and blocking it stalls the radio. So it:
 
@@ -454,35 +454,41 @@ is usually worth the trade.
 
 ---
 
-## The two BLE stacks
+## The BLE stack
 
-The firmware builds against either host stack, selected by `PETDOOR_USE_NIMBLE`:
+The firmware uses **NimBLE**, from the NimBLE-Arduino library, which bundles the
+whole NimBLE host as Arduino sources.
 
-- **Bluedroid** (`0`, the default) ships with the ESP32 Arduino core. Nothing to
-  install.
-- **NimBLE** (`1`) comes from the NimBLE-Arduino library, which bundles the
-  whole NimBLE host as Arduino sources. Still the Arduino IDE; one extra library
-  from Library Manager.
+### Why not Bluedroid
 
-Same radio, same controller — only the host stack changes. Bluedroid is over
-half the image, so the difference is large:
+We ran Bluedroid, the stack bundled with the Arduino core, for most of this
+project's life. A door in service then panicked on three consecutive boots,
+and the cause was heap: its low-water mark was under 7 KB, where NimBLE leaves
+80 KB. We moved and did not look back.
+
+Same radio, same controller either way — only the host differs, and Bluedroid is
+over half the image:
 
 | Full firmware, `min_spiffs`, WiFi on | flash | | RAM |
 |---|---|---|---|
-| Bluedroid | 1,760,679 | 89% | 72,924 |
-| NimBLE | 1,295,523 | 65% | 67,740 |
-| **saving** | **465,156** (454 KB) | | **5,184** |
+| **NimBLE** *(default)* | 1,358,607 | 69% | 69,184 |
+| Bluedroid (`PETDOOR_USE_NIMBLE=0`) | 1,815,239 | 92% | 74,400 |
+| **saving** | **456,632** (446 KB) | | **5,216** |
 
 Bluedroid's host (`libbt.a`, 521 KB linked) is what goes away; the controller
 (`libbtdm_app.a`, 133 KB) is shared and stays.
 
 Those are link-time figures. On hardware the *heap* difference is larger than
 the static RAM column suggests, because most of what Bluedroid costs it takes at
-runtime — 66,304 bytes free versus 138,480, and a low-water mark of 7,912 versus
-88,064. Detection speed is unchanged (1.93 versus 1.89 target samples/sec over
+runtime — 62,824 bytes free versus 134,144, and a low-water mark of 6,968
+versus 80,152. That low-water figure is why NimBLE is the default: an
+allocation failing at 7 KB panics the chip, and it did, on three consecutive
+boots of a door in service. Detection speed is unchanged (1.93 versus 1.89 target samples/sec over
 matched windows); the beacon's advertising interval sets that, not the stack.
 See [CONFIGURATION.md](CONFIGURATION.md#ble-host-stack) for the full run.
 
+The Bluedroid path is still in the tree behind `PETDOOR_USE_NIMBLE=0` and still
+compiles, because deleting a working fallback is easier than getting it back.
 Everything the two stacks disagree about is confined to the **stack adapter** at
 the top of `ble_scanner.cpp` — class names, the callback signature, `start()`'s
 argument list, and `String` versus `std::string`. Below that block the scanner is

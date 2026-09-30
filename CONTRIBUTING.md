@@ -113,9 +113,11 @@ issue first, not a surprise in a diff.
 
 ### Breaking the other BLE stack
 
-Both **Bluedroid** (classic ESP32) and **NimBLE** (S3/C3/C6) must keep
-building. Use only BLE APIs common to both, or guard with
-`#if defined(CONFIG_NIMBLE_ENABLED)`.
+Both **NimBLE** (the default, every chip) and **Bluedroid**
+(`PETDOOR_USE_NIMBLE 0`, classic ESP32 only) must keep building. Use only BLE
+APIs common to both, or guard with `#if defined(CONFIG_NIMBLE_ENABLED)`.
+Check both before claiming a BLE change works — the default no longer exercises
+the Bluedroid path, so it is the one that will rot unnoticed.
 
 ### Renaming the sketch folder
 

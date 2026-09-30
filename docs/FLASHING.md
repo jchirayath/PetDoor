@@ -50,7 +50,7 @@ arduino-cli core install esp32:esp32
 This project is developed against **arduino-cli 1.3.1** and **esp32 core
 3.3.5**. Core 2.x will not compile it.
 
-If you are using the NimBLE build (recommended — 89% of flash drops to 65%):
+Install the one library this firmware needs outside the core:
 
 ```bash
 arduino-cli lib install NimBLE-Arduino@2.5.1
@@ -109,8 +109,9 @@ Three things about that command:
 - **`--build-path`** keeps the output somewhere you can point the upload at,
   rather than a temporary directory that may be cleaned up between commands.
 
-Drop both `-DPETDOOR_USE_NIMBLE=1` flags for the stock Bluedroid build (90% of
-flash, no extra library).
+(`-DPETDOOR_USE_NIMBLE=0` builds against the core's old Bluedroid stack
+instead. It needs no library, but it is a fallback we keep rather than a choice
+worth making — see [CONFIGURATION.md](CONFIGURATION.md#ble-host-stack).)
 
 **If it does not compile at the desk, it will not compile at the door.** Do not
 leave until this step is clean.
@@ -215,7 +216,7 @@ Press `s` and check four things:
 
 ```
   firmware     : v1.0.0 (built Sep 20 2026 18:30:00)   <- your build, not the old one
-  ble stack    : NimBLE                                 <- if you built with it
+  ble stack    : NimBLE
   boot         : #31, last reset: power-on
   free heap    : 138420 bytes
 ```
@@ -248,7 +249,7 @@ anything.
 | Upload succeeds, door does not restart | `RTS` is not wired. Tap `EN`. |
 | `Sketch too big` | You omitted `PartitionScheme=min_spiffs`. |
 | Compile error about `getManufacturerData()` | esp32 core 2.x. Install 3.x. |
-| `NimBLEDevice.h: No such file` | `arduino-cli lib install NimBLE-Arduino@2.5.1` |
+| `NimBLE-Arduino is not installed` | `arduino-cli lib install NimBLE-Arduino@2.5.1` |
 | It flashed, but now it will not join WiFi | Leave it alone. Do not reflash in a panic — reboot it, and the bootloader restores the previous image by itself. |
 
 The last row is worth reading twice. Since `OTA_REQUIRE_CONFIRM`, a bad image

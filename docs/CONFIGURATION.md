@@ -159,19 +159,24 @@ How near is "near". See [TUNING.md](TUNING.md) for the procedure.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `PETDOOR_USE_NIMBLE` | `0` | `0` = Bluedroid (bundled with the Arduino core, nothing to install). `1` = NimBLE, via the **NimBLE-Arduino** library from Library Manager. |
+| `PETDOOR_USE_NIMBLE` | `1` | Leave it alone. `1` = NimBLE, the stack this firmware uses, via the **NimBLE-Arduino** library. `0` selects the core's old Bluedroid stack, kept only as a fallback — see below for why we stopped using it. |
 | `NIMBLE_SCAN_RSP_TIMEOUT_MS` | `100` | NimBLE only. How long to wait for a scan response before reporting the advertisement anyway. |
 
-Both stacks drive the same radio through the same controller; only the host
-changes. Bluedroid is over half the firmware image, so the difference is large.
-Measured on `min_spiffs` (1.875 MB app partition):
+We ran Bluedroid, the stack bundled with the Arduino core, for most of this
+project's life. A door in service then panicked on three consecutive boots,
+and the cause was heap: its low-water mark was under 7 KB, where NimBLE leaves
+80 KB. We moved and did not look back.
+
+Both drive the same radio through the same controller; only the host changes,
+and Bluedroid is over half the firmware image. Measured on `min_spiffs`
+(1.875 MB app partition):
 
 | `PETDOOR_USE_NIMBLE` | `PETDOOR_ENABLE_WIFI` | flash | | RAM |
 |---|---|---|---|---|
-| `0` *(default)* | `1` *(default)* | 1,760,679 | 89% | 72,924 |
-| **`1`** | `1` | **1,295,523** | **65%** | 67,740 |
-| `0` | `0` | 1,121,163 | 57% | 46,204 |
-| **`1`** | **`0`** | **650,567** | **33%** | 40,880 |
+| **`1`** *(default)* | `1` *(default)* | **1,358,607** | **69%** | 69,184 |
+| `0` | `1` | 1,815,239 | 92% | 74,400 |
+| **`1`** | `0` | **694,099** | **35%** | 40,880 |
+| `0` | `0` | 1,152,923 | 58% | 46,204 |
 
 NimBLE alone saves **454 KB of flash**. The RAM column above is only *static*
 allocation, and it badly understates the benefit — most of what Bluedroid costs
@@ -180,13 +185,20 @@ Minew beacon, WiFi on, same NVS settings, same beacon, back-to-back):
 
 | | Bluedroid | NimBLE |
 |---|---|---|
-| free heap | 66,304 | **138,480** |
-| heap low-water | **7,912** | 88,064 |
+| free heap | 62,824 | **134,144** |
+| heap low-water | **6,968** | 80,152 |
 
 **+72 KB of free heap, and eleven times the headroom at the low-water mark.**
 That second number is the one that matters: under Bluedroid this firmware ran
-within 8 KB of exhaustion, which is why `LOG_ALLOW_TLS` had to be made opt-in —
+within 7 KB of exhaustion, which is why `LOG_ALLOW_TLS` had to be made opt-in —
 the TLS handshake could not get a buffer. With NimBLE there is room.
+
+**This is why NimBLE became the default.** A door in service panicked on three
+consecutive boots, reporting reset reason 4. The cause was that low-water mark:
+an allocation failing at 7 KB takes the chip down. Bluedroid is still supported
+and still builds, but it has no headroom left once WiFi, the uploader, OTA and
+the network console are all resident, so it is no longer what a new build
+should get by default.
 
 With WiFi compiled out as well the image is a third of its default size.
 
@@ -340,7 +352,7 @@ cloud, exactly as before. Put credentials in `secrets.h`, never in `config.h`.
 
 | Setting | Default | Description |
 |---|---|---|
-| `PETDOOR_ENABLE_WIFI` | `1` | **Compile-time.** `0` removes the uploader, OTA and the whole network stack from the binary — measured at **640 KB of flash and 19 KB of RAM** (89% → 56% of the partition). Leaving it at `1` does not bring the radio up; that is what `WIFI_SSID` controls. |
+| `PETDOOR_ENABLE_WIFI` | `1` | **Compile-time.** `0` removes the uploader, OTA and the whole network stack from the binary — measured at **649 KB of flash and 28 KB of RAM** (69% → 35% of the partition). Leaving it at `1` does not bring the radio up; that is what `WIFI_SSID` controls. |
 | `WIFI_SSID` | `""` | Network name. Empty disables everything below. |
 | `WIFI_PASSWORD` | `""` | Network password. |
 | `LOG_ENDPOINT_URL` | `""` | Where the CSV batch is POSTed. **Empty means local-only**: events are still recorded and still roll oldest-out, but nothing is sent and the radio is never brought up. |
@@ -410,9 +422,9 @@ never transmits. The flag is about size; the SSID is about behaviour.
 Measured on a classic ESP32:
 
 ```
-with WiFi     1,757,751 flash (89% of min_spiffs)   65,588 static RAM
-without       1,118,063 flash (56%)                 46,188 static RAM
-               -639,688                              -19,400
+with WiFi     1,358,607 flash (69% of min_spiffs)   69,184 static RAM
+without         694,099 flash (35%)                 40,880 static RAM
+               -664,508                              -28,304
 ```
 
 Setting it to `0` costs you log upload, NTP timestamps and **over-the-air
