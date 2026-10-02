@@ -169,6 +169,17 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 #controls,#settings{padding:16px 18px}
 #controls .queued{margin-left:-4px;margin-right:-4px}
 .ctlgroups{display:flex;flex-wrap:wrap;gap:14px 26px;margin:2px 0}
+.schedrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;
+  border-bottom:1px solid var(--rule)}
+.schedrow:last-of-type{border-bottom:0}
+.schedwin{font-variant-numeric:tabular-nums;font-weight:600}
+.scheddays{color:var(--ink-2);font-size:.92em}
+.schedadd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.schedadd input[type=time]{padding:5px 7px}
+.daypick{display:flex;gap:2px;flex-wrap:wrap}
+.daypick label{display:inline-flex;align-items:center;gap:3px;font-size:.86em;
+  padding:3px 6px;border:1px solid var(--rule);border-radius:5px;cursor:pointer}
+.daypick input{margin:0}
 .ctlgroup{display:flex;flex-direction:column;gap:7px}
 .glabel{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
   color:var(--ink-3);font-weight:600}
@@ -402,6 +413,14 @@ button[disabled]:hover{border-color:var(--line);background:none;filter:none}
     <span class="hint">queued here, collected on the door's next check-in</span>
   </div>
   <div id="controls"></div>
+</section>
+
+<section id="schedsec" hidden>
+  <div class="head">
+    <h2>Scheduled lockout</h2>
+    <span class="hint">hours in which the collar may not open the door</span>
+  </div>
+  <div id="schedule"></div>
 </section>
 
 <section>
@@ -1131,6 +1150,112 @@ function applySetting(verb,host){
    be lying, and the person would press it again. So every press moves the
    command into a visible WAITING list, and the list stays until the door has
    actually taken it. */
+/* Windows arrive in the door's config line as HHMM-HHMM/<day mask in hex>,
+   comma separated, or "-" for none. The door is the only thing that knows what
+   it has stored, so everything here is a view of what it reported rather than
+   of what we last sent it. */
+const DAYNAME=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+function parseWindows(spec){
+  if(!spec||spec==="-") return [];
+  return spec.split(",").map(t=>{
+    const m=/^(\d{2})(\d{2})-(\d{2})(\d{2})\/([0-9a-fA-F]{1,2})$/.exec(t.trim());
+    if(!m) return null;
+    return {s:m[1]+":"+m[2], e:m[3]+":"+m[4], mask:parseInt(m[5],16)};
+  }).filter(Boolean);
+}
+
+function daysLabel(mask){
+  if((mask&0x7F)===0x7F) return "every day";
+  return DAYNAME.filter((_,i)=>mask&(1<<i)).join(" ");
+}
+
+function renderSchedule(){
+  const sec=$("schedsec"), host=$("schedule");
+  if(!sec||!host) return;
+  if(!controlOn){ sec.hidden=true; return; }
+  sec.hidden=false;
+
+  const d=devices[0]||{};
+  const cfg=parseStatus(d.config);
+  const known=Object.keys(cfg).length>0;
+  const wins=parseWindows(cfg.sched);
+  const tz=cfg.tz!==undefined?Number(cfg.tz):null;
+
+  let html="";
+  if(!known||cfg.sched===undefined){
+    html+=`<div class="noconf"><b>The door has not reported a schedule yet.</b>
+      Either it has not called in since this server was updated, or it is running
+      firmware from before scheduled lockout existed. Anything you add below is
+      still queued for it.</div>`;
+  }
+
+  if(wins.length){
+    wins.forEach((w,i)=>{
+      const overnight=w.s>w.e;
+      html+=`<div class="schedrow">
+        <span class="schedwin">${esc(w.s)} \u2013 ${esc(w.e)}</span>
+        <span class="scheddays">${esc(daysLabel(w.mask))}${overnight?" \u00b7 overnight":""}</span>
+        <span style="flex:1"></span>
+        <button class="b-quiet" data-schedel="${i}">Remove</button></div>`;
+    });
+  } else if(known&&cfg.sched!==undefined){
+    html+=`<p class="note">No windows. The collar may open the door at any hour.</p>`;
+  }
+
+  const dayBoxes=DAYNAME.map((n,i)=>
+    `<label><input type="checkbox" class="schedday" value="${i}" checked>${n}</label>`).join("");
+
+  html+=`<div class="schedadd">
+      <label for="schedfrom">From</label><input type="time" id="schedfrom" value="22:00">
+      <label for="schedto">to</label><input type="time" id="schedto" value="06:00">
+      <span class="daypick">${dayBoxes}</span>
+      <button class="b-outline" id="schedadd">Add window</button>
+    </div>`;
+
+  html+=`<div class="schedadd" style="margin-top:14px">
+      <label for="schedtz">Local time is UTC</label>
+      <input type="number" id="schedtz" min="-840" max="840" step="15"
+             style="width:7em" value="${tz!==null?tz:0}">
+      <span class="scheddays">minutes</span>
+      <button class="b-quiet" id="schedtzset">Set</button>
+      ${wins.length?`<span style="flex:1"></span>
+        <button class="b-danger" id="schedclear">Remove all</button>`:""}
+    </div>`;
+
+  // Said here rather than only in the docs. These are the two things that
+  // surprise people, and both of them surprise people at night.
+  html+=`<p class="note"><b>A window stops the collar opening the door.</b> It never
+     stops the door closing, and it cannot let an animal back in \u2014 so count them
+     in before one starts, the same as you would if you were bolting the door.<br>
+     Windows are inert until the door has a real clock from the network, and there
+     is no daylight-saving handling: the offset above is a fixed number of minutes,
+     so leave slack at both ends.</p>`;
+
+  host.innerHTML=html;
+
+  host.querySelectorAll("button[data-schedel]").forEach(el=>{
+    el.addEventListener("click",()=>send("schedule del "+el.dataset.schedel,null,true));
+  });
+  const addBtn=$("schedadd");
+  if(addBtn) addBtn.addEventListener("click",()=>{
+    const f=$("schedfrom").value, t=$("schedto").value;
+    if(!f||!t) return;
+    const picked=[...host.querySelectorAll(".schedday")].filter(c=>c.checked)
+                   .map(c=>DAYNAME[Number(c.value)]);
+    if(!picked.length){ alert("Pick at least one day."); return; }
+    const days=picked.length===7?"daily":picked.join(",");
+    send(`schedule add ${f}-${t} ${days}`,null,true);
+  });
+  const tzBtn=$("schedtzset");
+  if(tzBtn) tzBtn.addEventListener("click",()=>send("schedule tz "+$("schedtz").value,null,true));
+  const clr=$("schedclear");
+  if(clr) clr.addEventListener("click",()=>{
+    if(confirm("Remove every lockout window? The collar will be able to open the door at any hour."))
+      send("schedule clear",null,true);
+  });
+}
+
 function renderControl(){
   const sec=$("controlsec"), host=$("controls");
   if(!sec||!host) return;
@@ -1374,6 +1499,7 @@ async function load(){
     devices=(j.devices||[]);
     renderDoors(devices);
     renderControl();
+    renderSchedule();
     renderSettings();
     lastLoad=Date.now();
     renderAll();

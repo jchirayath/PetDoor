@@ -72,7 +72,7 @@ uint32_t g_settleMs = WIFI_IDLE_SETTLE_MS;
 uint32_t g_minUploadMs = WIFI_MIN_UPLOAD_INTERVAL_MS;
 uint32_t g_heartbeatMs = WIFI_HEARTBEAT_MS;
 // Bigger than the status line because it carries every tunable at once.
-char g_configLine[320] = {0};
+char g_configLine[448] = {0};   // grows with every tunable the dashboard shows
 
 // A pending discovery-table dump. A String rather than a fixed buffer because
 // it is several KB and exists only between a `scan` request and the next flush.
