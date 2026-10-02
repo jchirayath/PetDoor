@@ -1797,13 +1797,28 @@ void publishStatusLines() {
   // Every tunable the remote channel can change, so the dashboard's
   // settings form can show what each one IS rather than a blank box. Built
   // here for the same reason the status line is: this task owns all of it.
-  char cfg[320];
+  // Windows, compactly: HHMM-HHMM/<day mask in hex>, comma separated. The
+  // dashboard cannot offer to edit a schedule it cannot see, and the door is
+  // the only thing that knows what it has stored.
+  char sched[96] = "";
+  for (uint8_t i = 0; i < Schedule::count(); i++) {
+    Schedule::Window w;
+    if (!Schedule::get(i, w)) break;
+    char one[20];
+    snprintf(one, sizeof(one), "%s%02u%02u-%02u%02u/%02x", i ? "," : "",
+             w.startMin / 60, w.startMin % 60, w.endMin / 60, w.endMin % 60,
+             w.days & 0x7F);
+    strncat(sched, one, sizeof(sched) - strlen(sched) - 1);
+  }
+
+  char cfg[448];
   snprintf(cfg, sizeof(cfg),
            "enter=%d exit=%d dopen=%lu dclose=%lu dmin=%lu pulse=%lu "
            "pcount=%u pgap=%lu igap=%lu travel=%lu fwin=%u falpha=%s "
            "owin=%u oalpha=%s bpin=%d bpassive=%d blow=%d "
            "sopen=%d sshut=%d slow=%d "
-           "upsettle=%lu upmin=%lu upbeat=%lu",
+           "upsettle=%lu upmin=%lu upbeat=%lu "
+           "vib=%d tz=%d sched=%s",
            g_tracker.enterDbm(), g_tracker.exitDbm(),
            static_cast<unsigned long>(g_tracker.enterConfirmMs()),
            static_cast<unsigned long>(g_tracker.exitConfirmMs()),
@@ -1820,7 +1835,9 @@ void publishStatusLines() {
            Position::activeLow() ? 1 : 0,
            static_cast<unsigned long>(WifiLogger::settleMs()),
            static_cast<unsigned long>(WifiLogger::minIntervalMs()),
-           static_cast<unsigned long>(WifiLogger::heartbeatMs()));
+           static_cast<unsigned long>(WifiLogger::heartbeatMs()),
+           Vibration::pin(), Schedule::utcOffsetMinutes(),
+           sched[0] ? sched : "-");
   WifiLogger::setConfigLine(cfg);
 #endif
 }
