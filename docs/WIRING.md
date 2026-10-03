@@ -19,6 +19,31 @@ rather than editing `config.h`, so `git pull` does not clobber your build.
 | OPEN limit switch | — | `PIN_SENSOR_OPEN` | Optional, `-1` by default. See [below](#position-sensors) |
 | CLOSED limit switch | — | `PIN_SENSOR_CLOSED` | Optional, `-1` by default |
 
+### Which header pin each wire goes to
+
+The map above says *what* connects; this one says *where*, pad by pad, and
+which connections need a resistor.
+
+![Each wire traced to its header pin, with the resistors marked](assets/wiring-esp32-2relay-headers.svg)
+
+**Resistors, short version:**
+
+| | Resistor | Why |
+|---|---|---|
+| Status LED | **220 Ω – 1 kΩ, required** | An ESP32 pin is 3.3 V with no current limiting. Without one it sources far past its 12 mA rating and degrades — slowly, then intermittently |
+| Piezo buzzer | **~100 Ω, required** | Same reason. A piezo is a capacitive load and its inrush is worse than an LED's |
+| Limit switches | **None** | The firmware enables the internal pull-up; the switch shorts the pin to GND |
+| Vibration module | **None** | It is a powered board with its own comparator and pull-up, and drives the pin itself |
+
+The one exception: over a cable run longer than a metre or two, give each limit
+switch an external **4.7–10 kΩ pull-up to 3V3 at the board end**. The ESP32's
+internal pull-up is around 45 kΩ, and a long unshielded wire into a weak
+pull-up is an aerial. Phantom triggers are the symptom.
+
+**The drawing is generated**, by `assets/wiring-headers-gen.py`. Forty pads
+placed by hand drift, and a drifted pad in a wiring diagram is somebody's 5 V
+into a GPIO. Edit the script, run it, commit both.
+
 ### Choosing different pins
 
 If 16/17 are taken on your board, pick replacements that are plain GPIO with no
