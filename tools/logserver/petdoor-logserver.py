@@ -68,6 +68,10 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587") or 587)
 SMTP_USER = os.environ.get("SMTP_USER", "").strip()
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_FROM = os.environ.get("SMTP_FROM", "").strip()
+# Where the "Open the dashboard" button in notification mail points. No default
+# on purpose: this is a public project, and a hard-coded host would send every
+# installation's mail pointing at somebody else's door. Unset means no button.
+DASHBOARD_URL = os.environ.get("PETDOOR_DASHBOARD_URL", "").strip()
 SMTP_CRYPTO = os.environ.get("SMTP_CRYPTO", "tls").strip().lower()
 
 # Which commands are worth an email.
@@ -451,8 +455,135 @@ def notify_worthy(command):
     return True
 
 
-def send_notification(subject, body):
-    """One plain-text message. Returns (ok, reason).
+# --------------------------------------------------------------------- email
+#
+# One template for every message the server sends, so a new notification cannot
+# arrive looking like it came from a different system. Three rules shape it:
+#
+#   * TABLES AND INLINE STYLES, not a stylesheet. Mail clients are not browsers
+#     — Outlook renders through Word, Gmail strips <style> blocks, and anything
+#     relying on flexbox or classes degrades into unstyled text.
+#   * EVERY MESSAGE ALSO GOES AS PLAIN TEXT. Built from the same arguments, so
+#     the two cannot drift. A text part is what a watch, a screen reader and a
+#     spam filter all read, and a message with only an HTML part looks like
+#     bulk mail.
+#   * THE LOGO IS ATTACHED, NOT LINKED. Most clients block remote images by
+#     default, and a blocked logo is worse than no logo — it leaves a broken
+#     frame at the top of an alert about somebody's door.
+
+EMAIL_INK = "#17212B"
+EMAIL_MUTED = "#5A6673"
+EMAIL_RULE = "#DFE5EB"
+EMAIL_SUNK = "#F1F4F7"
+# The dashboard's own palette, so mail and portal are recognisably one thing.
+EMAIL_ACCENT = {
+    "calm": "#2A9D8F",    # teal: something happened, nothing is wrong
+    "door": "#E9A23B",    # amber: the door was asked to move
+    "alert": "#C4453B",   # red: somebody should look at this today
+}
+LOGO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "petdoor-logo.png")
+
+
+def _email_text(title, lede, rows, note, cta_url):
+    """The plain-text half. Same arguments as the HTML, so they stay in step."""
+    out = [title, "=" * len(title), ""]
+    if lede:
+        out += [lede, ""]
+    if rows:
+        width = max(len(k) for k, _ in rows)
+        out += ["  %-*s : %s" % (width, k, v) for k, v in rows] + [""]
+    if note:
+        out += [note, ""]
+    if cta_url:
+        out += [cta_url, ""]
+    out += ["--", "PetDoor. Not a security device: Bluetooth advertisements are",
+            "unauthenticated, so the door opens for anything broadcasting the",
+            "beacon's address."]
+    return "\n".join(out)
+
+
+def _email_html(title, lede, rows, note, cta_url, cta_label, accent):
+    colour = EMAIL_ACCENT.get(accent, EMAIL_ACCENT["calm"])
+    esc = lambda t: (str(t).replace("&", "&amp;").replace("<", "&lt;")
+                     .replace(">", "&gt;").replace('"', "&quot;"))
+    font = ("-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,"
+            "Arial,sans-serif")
+
+    row_html = ""
+    for k, v in rows or []:
+        row_html += (
+            '<tr>'
+            '<td style="padding:7px 14px 7px 0;color:%s;font:13px %s;'
+            'white-space:nowrap;vertical-align:top">%s</td>'
+            '<td style="padding:7px 0;color:%s;font:600 13px %s;'
+            'vertical-align:top">%s</td></tr>'
+            % (EMAIL_MUTED, font, esc(k), EMAIL_INK, font, esc(v)))
+    table = ("" if not row_html else
+             '<table role="presentation" cellpadding="0" cellspacing="0" '
+             'style="width:100%%;margin:4px 0 20px;background:%s;'
+             'border-radius:8px;padding:6px 16px"><tbody>%s</tbody></table>'
+             % (EMAIL_SUNK, row_html))
+
+    button = ("" if not cta_url else
+              '<table role="presentation" cellpadding="0" cellspacing="0" '
+              'style="margin:4px 0 8px"><tr><td style="background:%s;'
+              'border-radius:7px"><a href="%s" style="display:inline-block;'
+              'padding:10px 20px;color:#ffffff;font:600 14px %s;'
+              'text-decoration:none">%s</a></td></tr></table>'
+              % (colour, esc(cta_url), font, esc(cta_label or "Open the dashboard")))
+
+    return """<!doctype html>
+<html><body style="margin:0;padding:0;background:#EEF1F4">
+<table role="presentation" cellpadding="0" cellspacing="0" style="width:100%%;background:#EEF1F4">
+<tr><td align="center" style="padding:24px 12px">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="560"
+         style="width:560px;max-width:100%%;background:#FFFFFF;border-radius:12px;
+                border:1px solid %(rule)s;overflow:hidden">
+    <tr><td style="height:4px;background:%(colour)s;font-size:0;line-height:0">&nbsp;</td></tr>
+    <tr><td style="padding:20px 28px 0">
+      <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+        <td style="vertical-align:middle;padding-right:11px">
+          <img src="cid:petdoorlogo" width="34" height="34" alt=""
+               style="display:block;border:0"></td>
+        <td style="vertical-align:middle;color:%(ink)s;font:700 17px %(font)s;
+                   letter-spacing:-0.2px">PetDoor</td>
+      </tr></table>
+    </td></tr>
+    <tr><td style="padding:18px 28px 26px">
+      <div style="color:%(ink)s;font:700 20px %(font)s;line-height:1.3;
+                  margin:0 0 10px">%(title)s</div>
+      %(lede)s
+      %(table)s
+      %(note)s
+      %(button)s
+    </td></tr>
+    <tr><td style="padding:16px 28px 22px;border-top:1px solid %(rule)s;
+                   background:#FBFCFD">
+      <div style="color:%(muted)s;font:12px %(font)s;line-height:1.55">
+        <b>Not a security device.</b> Bluetooth advertisements are unauthenticated,
+        so the door opens for anything broadcasting the beacon's address.
+      </div>
+    </td></tr>
+  </table>
+</td></tr></table>
+</body></html>""" % {
+        "rule": EMAIL_RULE, "colour": colour, "ink": EMAIL_INK,
+        "muted": EMAIL_MUTED, "font": font, "title": esc(title),
+        "lede": ("" if not lede else
+                 '<p style="margin:0 0 16px;color:%s;font:15px %s;line-height:1.55">%s</p>'
+                 % (EMAIL_INK, font, esc(lede))),
+        "table": table,
+        "note": ("" if not note else
+                 '<p style="margin:0 0 18px;color:%s;font:13px %s;line-height:1.6">%s</p>'
+                 % (EMAIL_MUTED, font, esc(note))),
+        "button": button,
+    }
+
+
+def send_notification(subject, title, lede="", rows=None, note="",
+                      cta_url=None, cta_label=None, accent="calm"):
+    """One message, sent as both plain text and HTML. Returns (ok, reason).
 
     Never raises into the caller: a mail relay having a bad afternoon must not
     turn into a failed command or a 500 on the control endpoint. The command
@@ -475,11 +606,26 @@ def send_notification(subject, body):
     import smtplib, ssl
     from email.message import EmailMessage
 
+    if cta_url is None:
+        cta_url = DASHBOARD_URL
     msg = EmailMessage()
     msg["Subject"] = f"[petdoor] {subject}"
     msg["From"] = sender
     msg["To"] = NOTIFY_TO
-    msg.set_content(body)
+    # Text first, HTML second: a client shows the LAST part it understands.
+    msg.set_content(_email_text(title, lede, rows, note, cta_url))
+    msg.add_alternative(
+        _email_html(title, lede, rows, note, cta_url, cta_label, accent),
+        subtype="html")
+    # The logo rides inside the HTML part as cid:petdoorlogo. A missing file is
+    # not worth failing a notification over; the mail simply goes without it.
+    try:
+        with open(LOGO_FILE, "rb") as fh:
+            msg.get_payload()[1].add_related(
+                fh.read(), maintype="image", subtype="png",
+                cid="<petdoorlogo>", filename="petdoor.png")
+    except OSError:
+        pass
 
     try:
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as srv:
@@ -505,19 +651,23 @@ def notify_command(device, command, who, source):
     """Tell somebody a consequential command was queued for the door."""
     if not notify_worthy(command) or not NOTIFY_TO:
         return
-    when = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z").strip()
-    body = (
-        f"{command}\n\n"
-        f"  door    : {device}\n"
-        f"  queued  : {when}\n"
-        f"  from    : {source}\n"
-        f"  by      : {who or 'not recorded'}\n\n"
-        "The door collects queued commands when it next calls in, usually\n"
-        "within five minutes, and sooner if the collar is away. Until then it\n"
-        "can still be cancelled from the Controls tab.\n\n"
-        "https://petdoor.aspl.net/dashboard\n"
-    )
-    ok, why = send_notification(f"{command} queued for {device}", body)
+    verb = command.split()[0].lower() if command.split() else ""
+    # Amber for anything that moves or unlocks the door; teal for the rest.
+    accent = "door" if verb in ("door", "unlock", "maint") else "calm"
+    ok, why = send_notification(
+        f"{command} queued for {device}",
+        title=command,
+        lede="This was queued for your door, and will be applied when it next "
+             "calls in.",
+        rows=[("door", device),
+              ("queued", dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z").strip()),
+              ("from", source),
+              ("by", who or "not recorded")],
+        note="The door collects queued commands when it next calls in, usually "
+             "within five minutes, and sooner if the collar is away. Until then "
+             "it can still be cancelled from the Controls tab.",
+        cta_label="Open the dashboard",
+        accent=accent)
     if not ok:
         # Worth a log line rather than silence: a notification that never
         # arrives is indistinguishable from nothing having happened.
@@ -679,22 +829,22 @@ def notify_events(device, rows):
         # door, so a failed attempt is the single event here you would want to
         # hear about the same day rather than next time you open a dashboard.
         if r["type"] == "CONSOLE" and r["detail"] == 0:
-            body = (
-                "Somebody tried the door's network console and gave the wrong "
-                "password.\n\n"
-                f"  door    : {device}\n"
-                f"  uptime  : {r['uptime']}s (boot #{r['boot']})\n"
-                + (f"  from    : an address ending .{r['src']} on your network\n\n"
-                   if r.get("src") else
-                   "  from    : not reported (door firmware predates this)\n\n")
-                + "The console only listens during a maintenance window, and it "
-                "drops a client\nthat fails to authenticate. If you were not "
-                "calibrating the door just now,\nsomething on your network was "
-                "knocking on it.\n\n"
-                "https://petdoor.aspl.net/dashboard\n"
-            )
             ok, why = send_notification(
-                f"wrong console password on {device}", body)
+                f"wrong console password on {device}",
+                title="Wrong password on the door's console",
+                lede="Somebody tried the door's network console and gave the "
+                     "wrong password.",
+                rows=[("door", device),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"])),
+                      ("from", ("an address ending .%s on your network" % r["src"])
+                               if r.get("src") else
+                               "not reported (door firmware predates this)")],
+                note="The console only listens during a maintenance window, and "
+                     "it drops a client that fails to authenticate. If you were "
+                     "not calibrating the door just now, something on your "
+                     "network was knocking on it.",
+                cta_label="Open the dashboard",
+                accent="alert")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for console reject: {why}\n")
 
