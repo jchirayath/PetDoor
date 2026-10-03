@@ -32,7 +32,7 @@ two items both do it from different directions.
 
 Two normally-open switches, one at each end of travel. **The firmware already
 supports them**; both pins default to `-1` and it is switched on with one
-command once they are wired — `sensors 32 33`, from the console or the browser,
+command once they are wired — `sensors 32 25`, from the console or the browser,
 no reflash.
 
 | Buys | Costs |
@@ -50,7 +50,7 @@ They deliberately **cannot** drive the motor — see
 A vibration switch (SW-420, ~$1) answers a **different and faster** question
 than a limit switch: not "did it arrive" but "did it *start*". **The firmware
 supports it**; the pin defaults to `-1` and it is switched on with one command
-once wired — `vibration 25`, from the console or the browser, no reflash.
+once wired — `vibration 33`, from the console or the browser, no reflash.
 
 A travel that produces no vibration at all is logged as `NO_MOVE` and sounded,
 distinct from `STALLED`, which means the door started and never arrived. The

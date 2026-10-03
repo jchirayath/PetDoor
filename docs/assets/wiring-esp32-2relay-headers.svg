@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 1070" width="1220" height="1070"
-     role="img" aria-label="Both wires of every peripheral traced to a header pin on the ESP32 2-relay board: piezo through 100 ohms to G27 and back to GND; open limit switch between G32 and GND; closed limit switch between G33 and GND; vibration sensor DO to G25, VCC to 3V3, GND to GND; status LED through 220 ohms from G23 to GND. Relays are on-board.">
+     role="img" aria-label="Both wires of every peripheral traced to a header pin on the ESP32 2-relay board: piezo through 100 ohms to G27 and back to GND; open limit switch between G32 and GND; closed limit switch between G25 and GND; vibration sensor DO to G33, VCC to 3V3, GND to GND; status LED through 220 ohms from G23 to GND. Relays are on-board.">
   <title>PetDoor — both wires of every peripheral, to the pin each lands on</title>
   <style>
     .h1  { font: 600 17px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#8A96A3; }
@@ -113,17 +113,17 @@
   <rect x="24" y="352" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
   <rect x="24" y="352" width="4" height="78" rx="2" fill="#E9A23B"/>
   <text x="40" y="373" class="ttl" fill="#E9A23B">CLOSED limit switch</text>
-  <text x="40" y="394" class="wire">G33 → reed</text>
+  <text x="40" y="394" class="wire">G25 → reed</text>
   <text x="40" y="413" class="wire">reed → GND</text>
-  <path d="M286 390 L346 390 L346 247 L496 247 L496 257" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 390 L346 390 L346 264 L421 264" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
   <path d="M286 409 L356 409 L356 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
   <rect x="24" y="454" width="262" height="97" rx="6" class="box" stroke-dasharray="5 4"/>
   <rect x="24" y="454" width="4" height="97" rx="2" fill="#E9A23B"/>
   <text x="40" y="475" class="ttl" fill="#E9A23B">Vibration sensor</text>
-  <text x="40" y="496" class="wire">DO → G25</text>
+  <text x="40" y="496" class="wire">DO → G33</text>
   <text x="40" y="515" class="wire">VCC → 3V3 (never 5 V)</text>
   <text x="40" y="534" class="wire">GND → GND</text>
-  <path d="M286 492 L366 492 L366 264 L421 264" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 492 L366 492 L366 247 L496 247 L496 257" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
   <path d="M286 511 L376 511 L376 128 L421 128" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
   <path d="M286 530 L386 530 L386 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
   <rect x="872" y="148" width="262" height="78" rx="6" class="box"/>
