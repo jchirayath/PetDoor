@@ -103,59 +103,75 @@ EDGE = PX + PW
 lane_n = [0]
 def lane():
     lane_n[0] += 1
-    return 296 + lane_n[0] * 10          # one lane per wire, never shared
+    return 294 + lane_n[0] * 11          # one lane per wire, never shared
 
-def to_left(target, from_y, colour, dash=False, which=0):
+def to_left(target, from_y, colour, dash=False, which=0, start_x=None):
     x, y = pads("L", target)[which]
     lx = lane()
+    sx = EDGE if start_x is None else start_x
     if x == LPO:
-        wire([(EDGE, from_y), (lx, from_y), (lx, y), (x - 7, y)], colour, dash)
+        wire([(sx, from_y), (lx, from_y), (lx, y), (x - 7, y)], colour, dash)
     else:
         gap = y + PITCH // 2 if y == TOP else y - PITCH // 2
-        wire([(EDGE, from_y), (lx, from_y), (lx, gap), (x, gap),
+        wire([(sx, from_y), (lx, from_y), (lx, gap), (x, gap),
               (x, y + (7 if gap > y else -7))], colour, dash)
 
-# ---- left-hand peripherals, each with BOTH legs ----------------------------
+def junction(x, y):
+    A('  <circle cx="%d" cy="%d" r="4" fill="%s"/>' % (x, y, GNDC))
+
+# Ordered so the two parts that SHARE a ground sit next to each other. The
+# piezo and the vibration module return together; the two reed switches return
+# together. Two wires reach the board instead of four, which is what anyone
+# actually does with a crimp or a terminal block.
 box(PX, 148, PW, 78, PURPLE, "Piezo buzzer",
-    ["G27 → [100 Ω] → piezo", "piezo → GND"])
+    ["G27 \u2192 [100 \u03a9] \u2192 piezo", "piezo \u2192 GND \u2500\u2510"])
 to_left("G27", 186, PURPLE)
-to_left("GND", 205, GNDC, which=0)                 # GND on the bottom row
 
-box(PX, 250, PW, 78, AMBER, "OPEN limit switch", 
-    ["G32 → reed", "reed → GND"], dash=True)
-to_left("G32", 288, AMBER, True)
-to_left("GND", 307, GNDC, True, which=0)
+box(PX, 246, PW, 97, AMBER, "Vibration sensor",
+    ["DO \u2192 G33", "VCC \u2192 3V3 (never 5 V)", "GND \u2192 GND \u2500\u2510"], dash=True)
+to_left("G33", 284, AMBER, True)
+to_left("3V3", 303, AMBER, True)
 
-box(PX, 352, PW, 78, AMBER, "CLOSED limit switch",
-    ["G25 → reed", "reed → GND"], dash=True)
-to_left("G25", 390, AMBER, True)
-to_left("GND", 409, GNDC, True, which=1)
+# Shared return A: piezo + vibration.
+JA = 292
+wire([(EDGE, 205), (JA, 205), (JA, 265)], GNDC)
+wire([(EDGE, 322), (JA, 322), (JA, 265)], GNDC)
+junction(JA, 265)
+to_left("GND", 265, GNDC, which=0, start_x=JA)     # top-row GND pad
 
-box(PX, 454, PW, 97, AMBER, "Vibration sensor",
-    ["DO → G33", "VCC → 3V3 (never 5 V)", "GND → GND"], dash=True)
-to_left("G33", 492, AMBER, True)
-to_left("3V3", 511, AMBER, True)
-to_left("GND", 530, GNDC, True, which=1)           # GND on the top row
+box(PX, 371, PW, 78, AMBER, "OPEN limit switch",
+    ["G32 \u2192 reed", "reed \u2192 GND \u2500\u2510"], dash=True)
+to_left("G32", 409, AMBER, True)
+
+box(PX, 469, PW, 78, AMBER, "CLOSED limit switch",
+    ["G25 \u2192 reed", "reed \u2192 GND \u2500\u2510"], dash=True)
+to_left("G25", 507, AMBER, True)
+
+# Shared return B: the two reed switches.
+JB = 303
+wire([(EDGE, 428), (JB, 428), (JB, 487)], GNDC)
+wire([(EDGE, 526), (JB, 526), (JB, 487)], GNDC)
+junction(JB, 487)
+to_left("GND", 487, GNDC, which=1, start_x=JB)     # bottom-row GND pad
 
 # ---- status LED, on the right header ---------------------------------------
 (x23, y23) = pads("R", "G23")[0]
 (xg, yg) = pads("R", "GND")[0]                     # top row, inner column
 box(872, 148, 262, 78, GREY, "Status LED  (optional)",
-    ["G23 → [220 Ω] → LED", "LED → GND"])
-wire([(872, 186), (826, 179), (826, y23), (x23 + 7, y23)], GREY)
+    ["G23 \u2192 [220 \u03a9] \u2192 LED", "LED \u2192 GND"])
+wire([(872, 186), (826, 186), (826, y23), (x23 + 7, y23)], GREY)
 # GND is the inner pad: cross the outer column between rows, as on the left.
-wire([(872, 205), (806, 198), (806, yg + PITCH // 2), (xg, yg + PITCH // 2),
+wire([(872, 205), (806, 205), (806, yg + PITCH // 2), (xg, yg + PITCH // 2),
       (xg, yg + 7)], GNDC)
 
 ny = max(92 + bh, 551) + 46
-A('  <text x="24" y="%d" class="ttl" fill="%s">Do I need a separate GND pin for each?</text>' % (ny, INK))
-A('  <text x="24" y="%d" class="note">There are FOUR GND pads \u2014 two on each header \u2014 and all four are the same net, so it makes no electrical difference which you use. The two on</text>' % (ny + 21))
-A('  <text x="24" y="%d" class="note">this side are drawn taking two returns each, nearest first.</text>' % (ny + 40))
-A('  <text x="24" y="%d" class="note">What decides it is mechanical, not electrical: a 0.1 inch pin takes ONE Dupont connector. Two returns on one pad means joining them first \u2014 a</text>' % (ny + 63))
-A('  <text x="24" y="%d" class="note">crimped splice, a WAGO, or a small screw terminal. Running every ground to one terminal block and taking a single wire from there to any</text>' % (ny + 82))
-A('  <text x="24" y="%d" class="note">GND pad is just as correct, usually tidier, and is what most people end up with.</text>' % (ny + 101))
+A('  <text x="%d" y="%d" class="ttl" fill="%s">Do I need a separate GND pin for each?</text>' % (24, ny, INK))
+A('  <text x="24" y="%d" class="note">No. There are four GND pads \u2014 two on each header \u2014 and all four are the same net. Here the piezo and the vibration module share one</text>' % (ny + 21))
+A('  <text x="24" y="%d" class="note">return, and the two reed switches share another, so two wires reach the board instead of four. The dots mark where they join.</text>' % (ny + 40))
+A('  <text x="24" y="%d" class="note">You would have to join them somewhere in any case: a 0.1 inch pin takes ONE Dupont connector. A crimped splice, a WAGO or a small screw</text>' % (ny + 63))
+A('  <text x="24" y="%d" class="note">terminal all do the job. Running every ground to one terminal block and taking a single wire to any GND pad is equally correct.</text>' % (ny + 82))
 
-ry = ny + 130
+ry = ny + 112
 A('  <text x="24" y="%d" class="ttl" fill="%s">Do I need a resistor?</text>' % (ry, INK))
 A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>' % (ry + 22, INK))
 A('  <text x="24" y="%d" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>' % (ry + 41))

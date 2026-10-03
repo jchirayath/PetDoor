@@ -38,15 +38,15 @@ separate switches at opposite ends of the travel, not one part.
 | Limit switches | **None** | The firmware enables the internal pull-up; the switch shorts the pin to GND |
 | Vibration module | **None** | It is a powered board with its own comparator and pull-up, and drives the pin itself |
 
-**Do I need a GND pin per device?** No — there are **four GND pads**, two on each
-header, and all four are the same net. The diagram spreads the returns across
-the two on the left rather than piling them onto one pin.
+**Do I need a GND pin per device?** No. There are **four GND pads**, two on each
+header, and all four are the same net. The diagram pairs the returns: the piezo
+and the vibration module share one, the two reed switches share another. Two
+wires reach the board instead of four.
 
-What decides it is mechanical rather than electrical: a 0.1 inch pin takes
-*one* Dupont connector, so two returns on one pad have to be joined first — a
-crimped splice, a WAGO, or a small screw terminal. Running every ground to one
-terminal block and taking a single wire from there to any GND pad is equally
-correct, usually tidier, and is what most builds end up looking like.
+You would have to join them somewhere in any case, because a 0.1 inch pin takes
+*one* Dupont connector — a crimped splice, a WAGO or a small screw terminal all
+do it. Running every ground to a single terminal block and taking one wire to
+any GND pad is equally correct, and is what most builds end up looking like.
 
 The one exception: over a cable run longer than a metre or two, give each limit
 switch an external **4.7–10 kΩ pull-up to 3V3 at the board end**. The ESP32's

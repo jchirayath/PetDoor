@@ -100,55 +100,58 @@
   <rect x="24" y="148" width="4" height="78" rx="2" fill="#9B72CF"/>
   <text x="40" y="169" class="ttl" fill="#9B72CF">Piezo buzzer</text>
   <text x="40" y="190" class="wire">G27 → [100 Ω] → piezo</text>
-  <text x="40" y="209" class="wire">piezo → GND</text>
-  <path d="M286 186 L306 186 L306 298 L421 298" fill="none" stroke="#9B72CF" stroke-width="2" stroke-linejoin="round"/>
-  <path d="M286 205 L316 205 L316 145 L496 145 L496 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
-  <rect x="24" y="250" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
-  <rect x="24" y="250" width="4" height="78" rx="2" fill="#E9A23B"/>
-  <text x="40" y="271" class="ttl" fill="#E9A23B">OPEN limit switch</text>
-  <text x="40" y="292" class="wire">G32 → reed</text>
-  <text x="40" y="311" class="wire">reed → GND</text>
-  <path d="M286 288 L326 288 L326 230 L421 230" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M286 307 L336 307 L336 145 L496 145 L496 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <rect x="24" y="352" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
-  <rect x="24" y="352" width="4" height="78" rx="2" fill="#E9A23B"/>
-  <text x="40" y="373" class="ttl" fill="#E9A23B">CLOSED limit switch</text>
-  <text x="40" y="394" class="wire">G25 → reed</text>
-  <text x="40" y="413" class="wire">reed → GND</text>
-  <path d="M286 390 L346 390 L346 264 L421 264" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M286 409 L356 409 L356 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <rect x="24" y="454" width="262" height="97" rx="6" class="box" stroke-dasharray="5 4"/>
-  <rect x="24" y="454" width="4" height="97" rx="2" fill="#E9A23B"/>
-  <text x="40" y="475" class="ttl" fill="#E9A23B">Vibration sensor</text>
-  <text x="40" y="496" class="wire">DO → G33</text>
-  <text x="40" y="515" class="wire">VCC → 3V3 (never 5 V)</text>
-  <text x="40" y="534" class="wire">GND → GND</text>
-  <path d="M286 492 L366 492 L366 247 L496 247 L496 257" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M286 511 L376 511 L376 128 L421 128" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M286 530 L386 530 L386 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <text x="40" y="209" class="wire">piezo → GND ─┐</text>
+  <path d="M286 186 L305 186 L305 298 L421 298" fill="none" stroke="#9B72CF" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="24" y="246" width="262" height="97" rx="6" class="box" stroke-dasharray="5 4"/>
+  <rect x="24" y="246" width="4" height="97" rx="2" fill="#E9A23B"/>
+  <text x="40" y="267" class="ttl" fill="#E9A23B">Vibration sensor</text>
+  <text x="40" y="288" class="wire">DO → G33</text>
+  <text x="40" y="307" class="wire">VCC → 3V3 (never 5 V)</text>
+  <text x="40" y="326" class="wire">GND → GND ─┐</text>
+  <path d="M286 284 L316 284 L316 247 L496 247 L496 257" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 303 L327 303 L327 128 L421 128" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 205 L292 205 L292 265" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M286 322 L292 322 L292 265" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="292" cy="265" r="4" fill="#7A8794"/>
+  <path d="M292 265 L338 265 L338 145 L496 145 L496 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="24" y="371" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
+  <rect x="24" y="371" width="4" height="78" rx="2" fill="#E9A23B"/>
+  <text x="40" y="392" class="ttl" fill="#E9A23B">OPEN limit switch</text>
+  <text x="40" y="413" class="wire">G32 → reed</text>
+  <text x="40" y="432" class="wire">reed → GND ─┐</text>
+  <path d="M286 409 L349 409 L349 230 L421 230" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <rect x="24" y="469" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
+  <rect x="24" y="469" width="4" height="78" rx="2" fill="#E9A23B"/>
+  <text x="40" y="490" class="ttl" fill="#E9A23B">CLOSED limit switch</text>
+  <text x="40" y="511" class="wire">G25 → reed</text>
+  <text x="40" y="530" class="wire">reed → GND ─┐</text>
+  <path d="M286 507 L360 507 L360 264 L421 264" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 428 L303 428 L303 487" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M286 526 L303 526 L303 487" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="303" cy="487" r="4" fill="#7A8794"/>
+  <path d="M303 487 L371 487 L371 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
   <rect x="872" y="148" width="262" height="78" rx="6" class="box"/>
   <rect x="872" y="148" width="4" height="78" rx="2" fill="#9AA5B1"/>
   <text x="888" y="169" class="ttl" fill="#9AA5B1">Status LED  (optional)</text>
   <text x="888" y="190" class="wire">G23 → [220 Ω] → LED</text>
   <text x="888" y="209" class="wire">LED → GND</text>
-  <path d="M872 186 L826 179 L826 128 L751 128" fill="none" stroke="#9AA5B1" stroke-width="2" stroke-linejoin="round"/>
-  <path d="M872 205 L806 198 L806 145 L694 145 L694 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M872 186 L826 186 L826 128 L751 128" fill="none" stroke="#9AA5B1" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M872 205 L806 205 L806 145 L694 145 L694 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
   <text x="24" y="597" class="ttl" fill="#C7D0DA">Do I need a separate GND pin for each?</text>
-  <text x="24" y="618" class="note">There are FOUR GND pads — two on each header — and all four are the same net, so it makes no electrical difference which you use. The two on</text>
-  <text x="24" y="637" class="note">this side are drawn taking two returns each, nearest first.</text>
-  <text x="24" y="660" class="note">What decides it is mechanical, not electrical: a 0.1 inch pin takes ONE Dupont connector. Two returns on one pad means joining them first — a</text>
-  <text x="24" y="679" class="note">crimped splice, a WAGO, or a small screw terminal. Running every ground to one terminal block and taking a single wire from there to any</text>
-  <text x="24" y="698" class="note">GND pad is just as correct, usually tidier, and is what most people end up with.</text>
-  <text x="24" y="727" class="ttl" fill="#C7D0DA">Do I need a resistor?</text>
-  <text x="24" y="749" class="note"><tspan font-weight="700" fill="#C7D0DA">LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>
-  <text x="24" y="768" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>
-  <text x="24" y="793" class="note"><tspan font-weight="700" fill="#C7D0DA">Limit switches: NO.</tspan> The firmware enables the ESP32’s internal pull-up and the reed simply shorts its pin to GND.</text>
-  <text x="24" y="812" class="note">Over a run longer than a metre or two, add an external 4.7–10 kΩ pull-up to 3V3 at the BOARD end: the internal one is about 45 kΩ, and a long</text>
-  <text x="24" y="831" class="note">unshielded wire into a weak pull-up is an aerial. Phantom triggers are the symptom.</text>
-  <text x="24" y="856" class="note"><tspan font-weight="700" fill="#C7D0DA">Vibration module: NO.</tspan> It is a powered board with its own comparator and pull-up, and it drives the pin itself.</text>
-  <rect x="20" y="877" width="1180" height="80" rx="6" fill="#E76F51" opacity="0.07"/>
-  <rect x="20" y="877" width="4" height="80" rx="2" fill="#E76F51"/>
-  <text x="42" y="901" class="ttl" fill="#E76F51">Check your own board before you wire anything</text>
-  <text x="42" y="923" class="note">This map is the pin card for this board family, and relay counts differ across it. On the 8-relay version G32, G25, G27 and G12 drive relays;</text>
-  <text x="42" y="942" class="note">on this 2-relay board the relays sit on GPIO 16 and 17 and those four pins are free. Meter them before you trust either statement.</text>
+  <text x="24" y="618" class="note">No. There are four GND pads — two on each header — and all four are the same net. Here the piezo and the vibration module share one</text>
+  <text x="24" y="637" class="note">return, and the two reed switches share another, so two wires reach the board instead of four. The dots mark where they join.</text>
+  <text x="24" y="660" class="note">You would have to join them somewhere in any case: a 0.1 inch pin takes ONE Dupont connector. A crimped splice, a WAGO or a small screw</text>
+  <text x="24" y="679" class="note">terminal all do the job. Running every ground to one terminal block and taking a single wire to any GND pad is equally correct.</text>
+  <text x="24" y="709" class="ttl" fill="#C7D0DA">Do I need a resistor?</text>
+  <text x="24" y="731" class="note"><tspan font-weight="700" fill="#C7D0DA">LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>
+  <text x="24" y="750" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>
+  <text x="24" y="775" class="note"><tspan font-weight="700" fill="#C7D0DA">Limit switches: NO.</tspan> The firmware enables the ESP32’s internal pull-up and the reed simply shorts its pin to GND.</text>
+  <text x="24" y="794" class="note">Over a run longer than a metre or two, add an external 4.7–10 kΩ pull-up to 3V3 at the BOARD end: the internal one is about 45 kΩ, and a long</text>
+  <text x="24" y="813" class="note">unshielded wire into a weak pull-up is an aerial. Phantom triggers are the symptom.</text>
+  <text x="24" y="838" class="note"><tspan font-weight="700" fill="#C7D0DA">Vibration module: NO.</tspan> It is a powered board with its own comparator and pull-up, and it drives the pin itself.</text>
+  <rect x="20" y="859" width="1180" height="80" rx="6" fill="#E76F51" opacity="0.07"/>
+  <rect x="20" y="859" width="4" height="80" rx="2" fill="#E76F51"/>
+  <text x="42" y="883" class="ttl" fill="#E76F51">Check your own board before you wire anything</text>
+  <text x="42" y="905" class="note">This map is the pin card for this board family, and relay counts differ across it. On the 8-relay version G32, G25, G27 and G12 drive relays;</text>
+  <text x="42" y="924" class="note">on this 2-relay board the relays sit on GPIO 16 and 17 and those four pins are free. Meter them before you trust either statement.</text>
 </svg>
