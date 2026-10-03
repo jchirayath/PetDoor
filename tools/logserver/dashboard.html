@@ -1210,6 +1210,21 @@ function renderSchedule(){
   const dayBoxes=DAYNAME.map((n,i)=>
     `<label><input type="checkbox" class="schedday" value="${i}" checked>${n}</label>`).join("");
 
+  // Nothing here is instant, and a panel that looks unchanged after you press
+  // Remove reads as a broken button rather than a queued command. The door
+  // collects on its next check-in, and only reports the result on the one
+  // after that, so a change can take ten minutes to appear.
+  const waiting=(typeof pending!=="undefined"?pending:[])
+    .filter(p=>String(p.command||"").toLowerCase().startsWith("schedule"));
+  if(waiting.length){
+    html+=`<div class="queued" style="margin-top:12px">
+      <span>Waiting for the door:</span>
+      <span class="cmds">${waiting.map(p=>esc(p.command)).join(", ")}</span>
+      <p class="note" style="margin:6px 0 0">The list above still shows what the door
+      currently has. It collects queued changes when it next calls in — usually within
+      five minutes — and this panel updates after the check-in following that.</p></div>`;
+  }
+
   html+=`<div class="schedadd">
       <label for="schedfrom">From</label><input type="time" id="schedfrom" value="22:00">
       <label for="schedto">to</label><input type="time" id="schedto" value="06:00">
