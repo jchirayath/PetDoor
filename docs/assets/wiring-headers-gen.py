@@ -13,7 +13,7 @@ line is ever drawn across a pin name.
 """
 import os
 
-W, H = 1220, 1010
+W, H = 1220, 1070
 PITCH, TOP = 34, 128
 
 LEFT = [("3V3", "GND"), ("SVP", "EN"), ("G34", "SVN"), ("G32", "G35"),
@@ -119,12 +119,12 @@ def to_left(target, from_y, colour, dash=False, which=0):
 box(PX, 148, PW, 78, PURPLE, "Piezo buzzer",
     ["G27 → [100 Ω] → piezo", "piezo → GND"])
 to_left("G27", 186, PURPLE)
-to_left("GND", 205, GNDC, which=1)                 # GND on the bottom row
+to_left("GND", 205, GNDC, which=0)                 # GND on the bottom row
 
 box(PX, 250, PW, 78, AMBER, "OPEN limit switch", 
     ["G32 → reed", "reed → GND"], dash=True)
 to_left("G32", 288, AMBER, True)
-to_left("GND", 307, GNDC, True, which=1)
+to_left("GND", 307, GNDC, True, which=0)
 
 box(PX, 352, PW, 78, AMBER, "CLOSED limit switch",
     ["G33 → reed", "reed → GND"], dash=True)
@@ -135,7 +135,7 @@ box(PX, 454, PW, 97, AMBER, "Vibration sensor",
     ["DO → G25", "VCC → 3V3 (never 5 V)", "GND → GND"], dash=True)
 to_left("G25", 492, AMBER, True)
 to_left("3V3", 511, AMBER, True)
-to_left("GND", 530, GNDC, True, which=0)           # GND on the top row
+to_left("GND", 530, GNDC, True, which=1)           # GND on the top row
 
 # ---- status LED, on the right header ---------------------------------------
 (x23, y23) = pads("R", "G23")[0]
@@ -148,11 +148,14 @@ wire([(872, 205), (806, 198), (806, yg + PITCH // 2), (xg, yg + PITCH // 2),
       (xg, yg + 7)], GNDC)
 
 ny = max(92 + bh, 551) + 46
-A('  <text x="24" y="%d" class="ttl" fill="%s">Every ground is the same net</text>' % (ny, INK))
-A('  <text x="24" y="%d" class="note">The headers carry four GND pads — two on each side. Any of them will do, and they are drawn here to whichever is nearest. Daisy-chaining</text>' % (ny + 21))
-A('  <text x="24" y="%d" class="note">several returns to one pad is normal and is what most people end up doing.</text>' % (ny + 40))
+A('  <text x="24" y="%d" class="ttl" fill="%s">Do I need a separate GND pin for each?</text>' % (ny, INK))
+A('  <text x="24" y="%d" class="note">There are FOUR GND pads \u2014 two on each header \u2014 and all four are the same net, so it makes no electrical difference which you use. The two on</text>' % (ny + 21))
+A('  <text x="24" y="%d" class="note">this side are drawn taking two returns each, nearest first.</text>' % (ny + 40))
+A('  <text x="24" y="%d" class="note">What decides it is mechanical, not electrical: a 0.1 inch pin takes ONE Dupont connector. Two returns on one pad means joining them first \u2014 a</text>' % (ny + 63))
+A('  <text x="24" y="%d" class="note">crimped splice, a WAGO, or a small screw terminal. Running every ground to one terminal block and taking a single wire from there to any</text>' % (ny + 82))
+A('  <text x="24" y="%d" class="note">GND pad is just as correct, usually tidier, and is what most people end up with.</text>' % (ny + 101))
 
-ry = ny + 68
+ry = ny + 130
 A('  <text x="24" y="%d" class="ttl" fill="%s">Do I need a resistor?</text>' % (ry, INK))
 A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>' % (ry + 22, INK))
 A('  <text x="24" y="%d" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>' % (ry + 41))
