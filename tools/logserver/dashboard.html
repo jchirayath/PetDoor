@@ -1174,6 +1174,10 @@ function renderSchedule(){
   const sec=$("schedsec"), host=$("schedule");
   if(!sec||!host) return;
   if(!controlOn){ sec.hidden=true; return; }
+  // Local, like every other renderer here. It was global-by-accident in the
+  // first version of this panel, which threw "Can't find variable: esc" and
+  // took the whole dashboard down — a parse check cannot catch that.
+  const esc=t=>String(t==null?"":t).replace(/[<>&"]/g,"");
   sec.hidden=false;
 
   const d=devices[0]||{};
