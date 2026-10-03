@@ -1083,8 +1083,8 @@ void printTimingMenu() {
   Con.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
   Con.println(F("      Lower the middle one for faster commands, at the cost of"));
   Con.println(F("      radio time the BLE scan would otherwise have. 0 heartbeat = off"));
-  Con.println(F("    sensors 32 33    limit switch pins: <open> <closed> ('sensors off')"));
-  Con.println(F("    sensors 32 33 low   same, for switches that pull the pin to GND"));
+  Con.println(F("    sensors 32 25    limit switch pins: <open> <closed> ('sensors off')"));
+  Con.println(F("    sensors 32 25 low   same, for switches that pull the pin to GND"));
   Con.println(F("      the door stops guessing where it is. Without them it only"));
   Con.println(F("      knows what it COMMANDED, which is why the chime is a timer"));
   Con.println(F("    clear            forget saved values"));

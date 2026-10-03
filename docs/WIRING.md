@@ -57,6 +57,30 @@ pull-up is an aerial. Phantom triggers are the symptom.
 placed by hand drift, and a drifted pad in a wiring diagram is somebody's 5 V
 into a GPIO. Edit the script, run it, commit both.
 
+### Why these pins
+
+The choice is not arbitrary. On this board's left header only **three** pins are
+fully usable — `G32`, `G25`, `G27`, and they happen to sit on three consecutive
+rows of the *outer* column, which is the column you can reach without working
+around the inner one. Everything else there is flash, a strapping pin, input-only,
+or power.
+
+So the three two-wire devices take those three pins, in order down the header:
+
+| | Pin | Position |
+|---|---|---|
+| OPEN limit switch | `G32` | row 4, outer |
+| CLOSED limit switch | `G25` | row 5, outer |
+| Piezo buzzer | `G27` | row 6, outer |
+| Vibration module | `G33` | row 5, inner |
+
+The vibration module gets the inner pin because it is the one part that has to
+reach row 1 anyway for `3V3` and `GND` — a third wire crossing the header costs
+it nothing, where it would cost a reed switch an awkward run.
+
+If you are not fitting the vibration sensor, ignore `G33` entirely: the two
+switches and the buzzer are then three adjacent pins in a row.
+
 ### Choosing different pins
 
 If 16/17 are taken on your board, pick replacements that are plain GPIO with no
@@ -126,7 +150,7 @@ the relay inputs are wired at the factory, so GPIO 16 and 17 reach the coils
 with nothing for you to get wrong. Everything else hangs off the IO headers.
 
 <div align="center">
-  <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, GPIO 32 and 33 are for open and closed limit switches, and GPIO 25 takes a three-wire vibration sensor module (DO, VCC to 3.3 V, GND)" width="900">
+  <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, GPIO 32 and 25 are for open and closed limit switches, and GPIO 33 takes a three-wire vibration sensor module (DO, VCC to 3.3 V, GND)" width="900">
 </div>
 
 The two dashed inputs are **supported but off by default** (`-1`). The pin
@@ -460,7 +484,7 @@ Two wires each, and no resistors — the ESP32's internal pull-ups do the work:
 
 ```
    GPIO 32 ──[ reed switch ]── GND        door fully OPEN
-   GPIO 33 ──[ reed switch ]── GND        door fully CLOSED
+   GPIO 25 ──[ reed switch ]── GND        door fully CLOSED
 ```
 
 Configured as `INPUT_PULLUP`, the pin idles HIGH and is pulled LOW when the
@@ -473,8 +497,8 @@ From the serial console:
 
 ```
 w                     open the timing menu
-sensors 32 33         open-end pin, closed-end pin
-sensors 32 33 low     same, spelling out the usual to-GND polarity
+sensors 32 25         open-end pin, closed-end pin
+sensors 32 25 low     same, spelling out the usual to-GND polarity
 sensors -1 33         only the closed end fitted so far
 sensors off           back to open loop
 s                     check: "position : CLOSED (measured)"
@@ -483,7 +507,7 @@ s                     check: "position : CLOSED (measured)"
 Or remotely, which is the point of shipping it before the hardware:
 
 ```bash
-petdoor-logserver.py --queue sensors 32 33
+petdoor-logserver.py --queue sensors 32 25
 ```
 
 The dashboard's **Settings** tab has the same thing as two pin boxes. Either way

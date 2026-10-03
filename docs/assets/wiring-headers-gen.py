@@ -45,7 +45,7 @@ A = o.append
 A('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"' % (W, H, W, H))
 A('     role="img" aria-label="Both wires of every peripheral traced to a header pin on the '
   'ESP32 2-relay board: piezo through 100 ohms to G27 and back to GND; open limit switch '
-  'between G32 and GND; closed limit switch between G33 and GND; vibration sensor DO to G25, '
+  'between G32 and GND; closed limit switch between G25 and GND; vibration sensor DO to G33, '
   'VCC to 3V3, GND to GND; status LED through 220 ohms from G23 to GND. Relays are on-board.">')
 A('  <title>PetDoor — both wires of every peripheral, to the pin each lands on</title>')
 A('''  <style>
@@ -127,13 +127,13 @@ to_left("G32", 288, AMBER, True)
 to_left("GND", 307, GNDC, True, which=0)
 
 box(PX, 352, PW, 78, AMBER, "CLOSED limit switch",
-    ["G33 → reed", "reed → GND"], dash=True)
-to_left("G33", 390, AMBER, True)
+    ["G25 → reed", "reed → GND"], dash=True)
+to_left("G25", 390, AMBER, True)
 to_left("GND", 409, GNDC, True, which=1)
 
 box(PX, 454, PW, 97, AMBER, "Vibration sensor",
-    ["DO → G25", "VCC → 3V3 (never 5 V)", "GND → GND"], dash=True)
-to_left("G25", 492, AMBER, True)
+    ["DO → G33", "VCC → 3V3 (never 5 V)", "GND → GND"], dash=True)
+to_left("G33", 492, AMBER, True)
 to_left("3V3", 511, AMBER, True)
 to_left("GND", 530, GNDC, True, which=1)           # GND on the top row
 
