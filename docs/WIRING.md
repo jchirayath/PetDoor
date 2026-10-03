@@ -21,10 +21,13 @@ rather than editing `config.h`, so `git pull` does not clobber your build.
 
 ### Which header pin each wire goes to
 
-The map above says *what* connects; this one says *where*, pad by pad, and
-which connections need a resistor.
+The map above says *what* connects; this one says *where*, pad by pad. **Both
+legs of every peripheral are drawn** — the return to ground is a wire you have
+to run, and a diagram that shows only the signal leg leaves half the job
+implied. The two limit switches get a callout each, because they are two
+separate switches at opposite ends of the travel, not one part.
 
-![Each wire traced to its header pin, with the resistors marked](assets/wiring-esp32-2relay-headers.svg)
+![Both wires of every peripheral traced to the header pin each lands on, with the resistors marked](assets/wiring-esp32-2relay-headers.svg)
 
 **Resistors, short version:**
 

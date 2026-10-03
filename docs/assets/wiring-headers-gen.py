@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Generates docs/assets/wiring-esp32-2relay-headers.svg.
 
-Pad positions come from the board's own pin card; this only adds which wire
-lands on which pad, and which of them need a resistor. Generated rather than
-hand-drawn because forty pads placed by hand drift, and a drifted pad in a
-wiring diagram is somebody's 5 V into a GPIO. Every wire gets its own vertical
-lane, and wires to the inner column cross between rows, so none is ever drawn
-through a pin name.
+Pad positions come from the board's own pin card; this adds which wire lands on
+which pad, and where a resistor goes. BOTH ends of every peripheral are drawn —
+the return to GND is a wire you have to run, and a diagram that only shows the
+signal leg leaves half the job implied.
+
+Generated rather than hand-drawn: forty pads placed by hand drift, and a
+drifted pad in a wiring diagram is somebody's 5 V into a GPIO. Each wire gets
+its own vertical lane, and wires to an inner column cross between rows, so no
+line is ever drawn across a pin name.
 """
 import os
 
-W, H = 1180, 924
+W, H = 1220, 1010
 PITCH, TOP = 34, 128
 
 LEFT = [("3V3", "GND"), ("SVP", "EN"), ("G34", "SVN"), ("G32", "G35"),
@@ -20,29 +23,31 @@ RIGHT = [("GND", "G23"), ("G22", "TXD"), ("RXD", "G21"), ("G19", "G18"),
          ("G5", "G17"), ("G16", "G4"), ("G0", "SD1"), ("SD0", "CLK"),
          ("3V3", "GND")]
 
-BX0, BX1 = 400, 772
-LPO, LPI = 424, 492
-RPI, RPO = 690, 740
+BX0, BX1 = 404, 776
+LPO, LPI = 428, 496
+RPI, RPO = 694, 744
 PURPLE, AMBER, GREY, INK, RED = "#9B72CF", "#E9A23B", "#9AA5B1", "#C7D0DA", "#E76F51"
+GNDC = "#7A8794"          # one colour for every ground run, because it is one net
 
-def pad(side, name):
+def pads(side, name):
+    """Every pad carrying this name — GND appears more than once per header."""
     rows = LEFT if side == "L" else RIGHT
+    found = []
     for r, (a, b) in enumerate(rows):
         y = TOP + r * PITCH
-        if a == name:
-            return ((LPO if side == "L" else RPI), y)
-        if b == name:
-            return ((LPI if side == "L" else RPO), y)
-    raise KeyError(name)
+        if a == name: found.append(((LPO if side == "L" else RPI), y))
+        if b == name: found.append(((LPI if side == "L" else RPO), y))
+    if not found: raise KeyError(name)
+    return found
 
 o = []
 A = o.append
 A('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d" width="%d" height="%d"' % (W, H, W, H))
-A('     role="img" aria-label="Which header pin each wire lands on for the ESP32 2-relay '
-  'board, and where a resistor is needed: piezo buzzer through 100 ohms to G27, open limit '
-  'switch to G32, closed limit switch to G33, vibration sensor DO to G25 with VCC to 3V3 '
-  'and GND to GND, status LED through 220 ohms to G23. Both relays are driven on-board.">')
-A('  <title>PetDoor — which header pin each wire goes to</title>')
+A('     role="img" aria-label="Both wires of every peripheral traced to a header pin on the '
+  'ESP32 2-relay board: piezo through 100 ohms to G27 and back to GND; open limit switch '
+  'between G32 and GND; closed limit switch between G33 and GND; vibration sensor DO to G25, '
+  'VCC to 3V3, GND to GND; status LED through 220 ohms from G23 to GND. Relays are on-board.">')
+A('  <title>PetDoor — both wires of every peripheral, to the pin each lands on</title>')
 A('''  <style>
     .h1  { font: 600 17px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#8A96A3; }
     .sub { font: 13px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
@@ -54,15 +59,15 @@ A('''  <style>
     .note{ font: 12px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
     .box { fill:none; stroke:#7A8794; stroke-width:1; opacity:0.45; }
   </style>''')
-A('  <text x="20" y="30" class="h1">Which header pin each wire goes to</text>')
+A('  <text x="20" y="30" class="h1">Both wires of every peripheral, and the pin each lands on</text>')
 A('  <text x="20" y="52" class="sub">Pin names are the board’s own. Both relays are driven '
   'on-board from GPIO 16 and 17 — there is nothing to wire for those.</text>')
 
 bh = TOP + 9 * PITCH + 44 - 92
 A('  <rect x="%d" y="92" width="%d" height="%d" rx="10" fill="#24425E"/>' % (BX0, BX1 - BX0, bh))
-A('  <rect x="546" y="150" width="96" height="214" rx="6" fill="#9AA5B1" opacity="0.45"/>')
-A('  <text x="594" y="252" text-anchor="middle" class="ttl" fill="#17212B">ESP32</text>')
-A('  <text x="594" y="270" text-anchor="middle" class="pin" fill="#17212B">WROOM</text>')
+A('  <rect x="550" y="150" width="96" height="214" rx="6" fill="#9AA5B1" opacity="0.45"/>')
+A('  <text x="598" y="252" text-anchor="middle" class="ttl" fill="#17212B">ESP32</text>')
+A('  <text x="598" y="270" text-anchor="middle" class="pin" fill="#17212B">WROOM</text>')
 A('  <text x="%d" y="114" class="hdr">LEFT HEADER</text>' % (LPO - 12))
 A('  <text x="%d" y="114" class="hdr" text-anchor="end">RIGHT HEADER</text>' % (RPO + 12))
 
@@ -70,13 +75,11 @@ for side, rows, po, pi in (("L", LEFT, LPO, LPI), ("R", RIGHT, RPI, RPO)):
     for r, (a, b) in enumerate(rows):
         y = TOP + r * PITCH
         for col, name in ((0, a), (1, b)):
-            if not name:
-                continue
+            if not name: continue
             x = po if col == 0 else pi
-            A('  <circle cx="%d" cy="%d" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>'
-              % (x, y))
-            # Labels always point inward, leaving the outside of each header
-            # clear for wires to approach without crossing a pin name.
+            fill = "#2A3F55" if name == "GND" else "#0F151B"
+            A('  <circle cx="%d" cy="%d" r="5.5" fill="%s" stroke="%s" stroke-width="1.5"/>'
+              % (x, y, fill, GNDC if name == "GND" else "#9AA5B1"))
             if side == "L":
                 A('  <text x="%d" y="%d" class="pin">%s</text>' % (x + 12, y + 4, name))
             else:
@@ -95,58 +98,70 @@ def box(x, y, w, h, colour, title, lines, dash=False):
     for i, ln in enumerate(lines):
         A('  <text x="%d" y="%d" class="wire">%s</text>' % (x + 16, y + 42 + i * 19, ln))
 
-PX, PW = 24, 266
+PX, PW = 24, 262
 EDGE = PX + PW
-LANE = {"G27": 300, "G32": 316, "G33": 332, "G25": 348, "3V3": 364, "GND": 380}
+lane_n = [0]
+def lane():
+    lane_n[0] += 1
+    return 296 + lane_n[0] * 10          # one lane per wire, never shared
 
-def to_pad(name, from_y, colour, dash=False):
-    x, y = pad("L", name)
-    lane = LANE[name]
+def to_left(target, from_y, colour, dash=False, which=0):
+    x, y = pads("L", target)[which]
+    lx = lane()
     if x == LPO:
-        wire([(EDGE, from_y), (lane, from_y), (lane, y), (x - 7, y)], colour, dash)
+        wire([(EDGE, from_y), (lx, from_y), (lx, y), (x - 7, y)], colour, dash)
     else:
-        # Inner column: cross the outer column halfway between two rows, where
-        # there is neither a pad nor a label. The top row has no gap above it
-        # (the header title is there), so that one comes in from below.
         gap = y + PITCH // 2 if y == TOP else y - PITCH // 2
-        wire([(EDGE, from_y), (lane, from_y), (lane, gap), (x, gap),
+        wire([(EDGE, from_y), (lx, from_y), (lx, gap), (x, gap),
               (x, y + (7 if gap > y else -7))], colour, dash)
 
-box(PX, 150, PW, 80, PURPLE, "Piezo buzzer",
-    ["G27 → [100 Ω] → piezo → GND",
-     "resistor REQUIRED — note 1"])
-to_pad("G27", 190, PURPLE)
+# ---- left-hand peripherals, each with BOTH legs ----------------------------
+box(PX, 148, PW, 78, PURPLE, "Piezo buzzer",
+    ["G27 → [100 Ω] → piezo", "piezo → GND"])
+to_left("G27", 186, PURPLE)
+to_left("GND", 205, GNDC, which=1)                 # GND on the bottom row
 
-box(PX, 258, PW, 96, AMBER, "Limit switches",
-    ["OPEN   → G32, other leg → GND",
-     "CLOSED → G33, other leg → GND",
-     "no resistor — note 2"], dash=True)
-to_pad("G32", 300, AMBER, True)
-to_pad("G33", 319, AMBER, True)
+box(PX, 250, PW, 78, AMBER, "OPEN limit switch", 
+    ["G32 → reed", "reed → GND"], dash=True)
+to_left("G32", 288, AMBER, True)
+to_left("GND", 307, GNDC, True, which=1)
 
-box(PX, 382, PW, 114, AMBER, "Vibration sensor",
-    ["DO  → G25", "VCC → 3V3  (never 5 V)", "GND → GND",
-     "no resistor — note 3"], dash=True)
-to_pad("G25", 424, AMBER, True)
-to_pad("3V3", 443, AMBER, True)
-to_pad("GND", 462, AMBER, True)
+box(PX, 352, PW, 78, AMBER, "CLOSED limit switch",
+    ["G33 → reed", "reed → GND"], dash=True)
+to_left("G33", 390, AMBER, True)
+to_left("GND", 409, GNDC, True, which=1)
 
-x23, y23 = pad("R", "G23")
-box(842, y23 - 31, 250, 80, GREY, "Status LED  (optional)",
-    ["G23 → [220 Ω] → LED → GND",
-     "resistor REQUIRED — note 1"])
-wire([(x23 + 7, y23), (812, y23), (842, y23)], GREY)
+box(PX, 454, PW, 97, AMBER, "Vibration sensor",
+    ["DO → G25", "VCC → 3V3 (never 5 V)", "GND → GND"], dash=True)
+to_left("G25", 492, AMBER, True)
+to_left("3V3", 511, AMBER, True)
+to_left("GND", 530, GNDC, True, which=0)           # GND on the top row
 
-ny = 92 + bh + 52
-A('  <text x="24" y="%d" class="ttl" fill="%s">Do I need a resistor?</text>' % (ny, INK))
-A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">1 — LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>' % (ny + 22, INK))
-A('  <text x="24" y="%d" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>' % (ny + 41))
-A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">2 — Limit switches: NO.</tspan> The firmware enables the ESP32’s internal pull-up and the switch simply shorts the pin to GND.</text>' % (ny + 66, INK))
-A('  <text x="24" y="%d" class="note">Over a run longer than a metre or two, add an external 4.7–10 kΩ pull-up to 3V3 at the BOARD end. The internal one is about 45 kΩ, and a long</text>' % (ny + 85))
-A('  <text x="24" y="%d" class="note">unshielded wire into a weak pull-up is an aerial; phantom triggers are the symptom.</text>' % (ny + 104))
-A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">3 — Vibration module: NO.</tspan> It is a powered board with its own comparator and pull-up, and it drives the pin itself.</text>' % (ny + 129, INK))
+# ---- status LED, on the right header ---------------------------------------
+(x23, y23) = pads("R", "G23")[0]
+(xg, yg) = pads("R", "GND")[0]                     # top row, inner column
+box(872, 148, 262, 78, GREY, "Status LED  (optional)",
+    ["G23 → [220 Ω] → LED", "LED → GND"])
+wire([(872, 186), (826, 179), (826, y23), (x23 + 7, y23)], GREY)
+# GND is the inner pad: cross the outer column between rows, as on the left.
+wire([(872, 205), (806, 198), (806, yg + PITCH // 2), (xg, yg + PITCH // 2),
+      (xg, yg + 7)], GNDC)
 
-sy = ny + 150
+ny = max(92 + bh, 551) + 46
+A('  <text x="24" y="%d" class="ttl" fill="%s">Every ground is the same net</text>' % (ny, INK))
+A('  <text x="24" y="%d" class="note">The headers carry four GND pads — two on each side. Any of them will do, and they are drawn here to whichever is nearest. Daisy-chaining</text>' % (ny + 21))
+A('  <text x="24" y="%d" class="note">several returns to one pad is normal and is what most people end up doing.</text>' % (ny + 40))
+
+ry = ny + 68
+A('  <text x="24" y="%d" class="ttl" fill="%s">Do I need a resistor?</text>' % (ry, INK))
+A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>' % (ry + 22, INK))
+A('  <text x="24" y="%d" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>' % (ry + 41))
+A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">Limit switches: NO.</tspan> The firmware enables the ESP32’s internal pull-up and the reed simply shorts its pin to GND.</text>' % (ry + 66, INK))
+A('  <text x="24" y="%d" class="note">Over a run longer than a metre or two, add an external 4.7–10 kΩ pull-up to 3V3 at the BOARD end: the internal one is about 45 kΩ, and a long</text>' % (ry + 85))
+A('  <text x="24" y="%d" class="note">unshielded wire into a weak pull-up is an aerial. Phantom triggers are the symptom.</text>' % (ry + 104))
+A('  <text x="24" y="%d" class="note"><tspan font-weight="700" fill="%s">Vibration module: NO.</tspan> It is a powered board with its own comparator and pull-up, and it drives the pin itself.</text>' % (ry + 129, INK))
+
+sy = ry + 150
 A('  <rect x="20" y="%d" width="%d" height="80" rx="6" fill="%s" opacity="0.07"/>' % (sy, W - 40, RED))
 A('  <rect x="20" y="%d" width="4" height="80" rx="2" fill="%s"/>' % (sy, RED))
 A('  <text x="42" y="%d" class="ttl" fill="%s">Check your own board before you wire anything</text>' % (sy + 24, RED))

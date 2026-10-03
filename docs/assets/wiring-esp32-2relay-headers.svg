@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 924" width="1180" height="924"
-     role="img" aria-label="Which header pin each wire lands on for the ESP32 2-relay board, and where a resistor is needed: piezo buzzer through 100 ohms to G27, open limit switch to G32, closed limit switch to G33, vibration sensor DO to G25 with VCC to 3V3 and GND to GND, status LED through 220 ohms to G23. Both relays are driven on-board.">
-  <title>PetDoor — which header pin each wire goes to</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1220 1010" width="1220" height="1010"
+     role="img" aria-label="Both wires of every peripheral traced to a header pin on the ESP32 2-relay board: piezo through 100 ohms to G27 and back to GND; open limit switch between G32 and GND; closed limit switch between G33 and GND; vibration sensor DO to G25, VCC to 3V3, GND to GND; status LED through 220 ohms from G23 to GND. Relays are on-board.">
+  <title>PetDoor — both wires of every peripheral, to the pin each lands on</title>
   <style>
     .h1  { font: 600 17px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#8A96A3; }
     .sub { font: 13px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
@@ -12,130 +12,140 @@
     .note{ font: 12px ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif; fill:#9AA5B1; }
     .box { fill:none; stroke:#7A8794; stroke-width:1; opacity:0.45; }
   </style>
-  <text x="20" y="30" class="h1">Which header pin each wire goes to</text>
+  <text x="20" y="30" class="h1">Both wires of every peripheral, and the pin each lands on</text>
   <text x="20" y="52" class="sub">Pin names are the board’s own. Both relays are driven on-board from GPIO 16 and 17 — there is nothing to wire for those.</text>
-  <rect x="400" y="92" width="372" height="386" rx="10" fill="#24425E"/>
-  <rect x="546" y="150" width="96" height="214" rx="6" fill="#9AA5B1" opacity="0.45"/>
-  <text x="594" y="252" text-anchor="middle" class="ttl" fill="#17212B">ESP32</text>
-  <text x="594" y="270" text-anchor="middle" class="pin" fill="#17212B">WROOM</text>
-  <text x="412" y="114" class="hdr">LEFT HEADER</text>
-  <text x="752" y="114" class="hdr" text-anchor="end">RIGHT HEADER</text>
-  <circle cx="424" cy="128" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="132" class="pin">3V3</text>
-  <circle cx="492" cy="128" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="132" class="pin">GND</text>
-  <circle cx="424" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="166" class="pin">SVP</text>
-  <circle cx="492" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="166" class="pin">EN</text>
-  <circle cx="424" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="200" class="pin">G34</text>
-  <circle cx="492" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="200" class="pin">SVN</text>
-  <circle cx="424" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="234" class="pin">G32</text>
-  <circle cx="492" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="234" class="pin">G35</text>
-  <circle cx="424" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="268" class="pin">G25</text>
-  <circle cx="492" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="268" class="pin">G33</text>
-  <circle cx="424" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="302" class="pin">G27</text>
-  <circle cx="492" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="302" class="pin">G26</text>
-  <circle cx="424" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="336" class="pin">G12</text>
-  <circle cx="492" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="336" class="pin">G14</text>
-  <circle cx="424" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="370" class="pin">SD2</text>
-  <circle cx="492" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="370" class="pin">G13</text>
-  <circle cx="424" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="404" class="pin">CMD</text>
-  <circle cx="492" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="404" class="pin">SD3</text>
-  <circle cx="424" cy="434" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="436" y="438" class="pin">GND</text>
-  <circle cx="492" cy="434" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="504" y="438" class="pin">5V</text>
-  <circle cx="690" cy="128" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="132" class="pin" text-anchor="end">GND</text>
-  <circle cx="740" cy="128" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="132" class="pin" text-anchor="end">G23</text>
-  <circle cx="690" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="166" class="pin" text-anchor="end">G22</text>
-  <circle cx="740" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="166" class="pin" text-anchor="end">TXD</text>
-  <circle cx="690" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="200" class="pin" text-anchor="end">RXD</text>
-  <circle cx="740" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="200" class="pin" text-anchor="end">G21</text>
-  <circle cx="690" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="234" class="pin" text-anchor="end">G19</text>
-  <circle cx="740" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="234" class="pin" text-anchor="end">G18</text>
-  <circle cx="690" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="268" class="pin" text-anchor="end">G5</text>
-  <circle cx="740" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="268" class="pin" text-anchor="end">G17</text>
-  <circle cx="690" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="302" class="pin" text-anchor="end">G16</text>
-  <circle cx="740" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="302" class="pin" text-anchor="end">G4</text>
-  <circle cx="690" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="336" class="pin" text-anchor="end">G0</text>
-  <circle cx="740" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="336" class="pin" text-anchor="end">SD1</text>
-  <circle cx="690" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="370" class="pin" text-anchor="end">SD0</text>
-  <circle cx="740" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="370" class="pin" text-anchor="end">CLK</text>
-  <circle cx="690" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="678" y="404" class="pin" text-anchor="end">3V3</text>
-  <circle cx="740" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="728" y="404" class="pin" text-anchor="end">GND</text>
-  <rect x="24" y="150" width="266" height="80" rx="6" class="box"/>
-  <rect x="24" y="150" width="4" height="80" rx="2" fill="#9B72CF"/>
-  <text x="40" y="171" class="ttl" fill="#9B72CF">Piezo buzzer</text>
-  <text x="40" y="192" class="wire">G27 → [100 Ω] → piezo → GND</text>
-  <text x="40" y="211" class="wire">resistor REQUIRED — note 1</text>
-  <path d="M290 190 L300 190 L300 298 L417 298" fill="none" stroke="#9B72CF" stroke-width="2" stroke-linejoin="round"/>
-  <rect x="24" y="258" width="266" height="96" rx="6" class="box" stroke-dasharray="5 4"/>
-  <rect x="24" y="258" width="4" height="96" rx="2" fill="#E9A23B"/>
-  <text x="40" y="279" class="ttl" fill="#E9A23B">Limit switches</text>
-  <text x="40" y="300" class="wire">OPEN   → G32, other leg → GND</text>
-  <text x="40" y="319" class="wire">CLOSED → G33, other leg → GND</text>
-  <text x="40" y="338" class="wire">no resistor — note 2</text>
-  <path d="M290 300 L316 300 L316 230 L417 230" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M290 319 L332 319 L332 247 L492 247 L492 257" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <rect x="24" y="382" width="266" height="114" rx="6" class="box" stroke-dasharray="5 4"/>
-  <rect x="24" y="382" width="4" height="114" rx="2" fill="#E9A23B"/>
-  <text x="40" y="403" class="ttl" fill="#E9A23B">Vibration sensor</text>
-  <text x="40" y="424" class="wire">DO  → G25</text>
-  <text x="40" y="443" class="wire">VCC → 3V3  (never 5 V)</text>
-  <text x="40" y="462" class="wire">GND → GND</text>
-  <text x="40" y="481" class="wire">no resistor — note 3</text>
-  <path d="M290 424 L348 424 L348 264 L417 264" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M290 443 L364 443 L364 128 L417 128" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <path d="M290 462 L380 462 L380 145 L492 145 L492 135" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
-  <rect x="842" y="97" width="250" height="80" rx="6" class="box"/>
-  <rect x="842" y="97" width="4" height="80" rx="2" fill="#9AA5B1"/>
-  <text x="858" y="118" class="ttl" fill="#9AA5B1">Status LED  (optional)</text>
-  <text x="858" y="139" class="wire">G23 → [220 Ω] → LED → GND</text>
-  <text x="858" y="158" class="wire">resistor REQUIRED — note 1</text>
-  <path d="M747 128 L812 128 L842 128" fill="none" stroke="#9AA5B1" stroke-width="2" stroke-linejoin="round"/>
-  <text x="24" y="530" class="ttl" fill="#C7D0DA">Do I need a resistor?</text>
-  <text x="24" y="552" class="note"><tspan font-weight="700" fill="#C7D0DA">1 — LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>
-  <text x="24" y="571" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>
-  <text x="24" y="596" class="note"><tspan font-weight="700" fill="#C7D0DA">2 — Limit switches: NO.</tspan> The firmware enables the ESP32’s internal pull-up and the switch simply shorts the pin to GND.</text>
-  <text x="24" y="615" class="note">Over a run longer than a metre or two, add an external 4.7–10 kΩ pull-up to 3V3 at the BOARD end. The internal one is about 45 kΩ, and a long</text>
-  <text x="24" y="634" class="note">unshielded wire into a weak pull-up is an aerial; phantom triggers are the symptom.</text>
-  <text x="24" y="659" class="note"><tspan font-weight="700" fill="#C7D0DA">3 — Vibration module: NO.</tspan> It is a powered board with its own comparator and pull-up, and it drives the pin itself.</text>
-  <rect x="20" y="680" width="1140" height="80" rx="6" fill="#E76F51" opacity="0.07"/>
-  <rect x="20" y="680" width="4" height="80" rx="2" fill="#E76F51"/>
-  <text x="42" y="704" class="ttl" fill="#E76F51">Check your own board before you wire anything</text>
-  <text x="42" y="726" class="note">This map is the pin card for this board family, and relay counts differ across it. On the 8-relay version G32, G25, G27 and G12 drive relays;</text>
-  <text x="42" y="745" class="note">on this 2-relay board the relays sit on GPIO 16 and 17 and those four pins are free. Meter them before you trust either statement.</text>
+  <rect x="404" y="92" width="372" height="386" rx="10" fill="#24425E"/>
+  <rect x="550" y="150" width="96" height="214" rx="6" fill="#9AA5B1" opacity="0.45"/>
+  <text x="598" y="252" text-anchor="middle" class="ttl" fill="#17212B">ESP32</text>
+  <text x="598" y="270" text-anchor="middle" class="pin" fill="#17212B">WROOM</text>
+  <text x="416" y="114" class="hdr">LEFT HEADER</text>
+  <text x="756" y="114" class="hdr" text-anchor="end">RIGHT HEADER</text>
+  <circle cx="428" cy="128" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="132" class="pin">3V3</text>
+  <circle cx="496" cy="128" r="5.5" fill="#2A3F55" stroke="#7A8794" stroke-width="1.5"/>
+  <text x="508" y="132" class="pin">GND</text>
+  <circle cx="428" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="166" class="pin">SVP</text>
+  <circle cx="496" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="166" class="pin">EN</text>
+  <circle cx="428" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="200" class="pin">G34</text>
+  <circle cx="496" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="200" class="pin">SVN</text>
+  <circle cx="428" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="234" class="pin">G32</text>
+  <circle cx="496" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="234" class="pin">G35</text>
+  <circle cx="428" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="268" class="pin">G25</text>
+  <circle cx="496" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="268" class="pin">G33</text>
+  <circle cx="428" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="302" class="pin">G27</text>
+  <circle cx="496" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="302" class="pin">G26</text>
+  <circle cx="428" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="336" class="pin">G12</text>
+  <circle cx="496" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="336" class="pin">G14</text>
+  <circle cx="428" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="370" class="pin">SD2</text>
+  <circle cx="496" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="370" class="pin">G13</text>
+  <circle cx="428" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="440" y="404" class="pin">CMD</text>
+  <circle cx="496" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="404" class="pin">SD3</text>
+  <circle cx="428" cy="434" r="5.5" fill="#2A3F55" stroke="#7A8794" stroke-width="1.5"/>
+  <text x="440" y="438" class="pin">GND</text>
+  <circle cx="496" cy="434" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="508" y="438" class="pin">5V</text>
+  <circle cx="694" cy="128" r="5.5" fill="#2A3F55" stroke="#7A8794" stroke-width="1.5"/>
+  <text x="682" y="132" class="pin" text-anchor="end">GND</text>
+  <circle cx="744" cy="128" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="132" class="pin" text-anchor="end">G23</text>
+  <circle cx="694" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="166" class="pin" text-anchor="end">G22</text>
+  <circle cx="744" cy="162" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="166" class="pin" text-anchor="end">TXD</text>
+  <circle cx="694" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="200" class="pin" text-anchor="end">RXD</text>
+  <circle cx="744" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="200" class="pin" text-anchor="end">G21</text>
+  <circle cx="694" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="234" class="pin" text-anchor="end">G19</text>
+  <circle cx="744" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="234" class="pin" text-anchor="end">G18</text>
+  <circle cx="694" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="268" class="pin" text-anchor="end">G5</text>
+  <circle cx="744" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="268" class="pin" text-anchor="end">G17</text>
+  <circle cx="694" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="302" class="pin" text-anchor="end">G16</text>
+  <circle cx="744" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="302" class="pin" text-anchor="end">G4</text>
+  <circle cx="694" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="336" class="pin" text-anchor="end">G0</text>
+  <circle cx="744" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="336" class="pin" text-anchor="end">SD1</text>
+  <circle cx="694" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="370" class="pin" text-anchor="end">SD0</text>
+  <circle cx="744" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="370" class="pin" text-anchor="end">CLK</text>
+  <circle cx="694" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="404" class="pin" text-anchor="end">3V3</text>
+  <circle cx="744" cy="400" r="5.5" fill="#2A3F55" stroke="#7A8794" stroke-width="1.5"/>
+  <text x="732" y="404" class="pin" text-anchor="end">GND</text>
+  <rect x="24" y="148" width="262" height="78" rx="6" class="box"/>
+  <rect x="24" y="148" width="4" height="78" rx="2" fill="#9B72CF"/>
+  <text x="40" y="169" class="ttl" fill="#9B72CF">Piezo buzzer</text>
+  <text x="40" y="190" class="wire">G27 → [100 Ω] → piezo</text>
+  <text x="40" y="209" class="wire">piezo → GND</text>
+  <path d="M286 186 L306 186 L306 298 L421 298" fill="none" stroke="#9B72CF" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M286 205 L316 205 L316 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <rect x="24" y="250" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
+  <rect x="24" y="250" width="4" height="78" rx="2" fill="#E9A23B"/>
+  <text x="40" y="271" class="ttl" fill="#E9A23B">OPEN limit switch</text>
+  <text x="40" y="292" class="wire">G32 → reed</text>
+  <text x="40" y="311" class="wire">reed → GND</text>
+  <path d="M286 288 L326 288 L326 230 L421 230" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 307 L336 307 L336 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <rect x="24" y="352" width="262" height="78" rx="6" class="box" stroke-dasharray="5 4"/>
+  <rect x="24" y="352" width="4" height="78" rx="2" fill="#E9A23B"/>
+  <text x="40" y="373" class="ttl" fill="#E9A23B">CLOSED limit switch</text>
+  <text x="40" y="394" class="wire">G33 → reed</text>
+  <text x="40" y="413" class="wire">reed → GND</text>
+  <path d="M286 390 L346 390 L346 247 L496 247 L496 257" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 409 L356 409 L356 434 L421 434" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <rect x="24" y="454" width="262" height="97" rx="6" class="box" stroke-dasharray="5 4"/>
+  <rect x="24" y="454" width="4" height="97" rx="2" fill="#E9A23B"/>
+  <text x="40" y="475" class="ttl" fill="#E9A23B">Vibration sensor</text>
+  <text x="40" y="496" class="wire">DO → G25</text>
+  <text x="40" y="515" class="wire">VCC → 3V3 (never 5 V)</text>
+  <text x="40" y="534" class="wire">GND → GND</text>
+  <path d="M286 492 L366 492 L366 264 L421 264" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 511 L376 511 L376 128 L421 128" fill="none" stroke="#E9A23B" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <path d="M286 530 L386 530 L386 145 L496 145 L496 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+  <rect x="872" y="148" width="262" height="78" rx="6" class="box"/>
+  <rect x="872" y="148" width="4" height="78" rx="2" fill="#9AA5B1"/>
+  <text x="888" y="169" class="ttl" fill="#9AA5B1">Status LED  (optional)</text>
+  <text x="888" y="190" class="wire">G23 → [220 Ω] → LED</text>
+  <text x="888" y="209" class="wire">LED → GND</text>
+  <path d="M872 186 L826 179 L826 128 L751 128" fill="none" stroke="#9AA5B1" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M872 205 L806 198 L806 145 L694 145 L694 135" fill="none" stroke="#7A8794" stroke-width="2" stroke-linejoin="round"/>
+  <text x="24" y="597" class="ttl" fill="#C7D0DA">Every ground is the same net</text>
+  <text x="24" y="618" class="note">The headers carry four GND pads — two on each side. Any of them will do, and they are drawn here to whichever is nearest. Daisy-chaining</text>
+  <text x="24" y="637" class="note">several returns to one pad is normal and is what most people end up doing.</text>
+  <text x="24" y="665" class="ttl" fill="#C7D0DA">Do I need a resistor?</text>
+  <text x="24" y="687" class="note"><tspan font-weight="700" fill="#C7D0DA">LED and piezo: YES.</tspan> An ESP32 pin is 3.3 V with no current limiting of its own. 220 Ω–1 kΩ for the LED, about 100 Ω for a piezo.</text>
+  <text x="24" y="706" class="note">Without one the pin sources well past its 12 mA rating and degrades — slowly, then intermittently, which is the worst way for it to fail.</text>
+  <text x="24" y="731" class="note"><tspan font-weight="700" fill="#C7D0DA">Limit switches: NO.</tspan> The firmware enables the ESP32’s internal pull-up and the reed simply shorts its pin to GND.</text>
+  <text x="24" y="750" class="note">Over a run longer than a metre or two, add an external 4.7–10 kΩ pull-up to 3V3 at the BOARD end: the internal one is about 45 kΩ, and a long</text>
+  <text x="24" y="769" class="note">unshielded wire into a weak pull-up is an aerial. Phantom triggers are the symptom.</text>
+  <text x="24" y="794" class="note"><tspan font-weight="700" fill="#C7D0DA">Vibration module: NO.</tspan> It is a powered board with its own comparator and pull-up, and it drives the pin itself.</text>
+  <rect x="20" y="815" width="1180" height="80" rx="6" fill="#E76F51" opacity="0.07"/>
+  <rect x="20" y="815" width="4" height="80" rx="2" fill="#E76F51"/>
+  <text x="42" y="839" class="ttl" fill="#E76F51">Check your own board before you wire anything</text>
+  <text x="42" y="861" class="note">This map is the pin card for this board family, and relay counts differ across it. On the 8-relay version G32, G25, G27 and G12 drive relays;</text>
+  <text x="42" y="880" class="note">on this 2-relay board the relays sit on GPIO 16 and 17 and those four pins are free. Meter them before you trust either statement.</text>
 </svg>
