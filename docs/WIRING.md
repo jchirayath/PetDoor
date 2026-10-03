@@ -88,7 +88,7 @@ the relay inputs are wired at the factory, so GPIO 16 and 17 reach the coils
 with nothing for you to get wrong. Everything else hangs off the IO headers.
 
 <div align="center">
-  <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, GPIO 32 and 33 are for open and closed limit switches, and GPIO 25 is an idea for a vibration sensor that no firmware reads yet" width="900">
+  <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, GPIO 32 and 33 are for open and closed limit switches, and GPIO 25 takes a three-wire vibration sensor module (DO, VCC to 3.3 V, GND)" width="900">
 </div>
 
 The two dashed inputs are **supported but off by default** (`-1`). The pin
