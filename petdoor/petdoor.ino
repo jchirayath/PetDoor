@@ -206,6 +206,26 @@ bool g_locked = false;
 // Set by a `scan` command: upload the discovery table with the next flush.
 bool g_scanRequested = false;
 
+// A bounded, self-expiring LED test. updateLed() rewrites the pin on every
+// tick, so a command that simply lit the LED would be dark again 100 ms later
+// — the test has to live inside the pattern engine rather than beside it.
+//
+// Three deliberate flashes, mirroring the buzzer's three beeps, because it
+// answers the same question: is this peripheral on the pin I think it is. The
+// low duty cycle keeps it clearly apart from the even 1 Hz / 2 Hz / 5 Hz fault
+// blinks, and it expires by itself — a test that could be left running would
+// be a status light that lies.
+bool g_ledTestActive = false;
+uint32_t g_ledTestStartMs = 0;
+constexpr uint32_t kLedTestPeriodMs = 800;
+constexpr uint32_t kLedTestOnMs = 200;
+constexpr uint32_t kLedTestMs = 3 * kLedTestPeriodMs;
+
+void startLedTest(uint32_t nowMs) {
+  g_ledTestActive = true;
+  g_ledTestStartMs = nowMs;
+}
+
 // dumpTable() writes to a Stream because it was built for the console. This
 // collects that output into a String instead, so the same rendering can be
 // uploaded — one implementation, so the remote view can never drift from what
@@ -1079,6 +1099,7 @@ void printTimingMenu() {
   Con.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
   Con.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
   Con.println(F("    beep             three beeps now — find the pin by trying it"));
+  Con.println(F("    led              three flashes now — the same trick for the LED"));
   Con.println(F("    upload 60000 300000 1800000   how often the door calls in:"));
   Con.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
   Con.println(F("      Lower the middle one for faster commands, at the cost of"));
@@ -1185,6 +1206,14 @@ void processTimingLine(char *line) {
     Con.printf("\r\n[dwell] three beeps on GPIO %d. Silence means the wrong pin,\r\n",
                   Chime::pin());
     Con.println(F("[dwell] or the wrong kind: try 'buzzer <pin> passive', then this again."));
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strcmp(line, "led") == 0) {
+    startLedTest(millis());
+    Con.printf("\r\n[dwell] three flashes on GPIO %d. Nothing at all means the\r\n",
+                  PIN_STATUS_LED);
+    Con.println(F("[dwell] wrong pin; lit solid and then dark means it is reversed."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1901,6 +1930,19 @@ void updateChime(uint32_t nowMs) {
 }
 
 void updateLed(uint32_t nowMs, bool scanHealthy) {
+  // The test overrides every pattern below, faults included: you asked to see
+  // the LED, so you see the LED. Unsigned arithmetic keeps the elapsed
+  // comparison correct across the millis() rollover.
+  if (g_ledTestActive) {
+    const uint32_t elapsed = nowMs - g_ledTestStartMs;
+    if (elapsed < kLedTestMs) {
+      digitalWrite(PIN_STATUS_LED,
+                   (elapsed % kLedTestPeriodMs) < kLedTestOnMs ? HIGH : LOW);
+      return;
+    }
+    g_ledTestActive = false;
+  }
+
   bool on;
   if (!scanHealthy) {
     on = (nowMs / 100) % 2 == 0;  // 5 Hz: radio unhealthy
@@ -2324,6 +2366,14 @@ bool applyRemoteCommand(const char *line, String &result) {
     }
     Chime::play(CHIME_TEST);
     result = String("beeping on GPIO ") + Chime::pin();
+    return true;
+  }
+  if (strcmp(verb, "led") == 0) {
+    // Remote for the same reason as `beep`: the pin you are checking is on a
+    // door at the end of the garden, and the walk out to look at it is the
+    // part worth removing.
+    startLedTest(millis());
+    result = String("flashing the status LED on GPIO ") + PIN_STATUS_LED;
     return true;
   }
   if (strcmp(verb, "pulse") == 0) {

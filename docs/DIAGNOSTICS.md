@@ -839,6 +839,84 @@ Both relays must be **released at idle**. If one sits energised, invert
 `RELAY_ACTIVE_LOW`. Full procedure in
 [WIRING.md](WIRING.md#bench-test-procedure).
 
+### Bench-testing the buzzer, LED and sensors
+
+All four peripherals are **runtime-configurable**, so none of this needs a
+reflash — which is the point. Finding out you guessed a pin wrong should cost
+you a console session, not a trip back to the laptop with the board in pieces.
+
+**Start with `M`.** Maintenance mode blocks the door in *both* directions for a
+bounded window, unlike the lock, which only stops the beacon opening it. That is
+the envelope you want while your hands are near the doorway. It expires on its
+own, so a forgotten window cannot leave the door inert.
+
+**1 — Buzzer.** `w`, then:
+
+```
+buzzer 27            the GPIO it is on
+beep                 three beeps
+```
+
+Silence means the wrong pin, or the wrong kind. A bare transducer needs a tone
+rather than DC: `buzzer 27 passive`, then `beep` again. One that sounds when
+pulled to ground wants `buzzer 27 active low`.
+
+**2 — Limit switches.** `w`, then `sensors 32 25` — open pin first, closed pin
+second. Use `-1` for an end with no switch fitted. Then `s`:
+
+```
+  position     : open GPIO 32, closed GPIO 25, active LOW — reads OPEN MADE
+```
+
+With the motor still inhibited, walk the door by hand to each end of travel (or
+just pass the magnet across each reed) and read `s` again. Expect **exactly one
+end MADE at a time**. Both MADE at once is physically impossible and means a
+shorted pair or a pin collision — the firmware will take the pins but it cannot
+detect that fault for you.
+
+The switches are wired **normally open to GND**, read with `INPUT_PULLUP`, so a
+pin idles HIGH and reads LOW only at that end. That polarity is deliberate: a
+broken wire or a magnet that has fallen off reads as "not at that end", never as
+a false arrival.
+
+**3 — Vibration sensor.** `w`, then `vibration 33`. Now `s`, tap the sensor, and
+`s` again:
+
+```
+  vibration    : GPIO 33, 412 edges since boot (pull-up on)
+```
+
+The count must climb. It counts edges in an ISR rather than polling because
+these modules emit pulses shorter than the 100 ms control tick — polling samples
+between them and concludes the door never moved.
+
+Mount it **on the door, not on the controller board**. A sensor bolted beside
+the relay hears the relay on every actuation whether or not the door moved,
+which is exactly the signal it exists to tell apart from movement.
+
+**4 — Status LED.** `w`, then `led` — three flashes, the same trick as `beep`.
+
+```
+led                  three flashes on the status LED
+```
+
+Nothing at all means the wrong pin. Lit solid and then going dark means it is
+wired backwards. The test overrides every other pattern while it runs, faults
+included, and expires by itself after about 2.4 seconds — a status light you
+could leave stuck in test mode would be a status light that lies.
+
+To check the LED is telling the truth about the *door* rather than just that the
+pin works, disconnect the motor, leave maintenance mode with `M`, and use the
+relay recipe above: `o`, then `x`. Solid after `o`, brief blip every 2 s after
+`x`. The full pattern table is under [Status LED](#status-led).
+
+| Step | Command | Working looks like |
+|---|---|---|
+| Buzzer | `w` → `beep` | three beeps |
+| Limit switches | `w` → `sensors <o> <c>`, then `s` | exactly one end `MADE` |
+| Vibration | `w` → `vibration <pin>`, then `s` | edge count climbing |
+| Status LED | `w` → `led` | three flashes |
+
 ---
 
 ## Flashing a board with no auto-reset
