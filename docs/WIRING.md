@@ -14,7 +14,7 @@ rather than editing `config.h`, so `git pull` does not clobber your build.
 |---|---|---|---|
 | OPEN relay | 16 | `PIN_RELAY_OPEN` | Momentary pulse, `RELAY_PULSE_MS` |
 | CLOSE relay | 17 | `PIN_RELAY_CLOSE` | Momentary pulse |
-| Status LED | 23 | `PIN_STATUS_LED` | Active high, series resistor required |
+| Status LED | 23 | `PIN_STATUS_LED` | Active high. **Already fitted on the 2-relay board** — wire your own only to repeat it somewhere visible, and then with a series resistor |
 | Buzzer | — | `PIN_BUZZER` | Optional annunciator, disabled (`-1`) by default. See [below](#the-annunciator) |
 | OPEN limit switch | — | `PIN_SENSOR_OPEN` | Optional, `-1` by default. See [below](#position-sensors) |
 | CLOSED limit switch | — | `PIN_SENSOR_CLOSED` | Optional, `-1` by default |
@@ -80,6 +80,24 @@ it nothing, where it would cost a reed switch an awkward run.
 
 If you are not fitting the vibration sensor, ignore `G33` entirely: the two
 switches and the buzzer are then three adjacent pins in a row.
+
+> **Check which board you have before using these pins.** This family ships in
+> 2-, 4-, 8- and 16-relay versions on the same ESP32 module and the same header
+> layout, and the larger ones drive their extra relays from exactly the pins
+> recommended above. On the 8-relay board, `G32`, `G25`, `G27` and `G33` are
+> relay 1, 3, 5 and 4 respectively — wiring a reed switch across one of those is
+> a switch across a driven output.
+>
+> The pin card packed with the 8-relay board says so on its face, and because
+> the header layout is shared, that card looks exactly like the right reference
+> for any board in the family. It is not. The pad positions carry over; the
+> relay annotations do not.
+>
+> On the **2-relay** board these docs are written for, only four GPIOs are
+> committed: `16` and `17` for the relays, `23` for the on-board LED, and `0`
+> for the on-board button. Everything else reaches the headers unencumbered.
+> Confirm with `s`, which prints the relay and LED pins the firmware is
+> actually using.
 
 ### Choosing different pins
 

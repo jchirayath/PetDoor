@@ -72,30 +72,34 @@
   <text x="682" y="200" class="pin" text-anchor="end">RXD</text>
   <circle cx="744" cy="196" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
   <text x="732" y="200" class="pin" text-anchor="end">G21</text>
-  <circle cx="694" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="682" y="234" class="pin" text-anchor="end">G19</text>
+  <circle cx="694" cy="230" r="5.5" fill="#2A3F55" stroke="#7A8794" stroke-width="1.5"/>
+  <text x="682" y="234" class="pin" text-anchor="end">GND</text>
   <circle cx="744" cy="230" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="732" y="234" class="pin" text-anchor="end">G18</text>
+  <text x="732" y="234" class="pin" text-anchor="end">G19</text>
   <circle cx="694" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="682" y="268" class="pin" text-anchor="end">G5</text>
+  <text x="682" y="268" class="pin" text-anchor="end">G18</text>
   <circle cx="744" cy="264" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="732" y="268" class="pin" text-anchor="end">G17</text>
+  <text x="732" y="268" class="pin" text-anchor="end">G5</text>
   <circle cx="694" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="682" y="302" class="pin" text-anchor="end">G16</text>
+  <text x="682" y="302" class="pin" text-anchor="end">G17</text>
   <circle cx="744" cy="298" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="732" y="302" class="pin" text-anchor="end">G4</text>
+  <text x="732" y="302" class="pin" text-anchor="end">G16</text>
   <circle cx="694" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="682" y="336" class="pin" text-anchor="end">G0</text>
+  <text x="682" y="336" class="pin" text-anchor="end">G4</text>
   <circle cx="744" cy="332" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="732" y="336" class="pin" text-anchor="end">SD1</text>
+  <text x="732" y="336" class="pin" text-anchor="end">G0</text>
   <circle cx="694" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="682" y="370" class="pin" text-anchor="end">SD0</text>
+  <text x="682" y="370" class="pin" text-anchor="end">G2</text>
   <circle cx="744" cy="366" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="732" y="370" class="pin" text-anchor="end">CLK</text>
+  <text x="732" y="370" class="pin" text-anchor="end">G15</text>
   <circle cx="694" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
-  <text x="682" y="404" class="pin" text-anchor="end">3V3</text>
-  <circle cx="744" cy="400" r="5.5" fill="#2A3F55" stroke="#7A8794" stroke-width="1.5"/>
-  <text x="732" y="404" class="pin" text-anchor="end">GND</text>
+  <text x="682" y="404" class="pin" text-anchor="end">SD1</text>
+  <circle cx="744" cy="400" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="404" class="pin" text-anchor="end">SD0</text>
+  <circle cx="694" cy="434" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="682" y="438" class="pin" text-anchor="end">CLK</text>
+  <circle cx="744" cy="434" r="5.5" fill="#0F151B" stroke="#9AA5B1" stroke-width="1.5"/>
+  <text x="732" y="438" class="pin" text-anchor="end">3V3</text>
   <rect x="24" y="148" width="262" height="78" rx="6" class="box"/>
   <rect x="24" y="148" width="4" height="78" rx="2" fill="#9B72CF"/>
   <text x="40" y="169" class="ttl" fill="#9B72CF">Piezo buzzer</text>

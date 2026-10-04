@@ -19,9 +19,14 @@ PITCH, TOP = 34, 128
 LEFT = [("3V3", "GND"), ("SVP", "EN"), ("G34", "SVN"), ("G32", "G35"),
         ("G25", "G33"), ("G27", "G26"), ("G12", "G14"), ("SD2", "G13"),
         ("CMD", "SD3"), ("GND", "5V")]
-RIGHT = [("GND", "G23"), ("G22", "TXD"), ("RXD", "G21"), ("G19", "G18"),
-         ("G5", "G17"), ("G16", "G4"), ("G0", "SD1"), ("SD0", "CLK"),
-         ("3V3", "GND")]
+# Ten rows, like LEFT. An earlier version of this list had nine: it dropped the
+# second GND (row 4) and lost G2/G15 entirely, which pulled every row below the
+# third up by one and put the wrong names on the bottom pads. Transcribed from
+# the board's pin card — if you are editing this, check it against the card
+# rather than against a generic devkit pinout, and keep both sides at ten.
+RIGHT = [("GND", "G23"), ("G22", "TXD"), ("RXD", "G21"), ("GND", "G19"),
+         ("G18", "G5"), ("G17", "G16"), ("G4", "G0"), ("G2", "G15"),
+         ("SD1", "SD0"), ("CLK", "3V3")]
 
 BX0, BX1 = 404, 776
 LPO, LPI = 428, 496
