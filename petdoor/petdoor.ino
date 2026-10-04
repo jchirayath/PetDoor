@@ -1034,6 +1034,48 @@ bool applyBuzzerSpec(const char *args, String &msg) {
   return true;
 }
 
+// Shared by the `w` menu and the remote verb, like the buzzer and sensor specs
+// beside it. It was remote-only until the console's own status line
+// ("'w' then 'vibration <pin>' to add one") turned out to name a command the
+// `w` menu did not implement — the one place a user is told to look was the one
+// place it could not be set.
+bool applyVibrationSpec(const char *args, String &msg) {
+  if (args == nullptr) {
+    msg = F("vibration needs a GPIO number, or 'off'");
+    return false;
+  }
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%s", args);
+  // strtok_r for the same reason as applyBuzzerSpec: the remote dispatcher is
+  // itself mid-strtok when it calls this.
+  char *save = nullptr;
+  char *tok = strtok_r(buf, " \t", &save);
+  if (tok == nullptr) {
+    msg = F("vibration needs a GPIO number, or 'off'");
+    return false;
+  }
+  if (strcmp(tok, "off") == 0 || strcmp(tok, "none") == 0) {
+    Vibration::configure(-1, false);
+    msg = F("vibration sensor disabled");
+    return true;
+  }
+  const int pin = atoi(tok);
+  const char *problem = Vibration::pinProblem(pin);
+  if (!Vibration::configure(pin, VIBRATION_ACTIVE_LOW != 0)) {
+    msg = String("vibration rejected: ") + (problem != nullptr ? problem : "unusable pin");
+    return false;
+  }
+  msg = String("vibration sensor on GPIO ") + pin;
+  // A warning, not a refusal: configure() took the pin, so say what is odd
+  // about it and let the edge count settle the argument.
+  if (problem != nullptr) {
+    msg += " (warning: ";
+    msg += problem;
+    msg += ")";
+  }
+  return true;
+}
+
 void printTimingMenu() {
   Con.println();
   Con.println(F("---- dwell / timing ----"));
@@ -1106,6 +1148,9 @@ void printTimingMenu() {
   Con.println(F("      radio time the BLE scan would otherwise have. 0 heartbeat = off"));
   Con.println(F("    sensors 32 25    limit switch pins: <open> <closed> ('sensors off')"));
   Con.println(F("    sensors 32 25 low   same, for switches that pull the pin to GND"));
+  Con.println(F("    vibration 33     which GPIO the vibration sensor's DO is on"));
+  Con.println(F("      answers 'did it START moving', seconds before a limit"));
+  Con.println(F("      switch can answer 'did it arrive' ('vibration off' = none)"));
   Con.println(F("      the door stops guessing where it is. Without them it only"));
   Con.println(F("      knows what it COMMANDED, which is why the chime is a timer"));
   Con.println(F("    clear            forget saved values"));
@@ -1252,6 +1297,18 @@ void processTimingLine(char *line) {
                     DoorController::stateName(Position::state()));
       Con.println(F("[dwell] move the door by hand and press 's' to watch it change."));
     }
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "vibration", 9) == 0 && (line[9] == ' ' || line[9] == '\0')) {
+    String msg;
+    if (!applyVibrationSpec(line[9] ? line + 10 : nullptr, msg)) {
+      Con.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      printTimingMenu();
+      return;
+    }
+    Con.printf("\r\n[dwell] %s.\r\n", msg.c_str());
+    Con.println(F("[dwell] tap the sensor, then press 's' — the edge count must climb."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -2474,25 +2531,8 @@ bool applyRemoteCommand(const char *line, String &result) {
     return ok;
   }
   if (strcmp(verb, "vibration") == 0) {
-    const char *a = arg();
-    if (a == nullptr) { result = "vibration takes <pin> or off"; return false; }
-    if (strcmp(a, "off") == 0 || strcmp(a, "none") == 0) {
-      Vibration::configure(-1, false);
-      result = "vibration sensor disabled";
-      return true;
-    }
-    const int p = atoi(a);
-    const char *problem = Vibration::pinProblem(p);
-    if (!Vibration::configure(p, VIBRATION_ACTIVE_LOW != 0)) {
-      result = problem != nullptr ? problem : "pin refused";
-      return false;
-    }
-    char msg[120];
-    snprintf(msg, sizeof(msg), "vibration sensor on GPIO %d%s%s", p,
-             problem != nullptr ? " — warning: " : "",
-             problem != nullptr ? problem : "");
-    result = msg;
-    return true;
+    // Rest of the line: "33", or "off".
+    return applyVibrationSpec(strtok(nullptr, ""), result);
   }
   if (strcmp(verb, "maint") == 0) {
     const char *a = arg();
