@@ -82,6 +82,39 @@ before claiming a BLE change works:
 Do not flash hardware unless the user explicitly asks. Uploading drives a real
 motor attached to a real door.
 
+## Flashing
+
+**Use `compile --upload`, never a bare `upload`.** `arduino-cli upload` does not
+compile — it ships whatever is already in the build directory. During one
+session that meant a Bluedroid image, left there by a verification build, was
+written to a door whose firmware was NimBLE: the 92%-flash configuration with
+6.9 KB of heap headroom that the table above describes as the one that panicked
+a door in service. It never ran, and only because the chip happened to stay in
+download mode. The binary must come from the same invocation that flashes it.
+
+```bash
+"$ARDUINO_CLI" compile --upload -p /dev/cu.usbserial-0001 \
+  --fqbn esp32:esp32:esp32:PartitionScheme=min_spiffs petdoor
+```
+
+**This board has no auto-reset wiring**, so every flash needs the buttons:
+
+1. Hold **IO0**, tap **EN**, release **IO0** — the chip enters download mode.
+2. Upload. Retry in a loop: the user has to be at the board, and the window is
+   whenever they get there, not when the command runs.
+3. esptool prints "Hard resetting via RTS pin", but RTS is not wired — **tap EN
+   again** or nothing boots. A board that answers nothing after a successful
+   flash is almost always sitting in the bootloader waiting for this.
+
+Check the real exit status, not a grep of the output. `... | grep -q Wrote` reports
+grep's status and will call a failed upload a success.
+
+**The adapter re-enumerates after a flash.** The device node changes, so any
+file descriptor held across an upload goes stale and every subsequent write
+fails with `device not configured`. Reopen the port after flashing.
+
+### Over the air, which is how a mounted door is updated
+
 **OTA works and is the way to update a mounted door** — proven repeatedly at
 ~1.39 MB over WiFi, self-confirming ~61 s after boot on an idle door. Two
 things about it that cost time to learn:
@@ -95,6 +128,63 @@ things about it that cost time to learn:
   `espota.py -f` against a fresh `--output-dir`. The firmware's own hint prints
   a bare `arduino-cli upload`, which is exactly the command that once wrote a
   Bluedroid image to a NimBLE door.
+
+## The serial console
+
+The only interface the firmware has. On macOS this needs more care than it
+looks:
+
+```bash
+PORT=/dev/cu.usbserial-0001
+exec 3<>$PORT                      # hold it open — see below
+stty -f $PORT 115200 cs8 -parenb -cstopb -crtscts min 0 time 10
+printf 's\r' >&3
+for i in $(seq 1 20); do dd bs=8192 count=1 <&3 2>/dev/null; done
+exec 3>&-
+```
+
+**The `exec 3<>` is load-bearing.** macOS resets termios when the last
+descriptor closes, so `stty` followed by a separate `cat` silently reverts to
+**9600** and reads garbage or nothing. A session was lost to diagnosing a
+"silent board" that was only being listened to at the wrong baud rate.
+
+`min 0 time N` sets a read timeout in tenths of a second, which is what stops
+`dd` blocking forever on a quiet port.
+
+**`min 0 time N` in `stty` is load-bearing in both directions.** `min 0` is
+what stops `dd` blocking forever on a quiet port. Raising it to buffer fuller
+reads (`min 200`) makes every read block until the port speaks again, which
+hangs the capture the moment the output ends. If a long dump arrives truncated,
+add iterations — do not raise `min`.
+
+**Output printed while no descriptor is open is gone** — there is no flow
+control. Capture across a whole operation in one connection rather than
+reconnecting between steps, or verdicts that print during the gap are lost.
+
+**Top-level console keys are single characters, and `o` and `x` move the door.**
+Sending a word at the top level types it as commands: the `o` in `sensors 32 25`
+will pulse the OPEN relay. Submenus are line-based, but a submenu command
+returns to the top level when it completes, so the next line is interpreted as
+keystrokes again. Confirm which level you are at — `s` is harmless and its
+output identifies it — before sending any text.
+
+**The console's submenus are a trap, and the documented dance is the only safe
+one.** An EMPTY LINE EXITS a submenu. So `w` followed by a carriage return
+lands you back at the top level, and the word you send next is typed as single
+keystrokes — which is how `vibration 33` became `r` (reset the filter) and `t`
+(open the thresholds menu) on a live door. The `o` in it was swallowed by the
+thresholds menu's line buffer purely by luck of ordering; one letter earlier
+and it would have pulsed the OPEN relay. Send the submenu key ALONE, confirm
+its header came back, then send the line, then confirm with `s` before sending
+anything else. Do not assume a submenu command returns to the top level — some
+do, some do not.
+
+**A travel now resolves asynchronously, and the console says so twice.**
+`[door] opening` is the request; `[door] OPEN — ARRIVED` (or `STALLED`, or
+`NEVER MOVED`) is the outcome, up to ~15 s later. Capture across the whole
+travel when driving the console from a script, or the verdict lands in the gap
+between reads. A cold actuation also sends **two** relay pulses about two
+seconds apart — that is the wake press, not a fault.
 
 ## The reference door, as measured
 
@@ -118,29 +208,17 @@ It is also the number the arrival deadline wants.
 so a cold actuation legitimately sends two relay pulses about two seconds
 apart. That is not a fault.
 
-**The console's submenus are a trap, and the documented dance is the only safe
-one.** An EMPTY LINE EXITS a submenu. So `w` followed by a carriage return
-lands you back at the top level, and the word you send next is typed as single
-keystrokes — which is how `vibration 33` became `r` (reset the filter) and `t`
-(open the thresholds menu) on a live door. The `o` in it was swallowed by the
-thresholds menu's line buffer purely by luck of ordering; one letter earlier
-and it would have pulsed the OPEN relay. Send the submenu key ALONE, confirm
-its header came back, then send the line, then confirm with `s` before sending
-anything else. Do not assume a submenu command returns to the top level — some
-do, some do not.
+## secrets.h
 
-**`min 0 time N` in `stty` is load-bearing in both directions.** `min 0` is
-what stops `dd` blocking forever on a quiet port. Raising it to buffer fuller
-reads (`min 200`) makes every read block until the port speaks again, which
-hangs the capture the moment the output ends. If a long dump arrives truncated,
-add iterations — do not raise `min`.
+Git-ignored and `Read`-denied in `.claude/settings.json`, because this is a
+public repo. Claude cannot see it. It typically carries `BEACON_MAC`,
+`RSSI_ENTER_DBM`, `RSSI_EXIT_DBM`, `RELAY_ACTIVE_LOW`, `CONSOLE_PASSWORD` and
+the log-server credentials.
 
-**A travel now resolves asynchronously, and the console says so twice.**
-`[door] opening` is the request; `[door] OPEN — ARRIVED` (or `STALLED`, or
-`NEVER MOVED`) is the outcome, up to ~15 s later. Capture across the whole
-travel when driving the console from a script, or the verdict lands in the gap
-between reads. A cold actuation also sends **two** relay pulses about two
-seconds apart — that is the wake press, not a fault.
+**Ask the user to read a value out of it rather than theorising about it.**
+`RELAY_ACTIVE_LOW` was a leading hypothesis for over an hour of one session for
+want of a question that would have taken one exchange.
+
 
 ## Layout
 
