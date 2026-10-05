@@ -45,14 +45,25 @@
       "Bash(stty:*)",
       "Bash(ls /dev/cu.*:*)",
       "Bash(lsof /dev/cu.*:*)",
-      "Bash(python3:*)",
-      "Bash(chmod:*)",
       "Bash(mktemp:*)"
     ],
     "deny": [
       "Read(./petdoor/secrets.h)",
       "Bash(arduino-cli upload:*)",
-      "Bash(/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli upload:*)"
+      "Bash(/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli upload:*)",
+      "Bash(cat:*secrets.h*)",
+      "Bash(head:*secrets.h*)",
+      "Bash(tail:*secrets.h*)",
+      "Bash(sed:*secrets.h*)",
+      "Bash(awk:*secrets.h*)",
+      "Bash(xxd:*secrets.h*)",
+      "Bash(od:*secrets.h*)",
+      "Bash(grep:*secrets.h*)",
+      "Bash(rg:*secrets.h*)",
+      "Bash(diff:*secrets.h*)",
+      "Bash(git show:*secrets.h*)",
+      "Bash(sort:*secrets.h*)",
+      "Bash(uniq:*secrets.h*)"
     ]
   }
 }
