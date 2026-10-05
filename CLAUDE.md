@@ -11,8 +11,27 @@ their own hardware.
 
 ## Build and verify
 
-There is no test suite — verification means "it compiles for the target".
-Always compile before claiming a change works:
+Verification is **host tests plus "it compiles for the target"**, and both are
+required before claiming a change works.
+
+```bash
+tests/host/run.sh      # unit tests + fuzz for beacon.*, and the BLE-adapter guard
+```
+
+Run it for any change to `beacon.*` or to the stack adapter in
+`ble_scanner.cpp`. It needs no hardware and no Arduino toolchain, and it exists
+because a bug that compiled perfectly ran on a door for weeks: the NimBLE
+adapter converted binary payloads through `c_str()`, which stops at the first
+NUL, and both frames this firmware parses carry a NUL in byte 2. Battery
+telemetry never decoded and iBeacon UUID matching could never match. See
+`tests/host/README.md`.
+
+`beacon.*` is the only attacker-controlled input the firmware has — every byte
+comes from an unauthenticated advertisement — so it is fuzzed under ASan/UBSan
+as well as unit tested. Most of the firmware still has no tests; adding them to
+`proximity.*` is the obvious next step, since it is pure logic too.
+
+Then compile — for both stacks:
 
 ```bash
 ARDUINO_CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"

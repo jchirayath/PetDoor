@@ -1,7 +1,15 @@
 name: build
 
-# Verification for this project means "it compiles for the target" — there is
-# no test suite. Two things are checked:
+# Verification is a host test suite plus "it compiles for every target".
+#
+# The tests came after a bug that compiled perfectly and ran for weeks: the
+# NimBLE adapter converted binary advertisement payloads through c_str(), which
+# stops at the first NUL — and both frames this firmware parses have a NUL in
+# byte 2. Eddystone battery telemetry never decoded and iBeacon UUID matching
+# could never match. "It compiles" could not have caught it; one unit test with
+# a real payload catches it instantly. See tests/host/README.md.
+#
+# Checked here:
 #
 #   1. It builds unconfigured (discovery mode), which is how a new user first
 #      flashes it.
@@ -25,6 +33,26 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Pure-logic tests, no hardware and no Arduino toolchain — so they run first
+  # and fail fast. beacon.* parses bytes from any radio in range, which makes it
+  # the only attacker-controlled input the firmware has; it is fuzzed under
+  # ASan/UBSan here (TEST-10) as well as unit tested.
+  host-tests:
+    runs-on: ubuntu-latest
+    name: host tests (beacon parsers + fuzz)
+    steps:
+      - uses: actions/checkout@v4
+      # Ubuntu's clang ships the libFuzzer runtime, so CI gets real
+      # coverage-guided fuzzing where a Mac falls back to the deterministic
+      # driver. run.sh picks whichever is available.
+      - name: Install clang (for libFuzzer)
+        run: sudo apt-get update -qq && sudo apt-get install -y clang
+      - name: Unit tests, fuzz and the BLE-adapter guard
+        env:
+          CXX: clang++
+          FUZZ_SECONDS: 60
+        run: tests/host/run.sh
+
   compile:
     runs-on: ubuntu-latest
 

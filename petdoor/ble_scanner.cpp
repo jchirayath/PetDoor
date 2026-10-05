@@ -76,8 +76,30 @@ namespace {
 
 // NimBLE returns std::string where the Arduino stack returns String. Both
 // overloads exist in both builds; only one is ever called.
+//
+// THE LENGTH IS LOAD-BEARING. Advertisement payloads are binary and routinely
+// contain NUL bytes — manufacturer data begins 4C 00 for Apple, and Eddystone
+// TLM service data begins 20 00, so the NUL is byte 2 of the two frames this
+// firmware actually parses.
+//
+// This used to be `String(s.c_str())`, which stops at the first NUL. Both
+// frames therefore arrived as ONE byte and nothing could ever parse them:
+// Eddystone battery telemetry never decoded, so the BEACON_LOW_BATTERY_MV
+// warning was inert; iBeacon UUID/major/minor matching could never match, so a
+// door configured that way would never see its beacon and never actuate, while
+// still reporting itself configured. It ran that way for weeks and nothing
+// noticed, because the only check this project had was that it compiled.
+//
+// beacon.h documents the contract ("it may contain NULs; Arduino String
+// carries an explicit length, so that is safe") and it was true — Bluedroid
+// builds its String with an explicit length. This adapter was the one place
+// that quietly broke it. tests/host/run.sh now fails the build if it comes
+// back.
 inline String bleToString(const String &s) { return s; }
-inline String bleToString(const std::string &s) { return String(s.c_str()); }
+inline String bleToString(const std::string &s) {
+  return String(reinterpret_cast<const uint8_t *>(s.data()),
+                static_cast<unsigned int>(s.size()));
+}
 
 struct SeenDevice {
   char mac[18];
