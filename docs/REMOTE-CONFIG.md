@@ -153,6 +153,38 @@ Thresholds that form no hysteresis band, a lockout longer than the close dwell,
 an open filter slower than the close filter — all still refused, and the refusal
 comes back in the acknowledgement.
 
+### When a command seems not to arrive
+
+A command reaches the door only on an **upload**, and an upload has to be
+allowed. Three things hold one back, all deliberately:
+
+| | |
+|---|---|
+| the door is not **idle** | the collar is present, or the door is OPEN, or a travel is in flight. Sharing the antenna while any of those is true costs detections |
+| less than `upmin` since the last upload | 5 minutes by default, and it is what stops the radio living permanently on WiFi |
+| **a console menu is open** | `g_entry` is part of the idle test, so a half-typed configuration is never uploaded — and a menu left open on a cable suppresses inbound commands with it |
+
+The heartbeat (30 minutes by default) fires regardless of idle, so nothing waits
+forever. Pressing **`u`** on the console forces an upload immediately and is the
+quickest way to see whether a command was really queued:
+
+```
+[cmd] 1 command(s) from the server
+[cmd] schedule del 0 -> window removed
+```
+
+One real session lost ten minutes to the third row of that table: a schedule
+delete sat queued the whole time because a console submenu had been left open.
+
+> **`[cmd] reply ignored: unsigned` is normal.** The server signs a reply only
+> when it carries commands; an upload that finds an empty queue gets a plain
+> unsigned acknowledgement. Firmware built before this was understood printed
+> that line on *every* upload, and it reads exactly like a broken channel — two
+> diagnoses in one session wrongly concluded remote configuration was dead while
+> commands were being applied perfectly well. Newer builds say nothing for the
+> ordinary acknowledgement and complain only about an unsigned reply that
+> actually purports to carry orders.
+
 ### `macs` restarts the door
 
 The BLE callback reads the beacon list on every advertisement, so swapping it

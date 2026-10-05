@@ -324,7 +324,22 @@ bool responseTrusted(const String &body, const String &ts, const String &sig) {
     return false;
   }
   if (!sig.length()) {
-    Serial.println(F("[cmd] reply ignored: unsigned"));
+    // The server signs a reply ONLY when it carries commands. An upload that
+    // finds an empty queue gets a plain JSON acknowledgement — `{"received":
+    // N, ...}` — with no signature at all, which is correct and expected.
+    //
+    // Complaining about that was noise on EVERY upload, and worse, it read as
+    // a broken command channel: two separate diagnoses in one session
+    // concluded the server was failing to sign and that remote configuration
+    // was dead, while commands were in fact being delivered and applied
+    // perfectly well. The decision below is unchanged — an unsigned body is
+    // never obeyed — only the complaint is now reserved for a reply that
+    // actually purports to carry orders.
+    const char *p = body.c_str();
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p == '\0' || *p == '{') return false;  // the ordinary ack; nothing to obey
+    Serial.println(F("[cmd] reply ignored: unsigned, and it is not the usual"));
+    Serial.println(F("[cmd] acknowledgement — something sent us orders it cannot sign"));
     return false;
   }
   // Signed material is  ts + "\n" + nonce + "\n" + body.  signBody() puts a
