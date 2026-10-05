@@ -1201,7 +1201,7 @@ function renderSchedule(){
         <span class="schedwin">${esc(w.s)} \u2013 ${esc(w.e)}</span>
         <span class="scheddays">${esc(daysLabel(w.mask))}${overnight?" \u00b7 overnight":""}</span>
         <span style="flex:1"></span>
-        <button class="b-quiet" data-schedel="${i}">Remove</button></div>`;
+        <button class="b-quiet" data-schedel="${esc(w.s)}-${esc(w.e)}">Remove</button></div>`;
     });
   } else if(known&&cfg.sched!==undefined){
     html+=`<p class="note">No windows. The collar may open the door at any hour.</p>`;
@@ -1253,6 +1253,18 @@ function renderSchedule(){
 
   host.innerHTML=html;
 
+  // Deletes name the window by its TIMES, never by its position.
+  //
+  // Position was the obvious choice and it was wrong twice over. Removing a
+  // window renumbers the rest, so clicking Remove on two of them deleted the
+  // first and then failed on the second — which, over the remote channel, is
+  // heard only as a refusal tone. And an index from a page that had gone stale
+  // pointed at whichever window had shifted into that slot, so the failure
+  // mode was deleting the WRONG window silently.
+  //
+  // Times are order-independent and either match or fail cleanly. Needs
+  // firmware that accepts `schedule del HH:MM-HH:MM`; older builds take only
+  // a number and will refuse this with "no window".
   host.querySelectorAll("button[data-schedel]").forEach(el=>{
     el.addEventListener("click",()=>send("schedule del "+el.dataset.schedel,null,true));
   });

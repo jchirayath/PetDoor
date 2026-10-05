@@ -105,7 +105,26 @@ EVENT_LABEL = {
     "MAINT": "maintenance mode",
     "CONSOLE": "network console",
     "NO_MOVE": "did not move at all",
+    # The door's own controller has modes of its own and has been watched
+    # driving the door with nothing commanding it. Only visible once limit
+    # switches are fitted, which is why this event is newer than the rest.
+    "UNCOMMANDED": "moved by itself",
+    "RETRY": "pressed again",
+    # The one entry here that is a request rather than a record: close attempts
+    # are exhausted and the door is staying open until a person deals with it.
+    "GAVE_UP": "GAVE UP closing",
+    "WAKE": "woke the controller",
 }
+
+# What a door actuation's `detail` means: ActuationSource in petdoor/door.h.
+ACTUATION_SOURCE = {0: "the collar", 1: "the console", 2: "the dashboard",
+                    3: "a safety reversal"}
+
+# Flags packed into an actuation's spare field: LogActuationFlags in
+# petdoor/eventlog.h. "verified" is the one worth reading — without it the
+# entry records only that the door was COMMANDED somewhere.
+ACTUATION_FLAGS = ((0x0001, "verified by a switch"), (0x0002, "after a wake press"),
+                   (0x0004, "needed a repeat press"), (0x0008, "safety reversal"))
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
 
@@ -212,7 +231,7 @@ VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
                "scan", "reboot", "lock", "unlock", "presses",
                "travel", "buzzer", "beep", "sensors", "upload", "maint",
-               "schedule", "vibration")
+               "schedule", "vibration", "led", "wake", "retry", "calibrate")
 
 # ---------------------------------------------------------------- web control
 #
@@ -323,7 +342,21 @@ WEB_COMMANDS = {
 
     # --- timing ------------------------------------------------------------
     "dwell":      ([_whole(100, 600000, " ms")] * 3, 3, _lockout_below_close, False),
-    "travel":     ([_whole(0, 120000, " ms")], 1, None, False),
+    # One value sets both directions; two set them separately. They are not
+    # equal on a mounted door — gravity assists the close and opposes the open.
+    "travel":     ([_whole(0, 120000, " ms"), _whole(0, 120000, " ms")], 1, None, False),
+    # How long an idle vendor controller is assumed to need a wake press before
+    # it will listen. 0 turns the wake press off.
+    "wake":       ([_whole(0, 3600000, " ms")], 1, None, False),
+    # After a close that stalled: how long to wait, and how many attempts
+    # before the door stays open and says so. `retry clear` resets a door that
+    # has already given up, for somebody who has just cleared the obstruction.
+    "retry":      ([_whole(1, 1440, " min"), _whole(1, 10)], 2, None, False),
+    # Times a travel in each direction and adopts the result. Confirmed,
+    # because it drives the door twice, on purpose, while somebody may be
+    # standing at it — and it refuses unless a maintenance window is open.
+    "calibrate":  ([], 0, None, True),
+    "led":        ([], 0, None, False),
 
     # --- the relay ---------------------------------------------------------
     "pulse":      ([_whole(50, 10000, " ms")], 1, None, False),
@@ -407,6 +440,12 @@ def web_command_allowed(command):
 
     if verb == "vibration" and args and args[0].lower() in ("off", "none"):
         return (True, "") if len(args) == 1 else (False, "'vibration off' takes nothing else")
+
+    # "retry clear" resets a door that has given up closing, for somebody who
+    # has just cleared whatever was in the way. A word where a number belongs,
+    # so it has to be taken before the range checks run.
+    if verb == "retry" and args and args[0].lower() == "clear":
+        return (True, "") if len(args) == 1 else (False, "'retry clear' takes nothing else")
 
     if verb == "maint" and args and args[0].lower() in ("off", "on"):
         return (True, "") if len(args) == 1 else (False, f"'maint {args[0].lower()}' takes nothing else")
@@ -955,7 +994,8 @@ def render():
                      ("Doors", devices), ("Brownouts", brown)])
 
     cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b",
-           "NO_MOVE": "b", "STALLED": "b"}
+           "NO_MOVE": "b", "STALLED": "b", "UNCOMMANDED": "b", "GAVE_UP": "b",
+           "RETRY": "b", "WAKE": "s"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -966,9 +1006,37 @@ def render():
             if r["detail"] == 9:
                 detail = f'<strong style="color:var(--bad)">{detail}</strong>'
         elif r["type"] == "REFUSED":
+            # 1-6 are ActuationResult; 100 is the scheduled lockout, which is
+            # deliberately outside that enum so adding to it cannot re-label
+            # history already in the database.
             detail = {1: "already there", 2: "too soon", 3: "boot grace",
-                      5: "scheduled lockout"}.get(
+                      4: "already travelling", 5: "waiting to retry a failed close",
+                      6: "gave up closing — staying open",
+                      100: "scheduled lockout"}.get(
                 r["detail"], f'reason {r["detail"]}')
+        elif r["type"] in ("OPEN", "CLOSE"):
+            # Who asked, and how much the door actually knows about what it
+            # did. An entry with no "verified" is an intention, not a record.
+            bits = [ACTUATION_SOURCE.get(r["detail"], f'source {r["detail"]}')]
+            flags = r["src"] if "src" in r.keys() and r["src"] else 0
+            bits += [name for mask, name in ACTUATION_FLAGS if flags & mask]
+            if not flags & 0x0001:
+                bits.append("assumed — no switch confirmed it")
+            detail = html.escape(", ".join(bits))
+        elif r["type"] == "GAVE_UP":
+            detail = ('<strong style="color:var(--bad)">'
+                      f'{r["detail"]} close attempts stalled; the door is staying OPEN'
+                      "</strong>")
+        elif r["type"] == "UNCOMMANDED":
+            where = {1: "open", 2: "closed"}.get(r["detail"], f'state {r["detail"]}')
+            detail = ('<strong style="color:var(--bad)">'
+                      f"the door moved to {where} and nothing commanded it"
+                      "</strong>")
+        elif r["type"] == "RETRY":
+            detail = f'attempt {r["detail"]} — the previous press moved nothing'
+        elif r["type"] == "WAKE":
+            detail = ("the wake press moved the door by itself"
+                      if r["detail"] == 1 else "a wake press was needed")
         elif r["type"] == "NO_MOVE":
             # The relay fired and nothing moved. Louder than STALLED, which at
             # least means the door tried.
