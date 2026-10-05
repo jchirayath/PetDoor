@@ -94,6 +94,21 @@ void storePulseMs(uint32_t ms);
 bool loadStoredTravelMs(uint32_t &ms);
 void storeTravelMs(uint32_t ms);
 
+// Travel time per direction. Open and close are not equal on a mounted door —
+// gravity assists one and opposes the other — so they are stored as a pair.
+//
+// Unlike most of these, this one takes its arguments as in/out: either
+// direction may be unstored, and the caller's value (from the legacy single
+// key, or from config.h) must survive that. Returns true if ANYTHING was read.
+bool loadStoredTravelPair(uint32_t &openMs, uint32_t &closeMs);
+void storeTravelPair(uint32_t openMs, uint32_t closeMs);
+
+// The actuation policy: how long an idle controller is assumed to need a wake
+// press, and what happens after a close that stalls. In one record because
+// they are one decision — how hard to try, and how hard is too hard.
+bool loadStoredActuation(uint32_t &wakeIdleMs, uint32_t &retryDelayMs, uint8_t &retryLimit);
+void storeActuation(uint32_t wakeIdleMs, uint32_t retryDelayMs, uint8_t retryLimit);
+
 // The annunciator's wiring: which pin, active or passive, and its polarity.
 // Persisted because finding an undocumented board's buzzer pin is a search,
 // and a search you have to repeat after every power cut is not a fix.
@@ -105,6 +120,18 @@ void storeChime(int pin, bool passive, bool activeLow);
 // power cut and the next flash.
 bool loadStoredSensors(int &openPin, int &closedPin, bool &activeLow);
 void storeSensors(int openPin, int closedPin, bool activeLow);
+
+// The vibration sensor's pin, persisted for exactly the same reason as the
+// buzzer's and the switches': it is WIRING, and wiring must survive both a
+// power cut and the next flash.
+//
+// It did not, originally, and the consequence was quiet: the sensor is what
+// answers "did the door start moving", so a door that lost the pin to a
+// brownout stopped being able to tell a swallowed press from a successful one
+// and nothing said so. Found by reflashing a door that had been configured by
+// hand and watching the sensor disappear.
+bool loadStoredVibration(int &pin, bool &activeLow);
+void storeVibration(int pin, bool activeLow);
 
 // How often the door calls in: settle, minimum interval, heartbeat. All three
 // in one record because they only make sense together.

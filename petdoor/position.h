@@ -77,4 +77,14 @@ bool activeLow();
 bool openMade();
 bool closedMade();
 
+// The same two questions asked per END, which is how the actuation path needs
+// them: "is a switch fitted where I am sending the door" decides whether an
+// arrival can be VERIFIED or merely assumed, and "is the switch at the end I
+// am leaving still made" is evidence the door has started to move.
+//
+// DOOR_UNKNOWN answers false to both, so a door whose position was never
+// established cannot accidentally be treated as being at an end.
+bool fittedAt(DoorState end);
+bool madeAt(DoorState end);
+
 }  // namespace Position

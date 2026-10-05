@@ -315,15 +315,44 @@ anything here.**
 | `SENSOR_ACTIVE_LOW` | `1` | `1` = switch shorts the pin to GND, pin idles high on an internal pull-up. Almost always what you want: a broken wire then reads as "not at that end" rather than a false arrival. `0` needs your own pull-down. |
 | `SENSOR_DEBOUNCE_MS` | `50` | A reed switch chatters as the magnet passes and a door settling bounces it. Without this the door announces three arrivals for one. |
 | `RELAY_ACTIVE_LOW` | `0` | `1` for the common blue relay boards, whose coil energises when the input is pulled to GND. `0` for active-high boards and MOSFET drivers. **Getting this wrong means the door runs backwards or runs constantly.** |
-| `RELAY_PULSE_MS` | `200` | Momentary pulse length — how long the relay stays closed. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. Raise it if the relay clicks but the door does not move, or if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
-| `RELAY_PULSE_COUNT` | `1` | Presses per actuation, 1–3. Raise to 2 only if the door's **own button** sometimes needs pressing twice. A blind retry: if the first press worked, the second may stop the door mid-travel. |
+| `RELAY_PULSE_MS` | `1000` | Momentary pulse length — how long the relay holds the controller's button down. **Not a margin:** on the reference controller a 500 ms press is *swallowed* and 1000 ms works, every time. This was 200 ms before anyone measured it. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. See [SAFETY.md](SAFETY.md#a-press-too-short-to-register). |
+| `RELAY_PULSE_COUNT` | `1` | Presses inside a single press, 1–3. **Leave it at 1.** It is the old blind double-press and it *stacks* with the wake press below, so at 2 a cold actuation sends four presses — and a press mid-travel reads as STOP. Kept only for a controller the wake logic cannot handle. |
 | `RELAY_PULSE_GAP_MS` | `1000` | Gap between repeated presses, 200–5000 ms. Only used when `RELAY_PULSE_COUNT` > 1. |
 | `MIN_ACTUATION_INTERVAL_MS` | `5000` | Minimum gap before the door may **close** again. Protects the motor from thrash. **Opening is never rate-limited** — delaying an open is the one direction that can strand an animal outside a door it just watched close. |
 | `DIRECTION_CHANGE_GAP_MS` | `250` | Dead time before asserting a relay, with the opposite one released. Both relays energised at once is a short across the motor's direction contacts. |
-| `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. |
+| `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. Cannot be overridden by hand — not by `o`/`x`, not from the dashboard. |
 
 **`MIN_ACTUATION_INTERVAL_MS` must be shorter than `EXIT_CONFIRM_MS`**, or the
 lockout delays closing. Also `static_assert`ed.
+
+### 3b. The actuation attempt
+
+These govern what happens *after* the relay fires: whether the controller was
+awake, whether the door moved, whether it arrived, and what to do when it did
+not. The reasoning behind each is in
+[ARCHITECTURE.md](ARCHITECTURE.md#the-actuation-path) and
+[SAFETY.md](SAFETY.md#the-controller-may-not-be-awake).
+
+| Setting | Default | Description |
+|---|---|---|
+| `DOOR_TRAVEL_MS` | `0` | How long the door takes to travel, ms. `0` = "not measured", which disables both announcement and verification. Deliberately not a guess: a travel time set too short reads every good travel as a stall, and for a close that means reversing a door that was closing perfectly well. |
+| `DOOR_TRAVEL_OPEN_MS` | `DOOR_TRAVEL_MS` | Per-direction override. On a **mounted** door these are not equal — gravity assists the close and opposes the open. Measured flat, the reference door took 12,180 ms to open and 12,704 ms to close; upright they diverge further. |
+| `DOOR_TRAVEL_CLOSE_MS` | `DOOR_TRAVEL_MS` | As above. Set both with `w` → `travel 12200 12700`, or let `calibrate` measure them. |
+| `TRAVEL_GRACE_MS` | `3000` | How much longer than the travel time to wait before calling it a stall. A door is slower in January and slower as it wears; keeping the margin separate keeps the travel time an honest measurement. |
+| `ARRIVAL_WAIT_MAX_MS` | `60000` | The arrival deadline when switches are fitted but no travel time is known. With a switch at the destination the door does not need a travel time to know it arrived — this only bounds the wait, and the duration becomes the measurement. |
+| `WAKE_IDLE_MS` | `30000` | Idle time after which the controller is assumed asleep and a **wake press** is sent first. `0` disables it. Below this, one press. Deriving the press count from idle time is what satisfies both "the first press is swallowed" and "a repeat press mid-travel is a STOP" — a fixed "always press twice" satisfies neither. |
+| `WAKE_PROBE_MS` | `1800` | How long to watch after a wake press before deciding it did nothing. Must be comfortably past motion onset (~1300 ms measured) or a press that *did* take gets followed by one that stops the door. It is also dead time on every cold actuation. |
+| `MOTION_ONSET_MS` | `2500` | How long to wait for the door to start moving after the actuating press. Only meaningful with a vibration sensor or a switch at the starting end; with neither, nothing can observe a start and this is unused. |
+| `SWALLOW_RETRY_LIMIT` | `2` | How many times a press that demonstrably moved nothing may be repeated **immediately**. Safe to retry at once: nothing moved, so nothing is trapped, and the failure is distinguishable from a stall. |
+| `FAILED_ATTEMPT_COOLDOWN_MS` | `30000` | How long to leave a direction alone after an attempt in it achieved nothing. Without this the door loops: a failed attempt commits nothing, so whatever asked for it asks again on the next tick — ten presses a second. **Per direction**, so a failed close never delays the open after it. |
+| `CLOSE_RETRY_DELAY_MS` | `300000` | After a **stalled close**: how long before trying again. Minutes, not seconds — whatever stopped the door needs time to move or be noticed. |
+| `CLOSE_RETRY_LIMIT` | `3` | How many close attempts may stall before the door stays **open** and says so. An open door is an inconvenience; a door grinding onto an obstruction is not. |
+| `CAL_QUIET_MS` | `90000` | How long `calibrate` requires the door to sit still, with nothing commanded and no switch changing, before it trusts a measurement. 90 s because that is the quiet period that recorded zero movement once the vendor's own modes were disabled. |
+| `VIBRATION_MOVING_PULSES` | `50` | The edge count that means the door is genuinely **in motion**, as opposed to `VIBRATION_MIN_PULSES`, which only means something happened. Used for the wake probe, where a false positive suppresses the actuating press entirely. Real travel emits ~2,000 edges/s, so this is reached in ~25 ms of movement. |
+
+All of `travel`, `wake` and `retry` are settable at runtime — from the console
+under `w`, or over the network — and saved on the device, because every one of
+them is a property of *your* controller rather than of this firmware.
 
 ---
 
@@ -439,7 +468,7 @@ so a door that turned the collar away overnight can be asked about afterwards.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `PIN_VIBRATION` | `-1` | GPIO for an SW-420/801S digital output. `-1` disables it. Runtime-settable with `vibration <pin>`. |
+| `PIN_VIBRATION` | `-1` | GPIO for an SW-420/801S digital output. `-1` disables it. Runtime-settable with `vibration <pin>` **and saved on the device**, like the buzzer and the switches — it is wiring, and wiring should survive a power cut. It did not, originally: the pin was runtime-only, so a brownout silently took the sensor away and with it the ability to tell a swallowed press from a successful one. Found by reflashing a door that had been configured by hand. |
 | `VIBRATION_ACTIVE_LOW` | `1` | Only decides whether the internal pull-up is on — the sensor is read as *edges*, so either polarity works. |
 | `VIBRATION_BLANK_MS` | `400` | How long after a relay pulse to ignore the sensor, so the relay's own click is not mistaken for the door. |
 | `VIBRATION_MIN_PULSES` | `3` | Edges needed before a travel counts as movement, so one spurious reading is not enough. |

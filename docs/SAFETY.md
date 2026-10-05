@@ -9,12 +9,35 @@ door that a living animal walks through. Everything below follows from that.
 
 ## The one-paragraph version
 
-PetDoor is **open-loop**. There are no limit switches, no current sensing, no
-obstruction detection. The firmware knows what it *commanded*; it has no idea
-where the door actually is or what is underneath it. Every protection against
-crushing an animal has to come from your door hardware, not from this code. If
-your door mechanism cannot stop safely on its own when something is in the way,
-do not automate it.
+PetDoor has **no obstruction detection and no current sensing**. With limit
+switches fitted it can tell whether the door arrived; it still cannot tell what
+is underneath it. Every protection against crushing an animal has to come from
+your door hardware, not from this code. **If your door mechanism cannot stop
+safely on its own when something is in the way, do not automate it.**
+
+Fit the limit switches anyway. They do not make the door safe, but they are
+what lets it notice a travel that failed — and a door that notices can fail
+*open*, which is the one useful thing software can do here.
+
+---
+
+## With and without limit switches
+
+Both are supported, both ship, and the switches are off by default because most
+builds have none. The difference is worth being blunt about, because it changes
+what the words in the log mean.
+
+| | No switches | Switches fitted |
+|---|---|---|
+| "the door is open" | it was **commanded** open | a switch **says** it is open |
+| a travel that jammed | reported as success | `STALLED` — logged, sounded, and a close is **reversed** |
+| a press the controller swallowed | reported as success | `NO_MOVE` — and the door does not change what it believes |
+| the door moved by itself | invisible | `UNCOMMANDED` — logged and sounded |
+| the "arrived" chime | a stopwatch expiring | an arrival |
+| travel time | something you measure with a stopwatch | measured per travel, and `calibrate` adopts it |
+
+Two switches, about $2, two wires. See
+[WIRING.md](WIRING.md) and [TUNING.md](TUNING.md).
 
 ---
 
@@ -32,6 +55,11 @@ because the failure it prevents is plausible in a coop.
 | Two relays are never energised at once | `DIRECTION_CHANGE_GAP_MS` | A dead short across the motor's direction contacts |
 | 5 s minimum between any two actuations | `MIN_ACTUATION_INTERVAL_MS` | Motor thrash if the signal sits on the threshold |
 | Relay pins are driven to their idle level *before* `pinMode()` makes them outputs | — | A microsecond glitch on boot registering as a real movement |
+| **A stalled close is reversed, not retried** | `TRAVEL_GRACE_MS` | Driving a door repeatedly onto whatever stopped it. Needs a switch at the closed end |
+| **Retries after a failed close are minutes apart and attempt-limited** | `CLOSE_RETRY_DELAY_MS`, `CLOSE_RETRY_LIMIT` | A door grinding away at an obstruction all evening |
+| **After the limit the door stays open and says so** | `CLOSE_RETRY_LIMIT` | A door that silently gave up, which is worse than one that is visibly open |
+| **A repeat press is never sent while a travel is in flight** | — | A second press mid-travel, which real controllers read as STOP and which parks the door halfway |
+| **A failed travel does not change what the door believes** | — | "Already closed" refusing the next close, after a close that never happened |
 
 ## What it does not protect against
 
@@ -44,12 +72,29 @@ your mechanism.
 - **Power loss part-way through travel.** The door stops wherever it is. On
   restart the firmware reports `DOOR_UNKNOWN` and will not close for 30 s, but
   it cannot recover the door's real position.
-- **A jammed or iced door.** The firmware pulses the relay and assumes success.
-  It has no way to notice the motor stalled.
+- **An animal under a door that is already closing.** The reversal above
+  triggers on a *stall* — the door failing to arrive. A door that closes
+  successfully onto something soft arrives, and reports success. Only the
+  mechanism can prevent that.
+- **A jammed or iced door, with no switches fitted.** The firmware pulses the
+  relay and assumes success; it has no way to notice the motor stalled. With
+  switches it notices, and for a close it reverses — but what it has detected
+  is a door that did not *arrive*, which is not the same as a door that hit
+  something.
+- **A broken switch or a lost magnet.** This reads as "not at that end", which
+  is the safe direction — the door declines to believe it got somewhere it has
+  not — but with a broken closed-end switch *every* close reports a stall, and
+  the door ends up parked open after `CLOSE_RETRY_LIMIT` attempts. That is the
+  intended failure, and it is loud: three blips on the LED, an entry in the
+  log, and `gaveup=1` in the uploaded status. It is still a door that stopped
+  closing because a magnet fell off. Check the magnets; see
+  [WIRING.md](WIRING.md).
 - **The relay wired to the wrong contacts.** Landing on `COM`/`NC` instead of
   `COM`/`NO` inverts every state: the door controller sees its button held down
   permanently, and the firmware's 200 ms "press" becomes a 200 ms *release*.
   That is a motor that runs continuously, or starts the moment power is applied.
+  (The "press" is 1000 ms by default, not 200 — see
+  [below](#a-press-too-short-to-register).)
   It is downstream of the ESP32, so no amount of firmware can detect or prevent
   it. Use `COM` and `NO`; leave `NC` empty. See
   [WIRING.md](WIRING.md#which-output-terminals-to-use).
@@ -97,6 +142,77 @@ Before you rely on one:
 The door sounds the refusal chime and logs a `REFUSED` entry each time a window
 turns the collar away, so "it would not let her in last night" is answerable
 from the log rather than from memory.
+
+**You can hear a window refusing.** When the collar arrives at a door a window
+is holding shut, the buzzer plays two long low beeps with a wide gap between
+them — "not… now" — once per arrival, and distinct from the single long beep a
+manual lock gives. The console says `[sched] refused: window [n] is in force`
+and the event log records it.
+
+That matters at 3 a.m. with an animal outside: it is the difference between
+"the door is broken" and "the door is doing what I told it to", and it is the
+only way to tell without a screen. It does not make the lockout any less of a
+decision to think through — see above — it just stops you dismantling a door
+that is working correctly.
+
+## A press too short to register
+
+`RELAY_PULSE_MS` defaults to **1000 ms**. It used to be 200.
+
+This is not a margin. On the reference controller a **500 ms press is
+swallowed** and a 1000 ms press works, every time. A relay that clicks into a
+door that does not move is the most-reported symptom of this project, and for
+a full day of bench work this number was the cause.
+
+It matters for safety in a roundabout way: a door that "sometimes does not
+respond" gets a second press added by hand, and a second press mid-travel reads
+as STOP on real controllers — so the fix for an unreliable press used to be a
+door parked halfway. The wake press below replaced that guesswork.
+
+## The controller may not be awake
+
+The ESP32 does not drive your motor. It closes a relay across a **button** on a
+commercial controller, and on the reference hardware that controller **sleeps**:
+the first press after a long idle is always swallowed, and the second works.
+Confirmed 4 out of 4 after 180 s idle, while six presses seconds apart all
+worked.
+
+A coop door is idle for hours between uses, so **nearly every real actuation is
+a cold one.** The firmware therefore sends a **wake press** when the controller
+has been idle for `WAKE_IDLE_MS`, waits, and only then presses to actuate.
+
+The dangerous case is the one it is designed around. If the controller turns out
+to have been awake, the wake press *moves the door* — and a second press
+mid-travel would stop it halfway. So after a wake press the firmware watches
+for `WAKE_PROBE_MS` and **does not press again if the door started moving**.
+With a vibration sensor or a switch at the starting end, that check is a
+measurement. Without either, it is a guess bounded by the idle timer, which is
+why `WAKE_IDLE_MS` defaults to a conservative 30 s.
+
+Set `WAKE_IDLE_MS` to 0 if your controller does not sleep.
+
+> **Leave `RELAY_PULSE_COUNT` at 1.** It is the old blind double-press and it
+> *stacks* with the wake press: at 2, a cold actuation sends four presses, and
+> on this hardware a press mid-travel is a STOP. It is kept only for a
+> controller the wake logic cannot handle.
+
+## The door may move on its own
+
+The vendor controller has modes of its own. Before they were disabled it drove
+the reference door with nothing commanding it — most visibly **leaving the open
+limit about fifteen seconds after arriving, twice.**
+
+This firmware assumes it is not the only thing that moves the door. With
+switches fitted, a door that reaches an end with no travel in flight is logged
+as `UNCOMMANDED`, sounded, and uploaded immediately.
+
+**If you see that event repeatedly, your controller still has an automatic mode
+enabled.** Find it and turn it off before trusting any measurement — including
+travel time, which is why `calibrate` begins with a quiet period and aborts if
+the door moves during it. See
+[COOP-CONVERSION.md](COOP-CONVERSION.md).
+
+---
 
 ## Choose a door mechanism that fails safe
 

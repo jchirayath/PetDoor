@@ -1,6 +1,7 @@
 #include "position.h"
 
 #include "chime.h"
+#include "vibration.h"
 
 namespace Position {
 namespace {
@@ -66,6 +67,11 @@ const char *pinProblem(int pin) {
   if (pin == PIN_RELAY_CLOSE) return "that is the CLOSE relay";
   if (pin == PIN_STATUS_LED) return "that is the status LED";
   if (Chime::enabled() && pin == Chime::pin()) return "that is the buzzer";
+  // Each of these modules attaches to its pin at runtime, so the only way any
+  // of them can know a pin is taken is to ask the others.
+  if (Vibration::enabled() && pin == Vibration::pin()) {
+    return "that is the vibration sensor";
+  }
 #if CONFIG_IDF_TARGET_ESP32
   if (pin == 0 || pin == 2 || pin == 12 || pin == 15) {
     return "warning: strapping pin — a switch closed at power-on can stop the board booting";
@@ -109,6 +115,22 @@ bool openMade() { return openSw_.stable; }
 bool closedMade() { return closedSw_.stable; }
 
 bool fault() { return openSw_.stable && closedSw_.stable; }
+
+bool fittedAt(DoorState end) {
+  if (end == DOOR_OPEN) return openPin_ >= 0;
+  if (end == DOOR_CLOSED) return closedPin_ >= 0;
+  return false;
+}
+
+bool madeAt(DoorState end) {
+  // A contradiction is not a position. While both switches read made, neither
+  // is believed — the same rule state() follows, applied here so a caller
+  // cannot get a cheerful "yes, it arrived" out of a shorted wire.
+  if (fault()) return false;
+  if (end == DOOR_OPEN) return openSw_.stable;
+  if (end == DOOR_CLOSED) return closedSw_.stable;
+  return false;
+}
 
 DoorState state() {
   if (!enabled()) return DOOR_UNKNOWN;

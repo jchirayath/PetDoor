@@ -222,15 +222,15 @@ The firmware is imitating a finger on a button:
 
 ```cpp
 digitalWrite(pin, RELAY_ASSERT);
-delay(RELAY_PULSE_MS);            // 200 ms
+delay(RELAY_PULSE_MS);            // 1000 ms
 digitalWrite(pin, RELAY_RELEASE);
 ```
 
 A pushbutton is open at rest and closed while pressed. `COM`↔`NO` is exactly
-that: open at idle, closed for 200 ms, open again.
+that: open at idle, closed for 1000 ms, open again.
 
 Wire `COM`↔`NC` instead and every one of those states inverts. The door
-controller sees its button **held down permanently**, with a 200 ms *release*
+controller sees its button **held down permanently**, with a 1000 ms *release*
 each time the firmware tries to act. Depending on the controller that is a motor
 that runs continuously, or one that starts the instant you apply power, or both
 — the failure [SAFETY.md](SAFETY.md) exists to prevent. Nothing in the firmware
@@ -356,7 +356,7 @@ Only after those is it worth suspecting the adapter.
 
 ## Momentary pulse vs held contact
 
-The firmware pulses each relay for `RELAY_PULSE_MS` (200 ms default) and then
+The firmware pulses each relay for `RELAY_PULSE_MS` (1000 ms default) and then
 releases it. That value is **adjustable at runtime** — `w` then `pulse 500` in
 the console, saved on the device — because the right length is a property of
 your door controller, not of this firmware. This matches a door controller that has **separate OPEN and CLOSE
@@ -664,12 +664,21 @@ Do this with **no motor connected**. You are testing the relays only.
 
    ```
    [cmd] forcing OPEN
+   [door] wake press sent (the controller had been idle)
    ```
 
-   and hear exactly **one** click from the OPEN relay, lasting about 200 ms
-   before it releases.
+   and hear **two** clicks from the OPEN relay, each lasting about a second,
+   roughly two seconds apart. The first is the **wake press** — the vendor
+   controller sleeps and swallows it — and the second is the actuation. With
+   nothing connected downstream yet, both will always be sent, because nothing
+   can observe whether the door moved in between.
 
-5. Type `x`. One click from the CLOSE relay.
+   Type `o` again straight away and you should hear **one** click: the
+   controller is now believed awake, so no wake press is needed. That
+   difference is the wake logic working. See
+   [SAFETY.md](SAFETY.md#the-controller-may-not-be-awake).
+
+5. Type `x`. The same, for the CLOSE relay.
 
 6. Type `o` then `x` in quick succession. Note the short pause — about a
    quarter of a second — before the second relay fires. That is

@@ -195,3 +195,157 @@ callback.
 - **Which vendor mode was moving the door** (F2) is unidentified. It is
   currently disabled. If it is a light sensor, behaviour will change with the
   seasons.
+
+---
+
+## 7. Implementation status
+
+Written after building it. Every **MUST** above is implemented; the table says
+where, so a reader can check the claim rather than take it.
+
+The one structural change is a new module, `actuator.*`, which owns one
+actuation attempt from the request to its outcome. `door.*` was split to suit
+it: it still owns the pins, the interlock and the gating, and no longer owns
+sequencing. See
+[ARCHITECTURE.md](ARCHITECTURE.md#the-actuation-path).
+
+| | Where | Note |
+|---|---|---|
+| **R1** wake press, derived from idle time | `Actuator::wakeNeeded()`, `WAKE_IDLE_MS` | And it does not press twice blindly: after the wake press it watches for `WAKE_PROBE_MS` and skips the second press if the door started moving |
+| **R2** no repeat press mid-travel | `Actuator::request()` returns `ACT_BUSY` | The *opposite* direction still supersedes — a reversal must never be the request that is refused |
+| **R3** interlock unchanged | `DoorController::pulse()` | Carried over verbatim |
+| **R4** pulse ≥ 1000 ms | `RELAY_PULSE_MS` | Default changed from 200 |
+| **R5** actuation verified, non-arrival not reported as success | `OUT_ARRIVED` vs `OUT_ASSUMED` vs `OUT_STALLED` | `LOGF_VERIFIED` on the log entry is the distinction. Without it, an entry records an intention |
+| **R6** detect and log uncommanded movement | `updatePosition()`, `LOG_UNCOMMANDED` | Sounded and uploaded immediately, not held to the next heartbeat |
+| **R7** reeds correct belief, never command | `observePosition()` | Carried over. The one addition is that reality saying "closed" clears a gave-up state — which relaxes a refusal and still cannot cause a movement |
+| **R8** both reeds made = wiring fault | `Position::fault()` | Carried over, and `madeAt()` honours it too, so a shorted wire cannot produce a cheerful arrival |
+| **R9** vibration only answers "did it start" | `movedEvidence()` | Confined to one boolean. Two thresholds, because the cost of being wrong points opposite ways in the two places it is asked |
+| **R10** a stalled close fails **open** | `resolve(OUT_STALLED)` → forced `SRC_FAILSAFE` open | Armed in `resolve()` and sent by the next tick, so the stall is announced before the reversal |
+| **R11** retry delayed by minutes, attempt-limited | `CLOSE_RETRY_DELAY_MS`, `CLOSE_RETRY_LIMIT` | After the limit: `gaveUp()`, its own LED pattern, its own chime, `gaveup=1` in the uploaded status |
+| **R12** a swallowed press may retry at once | `SWALLOW_RETRY_LIMIT` | Bounded, and followed by `FAILED_ATTEMPT_COOLDOWN_MS` — see below |
+| **R13** existing invariants carry over | `CLAUDE.md`, `static_assert`s | Three added; see ARCHITECTURE.md invariants 14–17 |
+| **R14** announce who asked: beacon / console / remote | `Actuator::moveTune()`, `SRC_REMOTE` | Three sources, three tunes, counted beeps |
+| **R15** rhythm, not pitch | `chime.cpp` | Which is *why* it is a count: 2 beeps the collar, 3 the console, 4 the network |
+| **R16** LED shows measured position | `updateLed()` | With switches fitted, "off" now means genuinely between the two ends |
+| **R17** travel time measurable in service, per direction, learned | `measuredMs()`, `calibrate` | Every verified travel is timed and reported in `s`; `calibrate` adopts it |
+| **R18** calibration begins with a confirmed quiet period | `CAL_QUIET_MS` | Aborts if a switch changes during it, and says that a vendor mode is still enabled |
+
+### Found while building, not in the requirements above
+
+**A failed attempt commits nothing, so the door loops.** The condition that
+asked for the travel is still true, so the control task asks again on its very
+next tick — ten presses a second, forever. R12 permits an immediate retry and
+says nothing about what happens after the retries are spent.
+`FAILED_ATTEMPT_COOLDOWN_MS` is the answer, per direction so that a failed
+close never delays the open after it.
+
+**A reversal would have been refused.** A travel in flight has not committed,
+so the door still believes it is at the end it set off *from* — and "already
+there" would have refused the open that arrives mid-close, which is the one
+request that must never be refused. `request()` now drops the belief to
+`UNKNOWN` when a travel is superseded.
+
+**`ACT_RETRY_WAIT` collided with the schedule's refusal code.** `LOG_REFUSED`
+carried a hardcoded `detail = 5` for a scheduled lockout, and the new
+`ActuationResult` values reach 5. A door waiting out a stalled close would have
+been reported on the dashboard as refused by a schedule window that does not
+exist. The schedule's code is now 100, deliberately outside the enum.
+
+**A travel must be timed from the press, not from when motion was noticed.**
+Motion is observed up to `MOTION_ONSET_MS` later, and a deadline measured from
+there grants every travel a couple of extra seconds — enough slack to hide a
+door that is getting slower, and enough to make the measured figure
+incomparable with the stopwatch numbers in §1.
+
+### Still open
+
+- **Travel times have now been measured in service** (see §8), but on a door
+  still lying FLAT. §6 stands: re-run `calibrate` once it is mounted upright,
+  because gravity assists the close and opposes the open.
+- **Whether the vendor controller stops on a timer or on its own limits** is
+  still untested, and still matters for the reason §6 gives.
+- **Retry on a vibration-confirmed non-start** is implemented
+  (`SWALLOW_RETRY_LIMIT`), which §3's R12 allows. The *other* retry the roadmap
+  wanted — a second press when the door demonstrably did not move — is the same
+  thing, so that item is now done rather than deferred.
+
+---
+
+## 8. Verified on hardware (2026-10-04, same evening)
+
+Everything below was observed on the reference door — flat, controller and
+motor connected, both reeds, vibration sensor and buzzer fitted. Pins exactly
+as §1: relays 16/17 active HIGH, reeds 32/25, buzzer 27, vibration 33.
+
+### The requirements that were exercised
+
+| | What happened |
+|---|---|
+| **R1** wake press | `[door] wake press sent (the controller had been idle)` on every actuation after 30 s idle. It was **swallowed every time**, exactly as F1 predicts, and the actuating press followed |
+| **R5** verification | `[door] CLOSED — ARRIVED, verified by the limit switch in 11010 ms`. Five travels, all verified |
+| **R12** immediate retry | `[door] nothing moved; pressing again (retry 1)` — a close press was swallowed with no wake press due, `AWAIT_START` timed out, the retry recovered it. The exact failure the vibration sensor was added to catch, caught |
+| **R14** source attribution | Log row `CLOSE,1,-59,3` — detail 1 = console, flags 3 = verified + woke. A beacon-driven open logged `OPEN,0,-60,3` |
+| **R17/R18** calibration | 90 s quiet period **passed** (so F2's vendor mode really is disabled), then `measured open 10203 ms, close 11229 ms — adopted and saved` |
+| Invariant 5 | A post-OTA boot with the beacon switched off recorded `0 open, 0 close, 0 in boot grace` — it refuses to act before hearing the collar once, so a flat beacon battery cannot shut the door |
+
+### Measured numbers, and why they differ from §1
+
+| | §1 (stopwatch, limit to limit) | §8 (firmware, reed to reed) |
+|---|---|---|
+| open | 12,180 / 12,196 ms | **10,203 ms** |
+| close | 12,704 ms | **11,229 ms** |
+
+The firmware's figures are **shorter, and correctly so**: a reed makes before
+the door reaches its physical stop, so reed-to-reed is less than limit-to-limit.
+Reed-to-reed is also the number the arrival deadline wants, since the reed is
+what ends the wait.
+
+Repeatability across separate travels was good — a later close measured
+11,010 ms against the calibrated 11,229 (219 ms apart), and an open measured
+10,425 against 10,203 (222 ms apart). `TRAVEL_GRACE_MS` at 3,000 ms is roughly
+13× that spread.
+
+Vibration counted **58,242 edges** across two calibration travels (~2,900/s,
+consistent with the ~2,000/s of §1) and **0 at rest** — so
+`VIBRATION_MOVING_PULSES` at 50 has an enormous margin.
+
+### Three bugs the hardware found that review did not
+
+1. **The vibration pin did not survive a reboot.** The reeds and buzzer persist
+   to NVS; vibration had no store at all, so it reverted to `-1` on every power
+   cut and silently took `NO_MOVE` detection with it. Fixed and verified across
+   a reboot.
+2. **An OTA window could not be opened while the door was open.** `radioUp()`
+   abandoned association on its first iteration unless the door was idle, and
+   "idle" requires `CLOSED` — so a door sitting open with the beacon away, which
+   is where a stall or an exhausted close retry leaves it, refused every update.
+   OTA only ever appeared to work because a maintenance window forces the idle
+   flag true. Fixed and verified in the failing state.
+3. **A pushed image rolls back if the door is reset before it confirms.**
+   Working as designed — confirmation requires a successful upload, because an
+   image that boots but cannot be managed is the one not to keep — but easy to
+   trip over, and it was tripped over: the banner read two builds old with
+   nothing else saying why. See
+   [DIAGNOSTICS.md](DIAGNOSTICS.md#confirm-the-image-before-you-reboot-the-door).
+
+### OTA, end to end
+
+Pushed four times over WiFi with no cable. The last two self-confirmed with no
+intervention, ~61 s after boot, on a closed and therefore idle door:
+
+```
+[ota] image confirmed good (upload succeeded); rollback cancelled
+```
+
+That is the mounted-door case, and it is the answer to "can this be maintained
+once the USB lead is gone".
+
+### Still unverified
+
+- **STALLED, NO_MOVE as an outcome, GAVE_UP and UNCOMMANDED.** All four need a
+  physically obstructed or hand-pushed door; only the internal retry fired
+  naturally. The fail-open reversal and the attempt limit are therefore
+  **untested on hardware**, which for R10 and R11 is the gap that matters most.
+- **Remote commands.** Uploads succeed, but every reply came back
+  `[cmd] reply ignored: unsigned` — the server is not signing, so no queued
+  command would ever apply. Server-side shared key, not firmware.

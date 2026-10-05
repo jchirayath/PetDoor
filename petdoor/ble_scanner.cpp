@@ -44,6 +44,34 @@ using BleUuid = ::BLEUUID;
 using ScanCallbackBase = ::BLEAdvertisedDeviceCallbacks;
 #endif
 
+// The six raw bytes of an advertiser's address, in the order the address is
+// PRINTED, written into a caller-supplied buffer.
+//
+// This exists so the hot path can identify the target without allocating. Both
+// stacks will happily render an address as a string, and that string is a heap
+// allocation per advertisement per device — which, in a neighbourhood full of
+// phones rotating their addresses every few minutes, is the single busiest
+// allocation site in this firmware. The address is already six bytes in
+// memory; comparing those costs nothing.
+//
+// The two stacks disagree about byte order, which is exactly the kind of
+// difference that belongs here and nowhere else:
+//
+//   Bluedroid keeps esp_bd_addr_t in printed order.
+//   NimBLE keeps ble_addr_t little-endian, i.e. reversed.
+#if PETDOOR_USE_NIMBLE
+inline void bleAddrBytes(const NimBLEAddress &addr, uint8_t out[6]) {
+  const uint8_t *v = addr.getVal();
+  for (int i = 0; i < 6; i++) out[i] = v[5 - i];
+}
+#else
+// By value: the Bluedroid accessor is not const, and getAddress() hands back a
+// copy anyway.
+inline void bleAddrBytes(BLEAddress addr, uint8_t out[6]) {
+  memcpy(out, addr.getNative(), 6);
+}
+#endif
+
 namespace {
 
 // NimBLE returns std::string where the Arduino stack returns String. Both
@@ -85,9 +113,14 @@ volatile bool g_discover = false;
 
 bool g_matchUuid = false;
 
-// Fixed char arrays rather than String: this list is walked in the BLE
-// callback on every advertisement, and strcmp allocates nothing.
+// Fixed char arrays rather than String: this list is reported by the console
+// and the banner, and holding it as text keeps those honest about exactly what
+// was configured.
 char g_targetMacs[BEACON_MAX_MACS][18] = {};
+// The same list as raw bytes, which is what the advertisement handler actually
+// compares against. Parsed once here so the hot path never parses, formats or
+// allocates anything to answer "is this the collar?".
+uint8_t g_targetAddrs[BEACON_MAX_MACS][6] = {};
 uint8_t g_targetMacCount = 0;
 
 uint8_t g_targetUuid[16] = {0};
@@ -116,6 +149,47 @@ bool looksLikeMac(const char *s) {
     }
   }
   return digits == 12 && colons == 5;
+}
+
+uint8_t hexVal(char c) {
+  if (c >= '0' && c <= '9') return static_cast<uint8_t>(c - '0');
+  if (c >= 'a' && c <= 'f') return static_cast<uint8_t>(c - 'a' + 10);
+  if (c >= 'A' && c <= 'F') return static_cast<uint8_t>(c - 'A' + 10);
+  return 0;
+}
+
+// "aa:bb:cc:dd:ee:ff" to six bytes. Only ever called on a string looksLikeMac()
+// has already accepted, so it can assume the shape and just read the digits.
+void macToBytes(const char *text, uint8_t out[6]) {
+  uint8_t n = 0;
+  for (const char *c = text; *c != '\0' && n < 6; c++) {
+    if (!isxdigit(static_cast<unsigned char>(*c))) continue;
+    const char hi = *c;
+    const char lo = *(c + 1);
+    out[n++] = static_cast<uint8_t>((hexVal(hi) << 4) | hexVal(lo));
+    c++;  // the pair is two digits
+  }
+  while (n < 6) out[n++] = 0;
+}
+
+// Bytes back to printable form, for the discovery table. Into a caller buffer,
+// because this is called from the BLE task.
+void macToText(const uint8_t a[6], char out[18]) {
+  static const char kHex[] = "0123456789abcdef";
+  char *w = out;
+  for (uint8_t i = 0; i < 6; i++) {
+    if (i) *w++ = ':';
+    *w++ = kHex[a[i] >> 4];
+    *w++ = kHex[a[i] & 0x0F];
+  }
+  *w = '\0';
+}
+
+bool addrInTargets(const uint8_t a[6]) {
+  for (uint8_t i = 0; i < g_targetMacCount; i++) {
+    if (memcmp(a, g_targetAddrs[i], 6) == 0) return true;
+  }
+  return false;
 }
 
 bool placeholderOrEmpty(const char *s) {
@@ -151,6 +225,7 @@ void parseMacList(const char *list) {
         if (g_targetMacCount < BEACON_MAX_MACS) {
           strncpy(g_targetMacs[g_targetMacCount], buf, sizeof(g_targetMacs[0]) - 1);
           g_targetMacs[g_targetMacCount][sizeof(g_targetMacs[0]) - 1] = '\0';
+          macToBytes(buf, g_targetAddrs[g_targetMacCount]);
           g_targetMacCount++;
         } else {
           overflow = true;
@@ -168,26 +243,11 @@ void parseMacList(const char *list) {
   }
 }
 
-bool matchesTarget(const String &macLower, bool haveIb, const IBeaconData &ib) {
-  if (g_targetMacCount == 0 && !g_matchUuid) return false;
-
-  if (g_targetMacCount > 0) {
-    bool hit = false;
-    for (uint8_t i = 0; i < g_targetMacCount; i++) {
-      if (strcmp(macLower.c_str(), g_targetMacs[i]) == 0) {
-        hit = true;
-        break;
-      }
-    }
-    if (!hit) return false;
-  }
-
-  if (g_matchUuid) {
-    if (!haveIb) return false;
-    if (memcmp(ib.uuid, g_targetUuid, 16) != 0) return false;
-    if (BEACON_MAJOR >= 0 && ib.major != static_cast<uint16_t>(BEACON_MAJOR)) return false;
-    if (BEACON_MINOR >= 0 && ib.minor != static_cast<uint16_t>(BEACON_MINOR)) return false;
-  }
+// Does this iBeacon frame carry the configured UUID / major / minor?
+bool uuidMatches(const IBeaconData &ib) {
+  if (memcmp(ib.uuid, g_targetUuid, 16) != 0) return false;
+  if (BEACON_MAJOR >= 0 && ib.major != static_cast<uint16_t>(BEACON_MAJOR)) return false;
+  if (BEACON_MINOR >= 0 && ib.minor != static_cast<uint16_t>(BEACON_MINOR)) return false;
   return true;
 }
 
@@ -195,7 +255,7 @@ bool matchesTarget(const String &macLower, bool haveIb, const IBeaconData &ib) {
 // `BLEAdvertisedDevice` on Bluedroid and `const NimBLEAdvertisedDevice` on
 // NimBLE, which also sidesteps the two stacks disagreeing about constness.
 template <typename DevT>
-void updateTable(const String &macLower, DevT &device, const String &mfg,
+void updateTable(const char *macLower, DevT &device, const String &mfg,
                  bool isTarget, int8_t measuredPower, uint32_t nowMs) {
   if (g_tableMutex == nullptr) return;
   if (xSemaphoreTake(g_tableMutex, 0) != pdTRUE) return;  // never block the BLE task
@@ -209,7 +269,7 @@ void updateTable(const String &macLower, DevT &device, const String &mfg,
       if (slot < 0) slot = i;
       continue;
     }
-    if (strncmp(g_table[i].mac, macLower.c_str(), sizeof(g_table[i].mac)) == 0) {
+    if (strncmp(g_table[i].mac, macLower, sizeof(g_table[i].mac)) == 0) {
       slot = i;
       // Throttle: refreshing every field on every advertisement would churn
       // the heap hard in a busy RF environment.
@@ -231,7 +291,7 @@ void updateTable(const String &macLower, DevT &device, const String &mfg,
   if (slot < 0) slot = (oldest >= 0) ? oldest : 0;  // evict least recently seen
 
   SeenDevice &e = g_table[slot];
-  strncpy(e.mac, macLower.c_str(), sizeof(e.mac) - 1);
+  strncpy(e.mac, macLower, sizeof(e.mac) - 1);
   e.mac[sizeof(e.mac) - 1] = '\0';
   // The advertised name is attacker-controlled and gets printed straight to the
   // operator's terminal by dumpTable(). Strip anything outside printable ASCII
@@ -272,14 +332,44 @@ void updateTable(const String &macLower, DevT &device, const String &mfg,
 
 // The advertisement handler proper. Both stacks' callback classes below do
 // nothing but forward into this.
+//
+// THIS IS THE HOT PATH. It runs in the BLE host task for every advertisement
+// from every device in range — a few hundred a second in a busy
+// neighbourhood — and the rules are in CLAUDE.md: stay cheap, never block, no
+// Serial, no waiting on a mutex.
+//
+// It is ordered so that the cheapest question is asked first and the
+// expensive work is reached only by the advertisements that need it:
+//
+//   1. stamp the liveness counters          — two writes
+//   2. compare six address bytes            — a memcmp, no allocation
+//   3. leave, if this is neither the target nor wanted for the table
+//   4. only now build strings and parse frames
+//
+// Steps 1-3 are what the overwhelming majority of advertisements get. Before
+// this ordering existed every advertisement allocated two Strings — one for
+// the address and one for the manufacturer data — on the way to being thrown
+// away by a strcmp, and heap churn in this task is not a cosmetic concern:
+// running out of it is what used to panic doors.
 template <typename DevT>
 void handleAdvert(DevT &device) {
   const uint32_t now = millis();
   g_lastAdvMs = now;
   g_advCount++;
 
-  String mac = bleToString(device.getAddress().toString());
-  mac.toLowerCase();
+  uint8_t addr[6];
+  bleAddrBytes(device.getAddress(), addr);
+
+  // With a MAC list configured, the address decides it outright. With only a
+  // UUID configured there is nothing to compare yet, so every advertisement
+  // stays a candidate until its frame has been parsed.
+  const bool configured = (g_targetMacCount > 0 || g_matchUuid);
+  const bool candidate =
+      configured && (g_targetMacCount == 0 || addrInTargets(addr));
+
+  // The early out. Nothing below this line runs for a passing phone unless
+  // discovery is on and someone is actually reading the table.
+  if (!candidate && !g_discover) return;
 
   String mfg;
   if (device.haveManufacturerData()) mfg = bleToString(device.getManufacturerData());
@@ -287,7 +377,8 @@ void handleAdvert(DevT &device) {
   IBeaconData ib = {};
   const bool haveIb = mfg.length() ? parseIBeacon(mfg, ib) : false;
 
-  const bool isTarget = matchesTarget(mac, haveIb, ib);
+  const bool isTarget = candidate && (!g_matchUuid || (haveIb && uuidMatches(ib)));
+
   if (isTarget) {
     g_targetSeen = true;
 
@@ -320,7 +411,11 @@ void handleAdvert(DevT &device) {
   }
 
   if (g_discover) {
-    updateTable(mac, device, mfg, isTarget, haveIb ? ib.measuredPower : 0, now);
+    // Formatted here rather than fetched as a string, so the address is only
+    // ever rendered for the one caller that displays it.
+    char macText[18];
+    macToText(addr, macText);
+    updateTable(macText, device, mfg, isTarget, haveIb ? ib.measuredPower : 0, now);
   }
 }
 
@@ -674,6 +769,73 @@ void storeTravelMs(uint32_t ms) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
   prefs.putUInt("travelMs", ms + 1);
+  prefs.end();
+}
+
+// 0 is a legal travel time ("not measured"), so these are stored offset by one
+// and 0 in NVS means "nothing saved" — the same trick storeTravelMs() uses.
+bool loadStoredTravelPair(uint32_t &openMs, uint32_t &closeMs) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const uint32_t o = prefs.getUInt("travOpen", 0);
+  const uint32_t c = prefs.getUInt("travShut", 0);
+  prefs.end();
+  if (o != 0) openMs = o - 1;
+  if (c != 0) closeMs = c - 1;
+  return o != 0 || c != 0;
+}
+
+void storeTravelPair(uint32_t openMs, uint32_t closeMs) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUInt("travOpen", openMs + 1);
+  prefs.putUInt("travShut", closeMs + 1);
+  prefs.end();
+}
+
+// 0 is a legal wake threshold ("never send a wake press"), so the same +1
+// offset applies. The retry limit is never 0, so it needs no sentinel.
+bool loadStoredActuation(uint32_t &wakeIdleMs, uint32_t &retryDelayMs, uint8_t &retryLimit) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const uint32_t w = prefs.getUInt("wakeIdle", 0);
+  const uint32_t r = prefs.getUInt("retryMs", 0);
+  const uint8_t n = prefs.getUChar("retryMax", 0);
+  prefs.end();
+  if (w != 0) wakeIdleMs = w - 1;
+  if (r != 0) retryDelayMs = r;
+  if (n != 0) retryLimit = n;
+  return w != 0 || r != 0 || n != 0;
+}
+
+void storeActuation(uint32_t wakeIdleMs, uint32_t retryDelayMs, uint8_t retryLimit) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUInt("wakeIdle", wakeIdleMs + 1);
+  prefs.putUInt("retryMs", retryDelayMs);
+  prefs.putUChar("retryMax", retryLimit);
+  prefs.end();
+}
+
+// -1 is a meaningful vibration pin ("no sensor"), so -2 is the unset sentinel —
+// the same trick the buzzer uses below.
+bool loadStoredVibration(int &pin, bool &activeLow) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const int p = prefs.getInt("vibPin", -2);
+  const uint8_t flags = prefs.getUChar("vibFlags", 0);
+  prefs.end();
+  if (p == -2) return false;
+  pin = p;
+  activeLow = (flags & 0x01) != 0;
+  return true;
+}
+
+void storeVibration(int pin, bool activeLow) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putInt("vibPin", pin);
+  prefs.putUChar("vibFlags", activeLow ? 0x01 : 0x00);
   prefs.end();
 }
 

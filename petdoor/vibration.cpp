@@ -1,5 +1,9 @@
 #include "vibration.h"
 
+#include "chime.h"
+#include "position.h"
+#include <string.h>
+
 namespace Vibration {
 namespace {
 
@@ -31,8 +35,34 @@ const char *pinProblem(int p) {
   // 6-11 are the SPI flash. Saying so is worth more than letting somebody
   // discover it by bricking the boot.
   if (p >= 6 && p <= 11) return "wired to the SPI flash — using it stops the board booting";
+
+  // Pins that already belong to something else.
+  //
+  // This module had NO such checks, and configure() ignored this function's
+  // verdict anyway — so `vibration 16` was accepted, which called
+  // pinMode(INPUT_PULLUP) on the OPEN relay's output pin and attached an
+  // interrupt to it. That does not merely mis-read the sensor: it takes the
+  // relay away, so the door can no longer be opened, and every pulse of the
+  // other relay fires the ISR. One typo from the console or the dashboard.
+  if (p == PIN_RELAY_OPEN) {
+    return "that is the OPEN relay — taking it would stop the door opening";
+  }
+  if (p == PIN_RELAY_CLOSE) {
+    return "that is the CLOSE relay — taking it would stop the door closing";
+  }
+  if (p == PIN_STATUS_LED) return "that is the status LED";
+  if (Chime::enabled() && p == Chime::pin()) return "that is the buzzer";
+  if (Position::fittedAt(DOOR_OPEN) && p == Position::openPin()) {
+    return "that is the OPEN limit switch";
+  }
+  if (Position::fittedAt(DOOR_CLOSED) && p == Position::closedPin()) {
+    return "that is the CLOSED limit switch";
+  }
+
+  // A warning, not a refusal — the same convention chime.cpp and position.cpp
+  // use, so applyVibrationSpec() can tell the two apart by the prefix.
   if (p == 0 || p == 2 || p == 12 || p == 15) {
-    return "a strapping pin: it will work, but a pull-up or pull-down here can stop the board booting";
+    return "warning: strapping pin — it will work, but a pull-up or pull-down here can stop the board booting";
   }
   return nullptr;
 }
@@ -53,9 +83,12 @@ bool configure(int p, bool activeLow) {
   detach();
   g_pin = -1;
   if (p < 0) return true;             // disabling is always allowed
+
+  // Honour pinProblem()'s verdict. It used to be computed and then thrown
+  // away unless the pin was outright invalid, which is how a relay pin could
+  // be accepted. Anything but nullptr or a "warning:" is a refusal.
   const char *problem = pinProblem(p);
-  if (problem != nullptr && !digitalPinIsValid(p)) return false;
-  if (p >= 6 && p <= 11) return false;
+  if (problem != nullptr && strncmp(problem, "warning:", 8) != 0) return false;
 
   g_pin = p;
   g_activeLow = activeLow;

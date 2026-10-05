@@ -34,9 +34,13 @@ Two compile-time switches move the size a lot. Measured on min_spiffs:
 
 | | flash | of 1.875 MB |
 |---|---|---|
-| **default (NimBLE + WiFi)** | **1,358,607** | **69%** |
-| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,815,239 | 92% |
-| `-DPETDOOR_ENABLE_WIFI=0` | 694,099 | 35% |
+| **default (NimBLE + WiFi)** | **1,385,831** | **70%** |
+| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,843,115 | 93% |
+| `-DPETDOOR_ENABLE_WIFI=0` | 718,039 | 36% |
+
+Bluedroid has ~123 KB of flash left. Still supported, but it is the
+configuration that will break first — check it before and after any sizeable
+change, not just at the end.
 
 **NimBLE is the default.** It was opt-in until a door in service panicked on
 three consecutive boots (`reset=4`) and the cause turned out to be heap
@@ -78,6 +82,66 @@ before claiming a BLE change works:
 Do not flash hardware unless the user explicitly asks. Uploading drives a real
 motor attached to a real door.
 
+**OTA works and is the way to update a mounted door** — proven repeatedly at
+~1.39 MB over WiFi, self-confirming ~61 s after boot on an idle door. Two
+things about it that cost time to learn:
+
+* **A pushed image boots on probation and rolls back on the next reset** unless
+  it confirms itself, and it only confirms after a SUCCESSFUL UPLOAD to the log
+  server. Resetting the door to "check it took" is what un-takes it; the only
+  symptom is a banner reading two builds old. Press `u` after a push, or leave
+  the door idle and watch for `[ota] image confirmed good`.
+* **Push the binary from the compile you just ran.** `compile --upload`, or
+  `espota.py -f` against a fresh `--output-dir`. The firmware's own hint prints
+  a bare `arduino-cli upload`, which is exactly the command that once wrote a
+  Bluedroid image to a NimBLE door.
+
+## The reference door, as measured
+
+Flat, controller and motor connected, both reeds + vibration + buzzer fitted.
+Pins: relays 16/17 **active HIGH**, LED 23, reeds **32**/**25**, buzzer **27**
+(passive), vibration **33**. None of the sensor pins are compiled-in defaults —
+they are set at runtime and saved on the device.
+
+| | |
+|---|---|
+| travel, reed to reed | open **10,203 ms**, close **11,229 ms** |
+| repeatability | within ~220 ms across separate travels |
+| relay pulse | **1,500 ms** stored on the device (500 ms is swallowed) |
+| vibration while moving | ~2,900 edges/s; **0** at rest |
+
+Reed-to-reed is shorter than the stopwatch figures in `docs/REQUIREMENTS.md`
+§1, and correctly so: a reed makes before the door reaches its physical stop.
+It is also the number the arrival deadline wants.
+
+**The wake press is swallowed every time** on this controller, as F1 predicts —
+so a cold actuation legitimately sends two relay pulses about two seconds
+apart. That is not a fault.
+
+**The console's submenus are a trap, and the documented dance is the only safe
+one.** An EMPTY LINE EXITS a submenu. So `w` followed by a carriage return
+lands you back at the top level, and the word you send next is typed as single
+keystrokes — which is how `vibration 33` became `r` (reset the filter) and `t`
+(open the thresholds menu) on a live door. The `o` in it was swallowed by the
+thresholds menu's line buffer purely by luck of ordering; one letter earlier
+and it would have pulsed the OPEN relay. Send the submenu key ALONE, confirm
+its header came back, then send the line, then confirm with `s` before sending
+anything else. Do not assume a submenu command returns to the top level — some
+do, some do not.
+
+**`min 0 time N` in `stty` is load-bearing in both directions.** `min 0` is
+what stops `dd` blocking forever on a quiet port. Raising it to buffer fuller
+reads (`min 200`) makes every read block until the port speaks again, which
+hangs the capture the moment the output ends. If a long dump arrives truncated,
+add iterations — do not raise `min`.
+
+**A travel now resolves asynchronously, and the console says so twice.**
+`[door] opening` is the request; `[door] OPEN — ARRIVED` (or `STALLED`, or
+`NEVER MOVED`) is the outcome, up to ~15 s later. Capture across the whole
+travel when driving the console from a script, or the verdict lands in the gap
+between reads. A cold actuation also sends **two** relay pulses about two
+seconds apart — that is the wake press, not a fault.
+
 ## Layout
 
 `petdoor/` is simultaneously an Arduino sketch folder and the PlatformIO
@@ -91,7 +155,8 @@ the folder name and `petdoor.ino` in sync or Arduino IDE stops recognising it.
 | `secrets.h` | git-ignored local overrides; may not exist |
 | `ble_scanner.*` | BLE stack, scan, target matching, discovery table |
 | `proximity.*` | dual-rate median + EWMA filters, hysteresis state machine |
-| `door.*` | relay pulses, interlock, lockout, boot grace |
+| `door.*` | relay pulses, interlock, lockout, boot grace, believed state |
+| `actuator.*` | one actuation attempt end to end: wake press, verification, retry, fail-open, travel calibration |
 | `beacon.*` | iBeacon parsing, classification, distance estimate — pure functions |
 | `chime.*` | Optional buzzer: non-blocking patterns, pin/type discovery at runtime |
 | `position.*` | Optional limit switches: debounce, measured state. Never commands the motor |
@@ -144,7 +209,11 @@ comment above it explains why; keep the comment with the code.
    timeout and skipped if busy. Do not add `Serial` output or blocking waits to
    it.
 9. **Door state is owned by one task.** `controlTask` is the only caller of
-   `DoorController`. Do not actuate from `loop()` or from a callback.
+   `Actuator`, and `Actuator` is the only caller of
+   `DoorController::press()`/`commit()`. That chain is what makes this invariant
+   checkable rather than aspirational — `requestOpen()`, `requestClose()` and
+   `forcePulse*()` were removed precisely so there is one path to the motor. Do
+   not actuate from `loop()` or from a callback.
 10. **A maintenance window expires by itself.** It is stored as a deadline, is
     bounded by `MAINT_MAX_MS`, and is never written to NVS — a door left inert
     by a forgotten flag, a lost network or a brownout is a door that cannot let
@@ -158,6 +227,39 @@ comment above it explains why; keep the comment with the code.
 12. **The network console never listens outside a maintenance window**, and
     never without `CONSOLE_PASSWORD`. It is the full console, so it can open the
     door. Do not start it at boot.
+13. **A repeat press is never sent while a travel is in flight.** Same
+    direction mid-travel reads as STOP on this hardware and parks the door
+    halfway. The *opposite* direction always supersedes, and `request()` drops
+    the believed state to `UNKNOWN` when it does: a travel in flight has not
+    committed, so "already there" would otherwise refuse the open arriving
+    mid-close — the one request that must never be refused.
+14. **A stalled close fails open.** Reversed, not retried. The next attempt is
+    `CLOSE_RETRY_DELAY_MS` away (minutes), attempts are capped by
+    `CLOSE_RETRY_LIMIT`, and after the cap the door stays open and says so on
+    the console, in the log, on the LED and in the uploaded status line. A door
+    that silently stopped trying is worse than one that is visibly open.
+15. **A failed attempt does not move the belief.** `OUT_NO_MOVE` leaves it
+    alone; `OUT_STALLED` sets it to `UNKNOWN`. Only an arrival commits.
+    Recording a close that never happened is what made the *next* close a
+    no-op.
+16. **Every wait in the actuator is a deadline, not a `delay()`.** The only
+    blocking left is the press itself, and deliberately: the relay's release is
+    on the far side of a `delay()`, so a control task that wedges elsewhere
+    cannot leave a relay energised. Never add a `delay()` spanning a travel —
+    the control task is what drains BLE samples, and a returning animal has to
+    be noticed *during* a close.
+17. **`LOG_REFUSED`'s `detail` is an `ActuationResult`**, except
+    `kRefusedBySchedule = 100`, which is outside the enum on purpose. Adding a
+    value to `ActuationResult` must not re-label history already in the log
+    server's database — that happened once, when `ACT_RETRY_WAIT` landed on the
+    schedule's hardcoded 5.
+18. **The BLE advertisement handler allocates nothing for a device that is not
+    the target.** Six address bytes are compared with `memcmp` against a
+    pre-parsed list, and the handler returns before any `String` exists unless
+    the device is the beacon or discovery is on. Do not reintroduce
+    `getAddress().toString()` on that path: it is two heap allocations per
+    advertisement per device in the BLE host task, and running out of heap
+    there is what used to panic doors.
 
 ## Conventions
 

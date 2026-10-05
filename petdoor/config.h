@@ -283,11 +283,25 @@
 #define RELAY_ACTIVE_LOW 0
 #endif
 
-// Momentary pulse length. Matches a door controller with separate OPEN and
-// CLOSE momentary inputs. If your motor instead needs the relay held closed
-// for the whole travel, see docs/WIRING.md.
+// Momentary pulse length — how long the relay holds the controller's button
+// down. Matches a door controller with separate OPEN and CLOSE momentary
+// inputs. If your motor instead needs the relay held closed for the whole
+// travel, see docs/WIRING.md.
+//
+// 1000 ms, NOT the 200 ms this used to default to, and the difference is not a
+// margin: on the reference controller a 500 ms press is SWALLOWED and a
+// 1000 ms press works, every time. A relay that clicks into a door that does
+// not move is the single most-reported symptom of this project, and for a
+// whole day of bench work the cause was this number. Measure yours before
+// lowering it; see docs/REQUIREMENTS.md §1.
+//
+// The cost of a long press is that the control task sits in delay() for it,
+// so no BLE sample is drained and no presence re-evaluated during the press.
+// That is bounded at ONE press: everything between presses — the wake probe,
+// the repeat gap, the whole verification window — is non-blocking. See
+// petdoor/actuator.h.
 #ifndef RELAY_PULSE_MS
-#define RELAY_PULSE_MS 200
+#define RELAY_PULSE_MS 1000
 #endif
 
 // Minimum gap between any two actuations. Protects the motor from thrash.
@@ -610,6 +624,26 @@
 #define VIBRATION_MIN_PULSES 3
 #endif
 
+// The count that means the door is genuinely IN MOTION, as opposed to the
+// count above, which only means something happened.
+//
+// Two different questions needing two different bars, because the cost of
+// being wrong points in opposite directions:
+//
+//   * After the actuating press, "did it start?" wants a LOW bar. A false
+//     negative there sends another press, and a press mid-travel reads as STOP
+//     on this hardware — so missing real motion is the expensive mistake.
+//   * After a WAKE press, "did that one press already move it?" wants a HIGH
+//     bar. A false positive there suppresses the actuating press entirely, so
+//     the door never moves and the attempt ends up reported as a stall.
+//
+// 50 is reached in about 25 ms of real travel, which emits roughly 2,000
+// edges per second. A relay's contacts still ringing past the blanking window
+// do not get anywhere near it.
+#ifndef VIBRATION_MOVING_PULSES
+#define VIBRATION_MOVING_PULSES 50
+#endif
+
 // ---------------------------------------------------------------------------
 // Maintenance mode — a bounded window in which the beacon cannot move the door
 // ---------------------------------------------------------------------------
@@ -779,31 +813,165 @@
 #define RELAY_PULSE_GAP_MS 1000
 #endif
 
-// How long YOUR door takes to travel from fully open to fully closed, in ms.
-// 0 means "not measured" and disables the checks below.
+// How long YOUR door takes to travel, in ms. 0 means "not measured".
 //
-// The firmware never waits for this — it has no position feedback and cannot
-// know when travel actually finishes. What it does with the number is announce
-// it: for this long after each actuation the status LED shows "moving" and the
-// annunciator ticks, and when it expires the annunciator plays its done chime.
-// That is a TIMER, not a measurement. It will chime at a door stuck halfway.
+// This is the number the whole verification path is built on, so it is worth
+// being exact about what it does:
 //
-// It also exists because two other settings are only sensible in relation to
-// it, and getting them wrong produces a door that visibly starts moving and
-// then stops partway:
+//   * it is the deadline for arrival. With limit switches fitted, a travel that
+//     does not reach its end within this (plus TRAVEL_GRACE_MS) is a STALL —
+//     logged, sounded, and for a close, reversed. See petdoor/actuator.h.
+//   * it drives the announcement. For this long the status LED shows "moving"
+//     and the annunciator ticks.
+//   * with no switches fitted it is ONLY the announcement, and the "arrived"
+//     chime is a stopwatch expiring. It will chime at a door stuck halfway.
 //
-//   MIN_ACTUATION_INTERVAL_MS  must be >= travel time, or the firmware can
-//                              command a reversal while the door is still
-//                              moving. Most controllers treat a second command
-//                              mid-travel as "stop".
-//   RELAY_PULSE_MS             only needs to exceed travel time if your motor
-//                              has no limit switches and you are driving it
-//                              directly. See docs/WIRING.md.
+// At 0 the firmware does not verify and does not announce, because it has not
+// been told how long to wait. That is the default, and it is deliberately not
+// a guess: a travel time too short reads every good travel as a stall, and
+// with a close that means reversing a door that was closing perfectly well.
 //
-// Measure it with a stopwatch: `o`, wait for it to settle, `x`, and time the
-// close. The reference build measures ~15 s.
+// OPEN AND CLOSE ARE SEPARATE, and on a mounted door they are not equal.
+// Gravity assists one direction and opposes the other: measured flat, the
+// reference door took 12,180 ms to open and 12,704 ms to close, and mounted
+// upright those two diverge further. Measure both.
+//
+// Measure them in service rather than with a stopwatch: `s` reports the
+// duration of the last verified travel in each direction, and `calibrate`
+// times both and adopts the result. See docs/TUNING.md.
 #ifndef DOOR_TRAVEL_MS
 #define DOOR_TRAVEL_MS 0
+#endif
+
+// Per-direction overrides. Both default to DOOR_TRAVEL_MS, so a build that
+// only knows one number still works and a build that knows two says so.
+#ifndef DOOR_TRAVEL_OPEN_MS
+#define DOOR_TRAVEL_OPEN_MS DOOR_TRAVEL_MS
+#endif
+
+#ifndef DOOR_TRAVEL_CLOSE_MS
+#define DOOR_TRAVEL_CLOSE_MS DOOR_TRAVEL_MS
+#endif
+
+// How much longer than the measured travel to wait before calling it a stall.
+// A door is slower in January, slower with a bird leaning on it, and slower
+// as the mechanism wears. This is the margin that keeps those from reading as
+// failures — and keeping it as a separate number means the travel time stays
+// an honest measurement rather than a measurement with padding baked in.
+#ifndef TRAVEL_GRACE_MS
+#define TRAVEL_GRACE_MS 3000
+#endif
+
+// The deadline for arrival when limit switches ARE fitted but the travel time
+// is not yet known. With a switch at the destination the door does not need a
+// travel time to know it has arrived — the switch says so — so it waits, and
+// the duration it waited becomes the measurement. This only bounds how long
+// that wait may be before it is called a stall.
+//
+// It is generous on purpose: being wrong in this direction costs a slow stall
+// report on a door nobody has calibrated, and being wrong in the other
+// direction reports a perfectly good travel as a failure.
+#ifndef ARRIVAL_WAIT_MAX_MS
+#define ARRIVAL_WAIT_MAX_MS 60000
+#endif
+
+// ---- waking the vendor controller (see docs/REQUIREMENTS.md F1) ------------
+//
+// The ESP32 does not drive the motor. It closes a relay across a button on a
+// commercial door controller, and that controller SLEEPS: the first press
+// after a long idle is always swallowed, and the second works. Confirmed 4 out
+// of 4 after 180 s idle, while six consecutive presses seconds apart all
+// worked.
+//
+// A coop door is idle for hours between uses, so nearly every real actuation
+// is a cold one — which is why this is not an edge case to tolerate but the
+// normal path to design for.
+//
+// The fix is a WAKE PRESS: when the controller is believed asleep, press once
+// to wake it, then press again to actuate. What makes that safe rather than a
+// second way to break things is that the two presses are not sent blind. A
+// press that lands on an awake controller MOVES THE DOOR, and a second press
+// mid-travel reads as STOP on this hardware — the exact failure the wake press
+// would otherwise introduce. So after the wake press the firmware watches for
+// WAKE_PROBE_MS, and if the door started moving it does not press again.
+//
+// WAKE_IDLE_MS is how long since the last press before the controller is
+// believed asleep. Below it, one press; above it, wake then press.
+#ifndef WAKE_IDLE_MS
+#define WAKE_IDLE_MS 30000
+#endif
+
+// How long to watch after a wake press before deciding it did nothing.
+// Motion onset measured at ~1300 ms after a press, so this must be comfortably
+// past that or a press that DID take would be followed by one that stops the
+// door. It is also dead time added to every cold actuation, so it should not be
+// much longer than it needs to be.
+#ifndef WAKE_PROBE_MS
+#define WAKE_PROBE_MS 1800
+#endif
+
+// How long to wait for the door to start moving after the actuating press.
+// Only meaningful with a vibration sensor or a limit switch at the starting
+// end — with neither, nothing can observe a start and this is unused.
+#ifndef MOTION_ONSET_MS
+#define MOTION_ONSET_MS 2500
+#endif
+
+// A press that demonstrably moved nothing may be retried straight away: the
+// door is still where it was, nothing is trapped, and the failure is
+// distinguishable from a stall. This bounds how many times.
+#ifndef SWALLOW_RETRY_LIMIT
+#define SWALLOW_RETRY_LIMIT 2
+#endif
+
+// ---- when a close fails ----------------------------------------------------
+//
+// A door that stops partway while CLOSING is the one case this project exists
+// to prevent, because that is exactly when something may be under it. So a
+// stalled close fails OPEN: the firmware reverses its own command rather than
+// pressing again.
+//
+// Retrying the close is then delayed by MINUTES, not seconds — long enough
+// that whatever blocked it has moved or been noticed — and limited to
+// CLOSE_RETRY_LIMIT attempts. After that the door stays open and says so, on
+// the console, in the log, in the status line and on the LED. An open door is
+// an inconvenience; a door that keeps driving onto an obstruction is not.
+#ifndef CLOSE_RETRY_DELAY_MS
+#define CLOSE_RETRY_DELAY_MS 300000
+#endif
+
+#ifndef CLOSE_RETRY_LIMIT
+#define CLOSE_RETRY_LIMIT 3
+#endif
+
+// How long to leave a direction alone after an attempt in it achieved nothing.
+//
+// Without this the door loops. Nothing moved, so nothing was committed, so the
+// condition that asked for the travel is still true, so the control task asks
+// again on its next tick — ten times a second, pressing a relay each time. The
+// internal retry (SWALLOW_RETRY_LIMIT) is the fast one and has already been
+// spent by the time this applies; this is the slow one, for "that did not work
+// and doing it all again immediately will not work either".
+//
+// Per direction, so a close that achieved nothing never delays the open that
+// follows it. Opening is the safe direction and is never held back by this.
+#ifndef FAILED_ATTEMPT_COOLDOWN_MS
+#define FAILED_ATTEMPT_COOLDOWN_MS 30000
+#endif
+
+// ---- travel-time calibration (see docs/REQUIREMENTS.md R18) ----------------
+//
+// `calibrate` times a travel in each direction and adopts the result. It
+// begins with a QUIET PERIOD during which nothing is commanded and no limit
+// switch may change, because the vendor controller has modes of its own and
+// has been observed driving the door with nothing commanding it. A measurement
+// taken while that is happening is not a measurement of anything.
+//
+// 90 s because that is the quiet period that recorded zero movement once those
+// modes were disabled. Shorter risks certifying a door that simply had not got
+// round to moving yet.
+#ifndef CAL_QUIET_MS
+#define CAL_QUIET_MS 90000
 #endif
 
 // ---- position sensors ------------------------------------------------------
