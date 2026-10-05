@@ -21,6 +21,24 @@
 // practice that means the log reaches your endpoint a minute or two after the
 // animal leaves, rather than at some fixed hour or during an approach.
 //
+// THREE DELIBERATE EXCEPTIONS, each overriding the gate above:
+//
+//   * the heartbeat, so a door whose animal stays in all weekend still calls
+//     in and still collects commands;
+//   * a FAILED travel — a stall or a door that never moved — because those are
+//     read in a hurry and waiting half an hour to report one is useless;
+//   * a COMPLETED travel, floored at DOOR_REPORT_MIN_MS. "Is the door open?"
+//     is the question a dashboard exists to answer, and the gate answered it
+//     worst exactly when it mattered: an open door is not idle, so the status
+//     could sit unreported until the heartbeat while the page still showed the
+//     door as it had been before it moved. The burst lands at the END of a
+//     travel, when presence has long been settled, which is what makes it
+//     affordable; the floor is what stops a flapping door holding the radio.
+//
+// Note what is NOT an exception: an arrival, a departure, or a fix being lost.
+// Those happen while the animal is approaching, which is the one moment the
+// radio must stay with BLE.
+//
 // The upload runs in its own task so a slow association cannot stall door
 // decisions, and it aborts if the animal returns mid-flush.
 

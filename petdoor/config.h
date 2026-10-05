@@ -959,6 +959,23 @@
 #define FAILED_ATTEMPT_COOLDOWN_MS 30000
 #endif
 
+// The floor between immediate "the door moved" reports to the server.
+//
+// A completed travel changes the one thing a dashboard exists to show, so it is
+// uploaded at once rather than waiting for the door to be idle. That overrides
+// the idle gate deliberately — see wifi_logger.h for why that gate exists — and
+// a forced flush bypasses the upload interval ENTIRELY, so without a floor a
+// door flapping at the threshold would put the radio up every half minute for
+// as long as it lasted, which is precisely the starvation the gate prevents.
+//
+// A minute is longer than any realistic open/close cycle (a close needs the
+// full exit dwell of confirmed absence first), so in normal use this never
+// bites. When it does bite, nothing is lost: the state still goes out with the
+// next ordinary upload.
+#ifndef DOOR_REPORT_MIN_MS
+#define DOOR_REPORT_MIN_MS 60000
+#endif
+
 // ---- travel-time calibration (see docs/REQUIREMENTS.md R18) ----------------
 //
 // `calibrate` times a travel in each direction and adopts the result. It

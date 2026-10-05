@@ -2284,20 +2284,50 @@ void reportOutcome(const Actuator::Result &r) {
   // actually believes it got there — OUT_NO_MOVE and OUT_STALLED have their own
   // entries above, and recording an OPEN for a travel that failed is exactly
   // the lie this rebuild exists to stop telling.
-  if (r.outcome == Actuator::OUT_ARRIVED || r.outcome == Actuator::OUT_ASSUMED ||
-      r.outcome == Actuator::OUT_UNTIMED) {
+  const bool committed = (r.outcome == Actuator::OUT_ARRIVED ||
+                          r.outcome == Actuator::OUT_ASSUMED ||
+                          r.outcome == Actuator::OUT_UNTIMED);
+  if (committed) {
     EventLog::record(r.target == DOOR_OPEN ? LOG_OPEN : LOG_CLOSE,
                      static_cast<uint8_t>(r.source), g_tracker.filteredRssi(),
                      static_cast<int16_t>(r.flags));
   }
 
 #if PETDOOR_ENABLE_WIFI
-  // Anything other than an ordinary arrival is worth a radio burst now rather
-  // than at the next natural upload. These are the entries somebody is going
-  // to be reading in a hurry.
   if (r.outcome == Actuator::OUT_NO_MOVE || r.outcome == Actuator::OUT_STALLED) {
+    // A failure goes out unconditionally. These are rare, and they are the
+    // entries somebody will be reading in a hurry.
     publishStatusLines();
     WifiLogger::requestFlushNow();
+  } else if (committed) {
+    // A COMPLETED TRAVEL also goes out at once, because "is the door open?" is
+    // the one question a dashboard exists to answer, and the old behaviour
+    // answered it worst exactly when it mattered: an open door is not idle, so
+    // the status could sit unreported until the half-hour heartbeat while the
+    // page showed the door as it had been before it moved.
+    //
+    // This overrides the idle gate on purpose. wifi_logger.h argues against
+    // uploading per event, and that argument is sound — the radio is shared and
+    // events happen when the animal is AT THE DOOR. Two things make this one
+    // exception affordable:
+    //
+    //   * it lands at the END of a travel. Presence was settled long before;
+    //     for an open the animal is already through the doorway, and for a
+    //     close it has been gone for the whole exit dwell. A lost sample here
+    //     can at worst delay noticing a DEPARTURE, which has the exit dwell to
+    //     absorb it, and `!near` cancels a pending close regardless.
+    //   * it is floored at DOOR_REPORT_MIN_MS. A forced flush ignores the
+    //     upload interval completely, so without that floor a door flapping at
+    //     the threshold would hold the radio up indefinitely.
+    static uint32_t lastReportMs = 0;
+    static bool reportedOnce = false;
+    const uint32_t nowMs = millis();
+    if (!reportedOnce || (nowMs - lastReportMs) >= DOOR_REPORT_MIN_MS) {
+      reportedOnce = true;
+      lastReportMs = nowMs;
+      publishStatusLines();
+      WifiLogger::requestFlushNow();
+    }
   }
 #endif
 }
