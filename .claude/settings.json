@@ -17,10 +17,42 @@
       "Bash(grep:*)",
       "Bash(rg:*)",
       "Bash(ls:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(wc:*)",
+      "Bash(sed:*)",
+      "Bash(awk:*)",
+      "Bash(sort:*)",
+      "Bash(uniq:*)",
+      "Bash(xxd:*)",
+      "Bash(od:*)",
+      "Bash(diff:*)",
+      "Bash(git show:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git merge:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git symbolic-ref:*)",
+      "Bash(git remote:*)",
+      "Bash(gh run list:*)",
+      "Bash(gh run view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh auth status:*)",
+      "Bash(stty:*)",
+      "Bash(ls /dev/cu.*:*)",
+      "Bash(lsof /dev/cu.*:*)",
+      "Bash(python3:*)",
+      "Bash(chmod:*)",
+      "Bash(mktemp:*)"
     ],
     "deny": [
-      "Read(./petdoor/secrets.h)"
+      "Read(./petdoor/secrets.h)",
+      "Bash(arduino-cli upload:*)",
+      "Bash(/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli upload:*)"
     ]
   }
 }
