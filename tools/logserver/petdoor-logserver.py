@@ -1774,6 +1774,17 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
+    # Line-buffer stdout. In a container stdout is a pipe, so Python
+    # block-buffers it and the startup banner — ports, key state, the web-control
+    # warning, the watchdog line — sits unflushed for hours while the request log
+    # on stderr appears immediately. The result is a server that looks like it
+    # never printed its configuration. It cost a deployment's worth of doubt
+    # about whether the watchdog thread had started at all.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:                                   # noqa: BLE001
+        pass                                            # not a tty-like stream
+
     global ALLOW_WEB_CONTROL
     ap = argparse.ArgumentParser(description="PetDoor log server")
     ap.add_argument("--port", type=int, default=8080)
