@@ -138,6 +138,9 @@ SENSOR_FAULT = {
     3: ("the vibration sensor is firing with the door standing still",
         "sensitivity screw too far in, or mounted where it feels the world "
         "rather than the door"),
+    5: ("the vibration sensor produced no edges at all during an actuation",
+        "unplugged, a broken wire, or no power — even a badly mounted sensor "
+        "hears the relay click, so zero means no signal path"),
     4: ("the door ran a full travel and never arrived",
         "the limit switch at that end is not making — most likely a magnet "
         "that has come off or drifted out of its narrow capture range"),

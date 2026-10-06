@@ -101,6 +101,13 @@ struct Result {
   uint16_t flags;       // LogActuationFlags
   uint32_t measuredMs;  // press to arrival, 0 unless the outcome is OUT_ARRIVED
   uint8_t presses;      // how many button presses this attempt cost
+  // Every edge the vibration sensor produced during the attempt, INCLUDING the
+  // ones the blanking window discards. Deliberately raw: the blanked edges are
+  // the relay's own click, which is exactly the signal that proves the sensor
+  // is still electrically there. A connected-but-deaf sensor still hears the
+  // relay; a disconnected one reports literally nothing, and nothing is the one
+  // reading that cannot be explained by a door that simply did not move.
+  uint32_t vibrationRaw;
   uint8_t attempt;      // which close attempt it was, 0 for an open
   bool gaveUp;          // this stall exhausted the attempts; staying open
 };

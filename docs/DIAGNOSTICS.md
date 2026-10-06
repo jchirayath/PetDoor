@@ -545,6 +545,7 @@ One LED, in priority order — most urgent wins.
 | **Near-solid**, brief gap every 0.6 s | Door is **moving** |
 | **Brief blip** every 2 s | Door **CLOSED** |
 | **Double blip** every 2 s | Door is closed **and locked** — the collar may not open it |
+| **Two quick blips** every 2 s | **A sensor has failed.** The door is still deciding, but on evidence it can no longer trust. One fewer blip than "gave up" below, because from a distance they would otherwise look identical — and they mean opposite things: gave-up is a door that *knows* it has a problem, this is a door that has lost the ability to tell |
 | **Three quick blips** every 2 s | **Gave up closing.** Close attempts are exhausted and the door is staying open until somebody clears the way |
 | 1 Hz blink | No beacon configured, or never heard since boot |
 | **2 Hz flash** | **Beacon battery low** (see `BEACON_LOW_BATTERY_MV`) |
@@ -604,6 +605,7 @@ door is going.
 | **two long** low beeps | It **never moved**. The press was swallowed, or the door is jammed solid. Nothing is trapped — the door is still where it was |
 | **five fast** beeps | It **STALLED**: started and never arrived. A stalled *close* is reversed |
 | **long, then two short** | **Gave up** closing. The door is staying open until somebody clears the way |
+| **three short low blips**, repeating every 15 min | **A sensor has failed** — the only tune that repeats. See below |
 | **blip … pause … blip** | The door moved and **nothing commanded it**. A hand, the wind, or a mode on the door's own controller |
 | one long low buzz | **Refused**: the door is locked by hand, or refused for some other reason. Once per arrival, not repeatedly |
 | **two long** low beeps, well separated | **Refused by a SCHEDULED WINDOW.** "Not… now." The wide gap is what tells it from the two-long "never moved" above, which stutters |
@@ -641,6 +643,20 @@ tune has two equal beeps, which is what keeps "arrived" from being heard as a
 movement; the stall is a five-beep clatter at a 70 ms gap, well under every
 other tune's, so it reads as urgency rather than as a count; and nothing else
 in the set opens with an 800 ms beep, which is what makes "gave up" findable.
+
+**The sensor-fault reminder is the one exception to playing once**, and it is a
+considered one. A door that gave up is standing open where you can see it; a
+reed that stopped making looks like a perfectly ordinary door right up until the
+night it matters. A fault with no outward sign is the case where silence is the
+wrong default.
+
+It is kept sparse for exactly the reason the rule exists: three short low blips
+a quarter of an hour apart is a reminder, not an alarm, and it never becomes the
+thing somebody disconnects. It also never interrupts — if anything else is
+playing, or a travel is in flight, it waits for the next interval. Set
+`SENSOR_FAULT_BEEP_MS` to 0 to silence it; raise it if the door is near a
+bedroom window. There is deliberately no quiet-hours logic: a fault that stays
+silent until morning is a fault you learn about in the morning.
 
 "Gave up" plays **once**, not on a loop. The door reports that state
 continuously on its LED, in the log and in the uploaded status line — and a

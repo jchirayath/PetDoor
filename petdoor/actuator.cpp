@@ -27,6 +27,10 @@ bool g_originMade = false;
 // into the number travel-time tuning is read off.
 bool g_targetMadeAtStart = false;
 
+// The free-running edge counter when the attempt began, so the resolution can
+// report how many arrived during it — blanking and all.
+uint32_t g_vibRawAtStart = 0;
+
 uint16_t g_flags = 0;
 uint8_t g_presses = 0;
 uint8_t g_swallowRetries = 0;
@@ -210,6 +214,7 @@ void beginAttempt(DoorState target, ActuationSource src, uint32_t nowMs) {
   g_origin = g_door->state();
   g_originMade = Position::madeAt(g_origin);
   g_targetMadeAtStart = Position::madeAt(target);
+  g_vibRawAtStart = Vibration::pulses();
   g_flags = (src == SRC_FAILSAFE) ? LOGF_FAILSAFE : 0;
   g_presses = 0;
   g_swallowRetries = 0;
@@ -237,6 +242,7 @@ void resolve(Outcome outcome) {
   r.target = g_target;
   r.source = g_source;
   r.presses = g_presses;
+  r.vibrationRaw = Vibration::pulses() - g_vibRawAtStart;
   r.measuredMs = 0;
   r.attempt = 0;
   r.gaveUp = false;

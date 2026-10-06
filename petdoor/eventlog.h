@@ -115,6 +115,19 @@ enum SensorFault : uint8_t {
   // switch at that end is not making — a lost magnet or a broken wire — as
   // opposed to an obstruction, which stops the vibration too.
   SF_REED_MISSED = 4,
+  // The sensor produced NOT ONE EDGE across a whole actuation — relay pulses
+  // included. Unplugged, or its signal wire is broken.
+  //
+  // The only sensor fault diagnosable WITHOUT the other sensor, which is what
+  // makes it worth its own code: every other entry here needs something working
+  // to be checked against. A connected-but-deaf sensor still registers the
+  // relay's own click conducted through the structure — around a hundred edges
+  // a pulse on the reference door — so a flat zero is a missing signal path,
+  // not a stationary door.
+  //
+  // Found by unplugging one: it had been completely invisible, reading
+  // identically to a door that did not move.
+  SF_VIBRATION_DEAD = 5,
 };
 
 // Flags packed into a LOG_OPEN / LOG_CLOSE entry's `reserved` field. The entry

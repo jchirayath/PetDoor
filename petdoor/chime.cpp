@@ -90,6 +90,12 @@ const Step kGaveUp[] = {{600, 800}, {0, 250}, {600, 200}, {0, 250}, {600, 200}};
 // of the door asking a question rather than reporting a result.
 const Step kUncommanded[] = {{1500, 150}, {0, 450}, {1500, 150}};
 
+// "Something is wrong with me." Three short low blips with wide gaps — spaced
+// so it reads as deliberate rather than urgent, because it repeats and anything
+// urgent that repeats gets unplugged. Three distinguishes it from the two of
+// kUncommanded, and the low register from that tune's high one.
+const Step kSensorFault[] = {{440, 120}, {0, 350}, {440, 120}, {0, 350}, {440, 120}};
+
 // Three even beeps: long enough to hear, distinctive enough that you know the
 // buzzer is responding to you and not to the door.
 const Step kTest[] = {{2000, 150}, {0, 150}, {2000, 150}, {0, 150}, {2000, 150}};
@@ -125,6 +131,7 @@ Pattern patternFor(ChimeTune t) {
     case CHIME_STALLED:            return PETDOOR_TUNE(kStalled, false);
     case CHIME_GAVE_UP:            return PETDOOR_TUNE(kGaveUp, false);
     case CHIME_UNCOMMANDED:        return PETDOOR_TUNE(kUncommanded, false);
+    case CHIME_SENSOR_FAULT:       return PETDOOR_TUNE(kSensorFault, false);
     case CHIME_TEST:               return PETDOOR_TUNE(kTest, false);
     case CHIME_ACK_LOCK:           return PETDOOR_TUNE(kAckLock, false);
     case CHIME_ACK_UNLOCK:         return PETDOOR_TUNE(kAckUnlock, false);
@@ -283,6 +290,7 @@ const char *tuneName(ChimeTune t) {
     case CHIME_STALLED:            return "stalled";
     case CHIME_GAVE_UP:            return "gave-up";
     case CHIME_UNCOMMANDED:        return "uncommanded";
+    case CHIME_SENSOR_FAULT:       return "sensor-fault";
     case CHIME_TEST:               return "test";
     case CHIME_ACK_LOCK:           return "ack-lock";
     case CHIME_ACK_UNLOCK:         return "ack-unlock";

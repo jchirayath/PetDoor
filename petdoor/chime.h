@@ -104,6 +104,11 @@ enum ChimeTune : uint8_t {
   // A limit switch reported the door at an end that nothing commanded it to go
   // to. Two isolated blips — the sound of the door asking a question.
   CHIME_UNCOMMANDED,
+  // A sensor has been caught lying, and this is the only tune that REPEATS —
+  // sparsely, every SENSOR_FAULT_BEEP_MS. Three short low blips, well spaced:
+  // the door clearing its throat, not an alarm. See SENSOR_FAULT_BEEP_MS in
+  // config.h for why this one earns an exception to the play-once rule.
+  CHIME_SENSOR_FAULT,
 
   CHIME_TEST,     // once: prove the wiring, from the console or the server
 

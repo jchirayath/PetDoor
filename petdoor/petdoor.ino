@@ -76,10 +76,12 @@ bool g_beaconLowLatched = false;
 // console message, one log entry and one email — not one per travel.
 uint8_t g_sensorFault = 0;            // SensorFault, 0 = nothing wrong
 uint8_t g_vibSilentStrikes = 0;       // verified travels the vibration missed
+uint8_t g_vibDeadStrikes = 0;         // attempts that produced not one edge
 uint8_t g_reedMissedStrikes = 0;      // travels that ran and never arrived
 uint32_t g_vibIdleBaseline = 0;       // edge count when the door went quiet
 uint32_t g_vibIdleSinceMs = 0;
 bool g_vibIdleValid = false;
+uint32_t g_sensorFaultBeepMs = 0;     // when the reminder last sounded
 
 // Why a LOG_REFUSED entry exists, for the reasons that are not an
 // ActuationResult. Kept well clear of that enum so adding a refusal to it can
@@ -530,6 +532,20 @@ void printStatus(uint32_t nowMs) {
                     static_cast<unsigned long>(mOpen),
                     static_cast<unsigned long>(mClose));
     }
+  }
+  if (g_sensorFault != 0) {
+    // This was reaching the log, the email and the uploaded status, but not the
+    // one place somebody with a cable actually looks.
+    const char *what =
+        g_sensorFault == SF_REEDS_CONTRADICT ? "both limit switches made at once"
+        : g_sensorFault == SF_VIBRATION_SILENT ? "vibration felt nothing during a VERIFIED travel"
+        : g_sensorFault == SF_VIBRATION_NOISY ? "vibration firing with the door still"
+        : g_sensorFault == SF_REED_MISSED ? "the door ran and no limit switch saw it arrive"
+        : g_sensorFault == SF_VIBRATION_DEAD ? "the vibration sensor produced no edges at all"
+        : "unknown";
+    Con.printf("  !! SENSOR    : fault %u — %s\r\n", g_sensorFault, what);
+    Con.println(F("  !!             the door is deciding on evidence it can no"));
+    Con.println(F("  !!             longer trust. See docs/DIAGNOSTICS.md."));
   }
   if (Actuator::gaveUp()) {
     Con.printf("  !! GAVE UP   : %u close attempts stalled. The door is staying OPEN\r\n",
@@ -2420,6 +2436,38 @@ void reportOutcome(const Actuator::Result &r) {
       break;
   }
 
+  // ---- is the vibration sensor even connected? ----------------------------
+  //
+  // Checked FIRST, and without reference to the limit switches, because it is
+  // the one sensor fault that needs no second opinion. Not a single edge across
+  // a whole attempt — two to four relay pulses included — is a broken signal
+  // path: a sensor that is merely deaf, or mounted somewhere useless, still
+  // registers the relay's own click through the structure.
+  //
+  // This matters because an unplugged vibration sensor is otherwise INVISIBLE.
+  // It reads exactly like a door that did not move, so the door reports
+  // NO_MOVE, which is true of the evidence and says nothing about the sensor.
+  // One was unplugged during testing and went unnoticed through a whole
+  // actuation, three retries and a NO_MOVE verdict.
+  if (Vibration::enabled()) {
+    if (r.vibrationRaw == 0) {
+      if (++g_vibDeadStrikes >= SENSOR_FAULT_STRIKES) {
+        Con.printf("[sensor] !! %u actuations produced NOT ONE edge from the "
+                      "vibration sensor on GPIO %d.\r\n",
+                      g_vibDeadStrikes, Vibration::pin());
+        Con.println(F("[sensor] !! Even a badly mounted sensor hears the relay"));
+        Con.println(F("[sensor] !! click. Zero means no signal path at all —"));
+        Con.println(F("[sensor] !! unplugged, a broken wire, or no power to the"));
+        Con.println(F("[sensor] !! module. Until it is fixed the door cannot tell"));
+        Con.println(F("[sensor] !! a swallowed press from a door that moved."));
+        raiseSensorFault(SF_VIBRATION_DEAD, 0);
+      }
+    } else {
+      g_vibDeadStrikes = 0;
+      clearSensorFault(SF_VIBRATION_DEAD);
+    }
+  }
+
   // ---- the two sensors judging each other --------------------------------
   //
   // Only meaningful with both fitted, because each diagnosis uses the other as
@@ -2584,6 +2632,32 @@ void reportCalibration() {
   }
 }
 
+// Re-sound a latched sensor fault, sparsely.
+//
+// The only repeating tune in the firmware, and the reasoning is in config.h: a
+// door that gave up is standing open where you can see it, but a reed that
+// stopped making looks like a perfectly ordinary door until the night it
+// matters. Silence is the wrong default for a fault with no outward sign.
+//
+// Never interrupts. If anything else is playing — a travel, an arrival, a
+// refusal — this waits for the next interval rather than talking over the thing
+// that is happening right now.
+void updateSensorFaultBeep(uint32_t nowMs) {
+  if (SENSOR_FAULT_BEEP_MS == 0 || !Chime::enabled()) return;
+  if (g_sensorFault == 0) {
+    g_sensorFaultBeepMs = 0;          // re-arm, so a new fault sounds at once
+    return;
+  }
+  if (g_sensorFaultBeepMs != 0 &&
+      (nowMs - g_sensorFaultBeepMs) < SENSOR_FAULT_BEEP_MS) {
+    return;
+  }
+  if (Chime::playing() != CHIME_NONE || Actuator::busy()) return;
+  g_sensorFaultBeepMs = nowMs;
+  if (g_sensorFaultBeepMs == 0) g_sensorFaultBeepMs = 1;   // 0 means "never yet"
+  Chime::play(CHIME_SENSOR_FAULT);
+}
+
 void updateChime(uint32_t nowMs) {
   // Two rules, and nothing else: starting and ending a travel is the actuator's
   // business, and the outcome tune is reportOutcome()'s.
@@ -2624,6 +2698,13 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
     // is a job for the weekend, a door that has stopped closing is tonight's.
     const uint32_t t = nowMs % 2000;
     on = (t < 120) || (t > 240 && t < 360) || (t > 480 && t < 600);
+  } else if (g_sensorFault != 0) {
+    // TWO quick blips every 2 s. Deliberately one fewer than the three of
+    // "gave up" above, because the two conditions look identical from a
+    // distance otherwise — and they mean opposite things: gave-up is a door
+    // that knows it has a problem, this is a door that has stopped being able
+    // to tell. Sits above the battery flash: a flat collar is next week's job.
+    on = (nowMs % 2000) < 120 || ((nowMs % 2000) > 260 && (nowMs % 2000) < 380);
   } else if (beaconBatteryLow(nowMs)) {
     on = (nowMs / 250) % 2 == 0;  // 2 Hz: replace the beacon battery
   } else if (!BleScanner::isConfigured() || !BleScanner::targetEverSeen()) {
@@ -3549,6 +3630,7 @@ void controlTask(void *) {
     // Before updateLed(), which reads the latch this sets.
     reportBeaconBattery(now);
     updateVibrationNoise(now);
+    updateSensorFaultBeep(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);

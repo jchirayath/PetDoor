@@ -697,6 +697,28 @@
 #define VIBRATION_IDLE_WINDOW_MS 60000
 #endif
 
+// How often to re-sound a latched sensor fault. 0 silences the repeat.
+//
+// This is the one place the annunciator deliberately repeats itself, and it is
+// a considered exception rather than an oversight. chime.cpp argues — correctly
+// — that a buzzer which repeats all night becomes an alarm, and an alarm nobody
+// can stand gets unplugged, which loses every future message with it. The
+// "gave up" tune plays once for exactly that reason.
+//
+// A sensor fault is different in one respect that changes the answer: it is
+// INVISIBLE AT THE DOOR. A door that gave up is standing open where you can see
+// it; a reed that stopped making looks like a perfectly normal door right up
+// until the night it matters. So the reminder is sparse — a quarter of an hour
+// apart, three short low blips — which is a reminder rather than an alarm, and
+// long enough that it never becomes the thing somebody disconnects.
+//
+// Raise it if the door is near a bedroom window. There is no quiet-hours logic:
+// the schedule module knows the time, so it could have some, but a fault that
+// stays silent until morning is a fault you find out about in the morning.
+#ifndef SENSOR_FAULT_BEEP_MS
+#define SENSOR_FAULT_BEEP_MS 900000
+#endif
+
 // ---------------------------------------------------------------------------
 // Maintenance mode — a bounded window in which the beacon cannot move the door
 // ---------------------------------------------------------------------------
