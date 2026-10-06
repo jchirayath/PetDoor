@@ -75,6 +75,19 @@ enum LogEventType : uint8_t {
   // followed it. Recorded because the ratio between those two is the only
   // evidence available for whether WAKE_IDLE_MS is set anywhere near right.
   LOG_WAKE = 13,
+  // The beacon's own battery crossed BEACON_LOW_BATTERY_MV, as reported in its
+  // Eddystone-TLM frames. detail = 1 when it went low, 0 when it recovered;
+  // `reserved` carries the millivolts.
+  //
+  // Worth its own event because of what a flat beacon means here: the door
+  // refuses to act until it has heard the collar once since boot (invariant 5),
+  // so a battery that dies overnight does not shut the door — it stops the door
+  // working at all, silently, and the animal is outside. This is the warning
+  // that gives you days rather than a surprise.
+  //
+  // Latched with a recovery margin, so a cell sitting on the threshold produces
+  // one entry and not a stream of them.
+  LOG_BEACON_LOW = 14,
 };
 
 // Flags packed into a LOG_OPEN / LOG_CLOSE entry's `reserved` field. The entry

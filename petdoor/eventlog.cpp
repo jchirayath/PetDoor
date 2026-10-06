@@ -118,6 +118,7 @@ const char *typeName(uint8_t type) {
     case LOG_RETRY: return "RETRY";
     case LOG_GAVE_UP: return "GAVE_UP";
     case LOG_WAKE: return "WAKE";
+    case LOG_BEACON_LOW: return "BEACON_LOW";
     case LOG_MAINT: return "MAINT";
     case LOG_CONSOLE: return "CONSOLE";
     case LOG_NO_MOVEMENT: return "NO_MOVE";

@@ -69,7 +69,7 @@ char g_nonce[33] = {0};
 //
 // Filled by the control task, which owns the tracker and the door; the WiFi
 // task only sends the string it was handed.
-char g_statusLine[352] = {0};   // grows with every live field the dashboard shows
+char g_statusLine[416] = {0};   // grows with every live field the dashboard shows
 
 // Seeded from config.h, then overridable at runtime and from NVS.
 uint32_t g_settleMs = WIFI_IDLE_SETTLE_MS;

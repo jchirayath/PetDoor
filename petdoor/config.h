@@ -341,6 +341,18 @@
 #define BEACON_LOW_BATTERY_MV 2400
 #endif
 
+// How far the battery must climb back ABOVE the threshold before the warning
+// clears. A coin cell's reading is not monotonic — it sags under the beacon's
+// transmit pulse and recovers between them, and it rises with temperature, so a
+// cell sitting at the threshold crosses it repeatedly. Without this margin that
+// is a latch that flaps, which means a log entry and an email per flap.
+//
+// Only the LATCH uses this. The reported millivolts are always whatever the
+// beacon last said.
+#ifndef BEACON_LOW_BATTERY_CLEAR_MV
+#define BEACON_LOW_BATTERY_CLEAR_MV 150
+#endif
+
 // ===========================================================================
 // 4. BLE SCANNING
 // ===========================================================================

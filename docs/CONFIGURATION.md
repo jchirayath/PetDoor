@@ -152,6 +152,7 @@ How near is "near". See [TUNING.md](TUNING.md) for the procedure.
 | `RSSI_FAST_WINDOW` | `1` | Median width for the **open** decision. Odd, **1–15** — 1 is allowed here, because the open path is confirmed by `ENTER_CONFIRM_MS` rather than by smoothing. |
 | `RSSI_FAST_ALPHA` | `0.9f` | Smoothing for the **open** decision. Higher = faster. |
 | `PATH_LOSS_EXPONENT` | `2.5f` | For the displayed distance estimate only: ~2.0 open air, 2.5–3.0 through a coop wall, 3.0+ cluttered. **Never affects the open/close decision**, which uses RSSI directly. |
+| `BEACON_LOW_BATTERY_CLEAR_MV` | `150` | How far the battery must climb back above the threshold before the warning clears. A coin cell's reading is not monotonic — it sags under each transmit pulse and recovers between them, and it rises with temperature — so a cell sitting on the threshold crosses it repeatedly. Without this margin that is a latch that flaps, and a flapping latch means a log entry and an email per flap. Only the latch uses it; the reported millivolts are always whatever the beacon last said. |
 | `BEACON_LOW_BATTERY_MV` | `2400` | Beacon battery level (from Eddystone-TLM) at or below which the status LED flashes at 2 Hz. `0` disables the warning. |
 | `BEACON_MEASURED_POWER_DBM` | `-59` | Fallback calibrated RSSI at 1 m, used for the distance display when the beacon does not advertise one. iBeacon frames carry this; **Eddystone and sensor tags do not** and show `?` without it. Set to `0` to go back to `?`. Display only. |
 

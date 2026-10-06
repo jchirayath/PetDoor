@@ -114,6 +114,11 @@ EVENT_LABEL = {
     # are exhausted and the door is staying open until a person deals with it.
     "GAVE_UP": "GAVE UP closing",
     "WAKE": "woke the controller",
+    # The beacon's own battery, from its Eddystone-TLM frames. Worth surfacing
+    # because of what a flat one does: the door refuses to act until it has
+    # heard the collar once since boot, so a dead beacon does not shut the door
+    # — it stops the door working, quietly, with the animal outside.
+    "BEACON_LOW": "beacon battery",
 }
 
 # What a door actuation's `detail` means: ActuationSource in petdoor/door.h.
@@ -518,8 +523,15 @@ EMAIL_SUNK = "#F1F4F7"
 EMAIL_ACCENT = {
     "calm": "#2A9D8F",    # teal: something happened, nothing is wrong
     "door": "#E9A23B",    # amber: the door was asked to move
+    "warn": "#E9A23B",    # amber: act within days; nothing is broken yet
     "alert": "#C4453B",   # red: somebody should look at this today
 }
+# "door" and "warn" are the same amber on purpose. They mean different things —
+# one is an actuation, the other is a battery going flat — and keeping separate
+# keys means either can be recoloured without dragging the other with it. An
+# unknown accent falls back to "calm" silently, which is why a new one is added
+# here rather than passed in hopefully: a low battery rendered teal reads as
+# "nothing is wrong".
 LOGO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "petdoor-logo.png")
 
@@ -887,6 +899,36 @@ def notify_events(device, rows):
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for console reject: {why}\n")
 
+        # The beacon's battery went low. The second event here that earns a mail,
+        # and it earns it for an unobvious reason: a flat beacon does NOT shut
+        # the door. The firmware refuses to act until it has heard the collar
+        # once since boot, so a cell that dies overnight leaves the door stuck
+        # wherever it was, with the animal on the wrong side and nothing
+        # obviously broken. You want days of notice, and a coin cell gives them.
+        #
+        # Safe to mail because the firmware latches with a recovery margin and
+        # INSERT OR IGNORE dedupes the ring: one crossing, one row, one message.
+        elif r["type"] == "BEACON_LOW" and r["detail"] == 1:
+            mv = r["src"] if "src" in r.keys() and r["src"] else None
+            ok, why = send_notification(
+                f"beacon battery low on {device}",
+                title="The beacon's battery is going flat",
+                lede="The door's beacon reported a low battery. Replace the "
+                     "cell in the next few days.",
+                rows=[("door", device),
+                      ("battery", f"{mv} mV" if mv else "below the threshold"),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="A flat beacon does not close the door on anything — the "
+                     "door will not act at all until it has heard the collar "
+                     "once since starting up. What it does instead is stop "
+                     "working, without looking broken, which is why this is "
+                     "worth an email rather than a line in a log. A CR2032 "
+                     "reads about 3000 mV fresh.",
+                cta_label="Open the dashboard",
+                accent="warn")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for beacon battery: {why}\n")
+
 
 def parse_csv(text):
     rows = []
@@ -995,7 +1037,7 @@ def render():
 
     cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b",
            "NO_MOVE": "b", "STALLED": "b", "UNCOMMANDED": "b", "GAVE_UP": "b",
-           "RETRY": "b", "WAKE": "s"}
+           "RETRY": "b", "WAKE": "s", "BEACON_LOW": "b"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -1037,6 +1079,15 @@ def render():
         elif r["type"] == "WAKE":
             detail = ("the wake press moved the door by itself"
                       if r["detail"] == 1 else "a wake press was needed")
+        elif r["type"] == "BEACON_LOW":
+            # The millivolts ride in the spare field; detail is the direction.
+            mv = r["src"] if "src" in r.keys() and r["src"] else None
+            where = f" ({mv} mV)" if mv else ""
+            if r["detail"] == 1:
+                detail = ('<strong style="color:var(--bad)">'
+                          f"LOW{where} — replace the beacon battery</strong>")
+            else:
+                detail = f"back above the threshold{where}"
         elif r["type"] == "NO_MOVE":
             # The relay fired and nothing moved. Louder than STALLED, which at
             # least means the door tried.

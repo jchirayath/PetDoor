@@ -66,6 +66,12 @@ DoorState g_lastObserved = DOOR_UNKNOWN;
 bool g_sensorFaultAnnounced = false;
 Actuator::CalState g_lastCalState = Actuator::CAL_OFF;
 
+// The beacon's battery, as IT reports it in Eddystone-TLM. -1 until a frame
+// carrying telemetry arrives; many beacons never send one, and iBeacon-only
+// modes never do, so "no reading" is the normal state rather than a fault.
+int32_t g_beaconBatteryMv = -1;
+bool g_beaconLowLatched = false;
+
 // Why a LOG_REFUSED entry exists, for the reasons that are not an
 // ActuationResult. Kept well clear of that enum so adding a refusal to it can
 // never silently re-label history on the dashboard.
@@ -1974,16 +1980,63 @@ void handleSerial(uint32_t nowMs) {
 // Door state is shown here rather than by pulsing a relay: a relay's indicator
 // is driven by its coil, so "flashing" one would energise the motor and
 // physically move the door. See docs/SAFETY.md.
+// Is the beacon's battery low? Reads the LATCH, not the instantaneous value.
+//
+// It used to compare the live millivolts on every call, which meant the LED and
+// the event log could disagree inside one tick: a cell sitting on the threshold
+// sags under each transmit pulse and recovers between them, so the LED flickered
+// between "low" and "fine" while nothing was logged. One latch, updated once a
+// tick by reportBeaconBattery(), is what makes the LED, the log, the upload and
+// the console all say the same thing.
 bool beaconBatteryLow(uint32_t nowMs) {
+  (void)nowMs;
+  return g_beaconLowLatched;
+}
+
+// Watches the beacon's self-reported battery and latches a warning.
+//
+// THIS ONLY WORKS AT ALL BECAUSE OF THE NUL FIX. Eddystone TLM service data
+// begins 20 00, and the BLE adapter used to convert it through c_str(), which
+// stops at the first NUL — so telemetry never decoded, batteryMv was never set,
+// and this warning was inert for the whole life of the feature. See
+// tests/host/README.md.
+//
+// Deliberately does NOT force an upload. A flat coin cell gives days of
+// warning, so it is not worth a radio burst at a moment the animal may be at
+// the door — the entry is in NVS immediately and reaches the server with the
+// next ordinary upload, which is at most WIFI_HEARTBEAT_MS away. Compare the
+// stall path, which does force one, because that is minutes-matter.
+void reportBeaconBattery(uint32_t nowMs) {
 #if BEACON_LOW_BATTERY_MV > 0
   EddystoneTlm tlm;
   uint32_t age = 0;
-  if (!BleScanner::targetTelemetry(tlm, age, nowMs)) return false;
-  if (tlm.batteryMv == 0) return false;  // mains powered, not a fault
-  return tlm.batteryMv <= BEACON_LOW_BATTERY_MV;
+  if (!BleScanner::targetTelemetry(tlm, age, nowMs)) return;  // never reported one
+  // 0 mV is a mains-powered beacon saying so, not a flat one. beacon.h says so.
+  if (tlm.batteryMv == 0) return;
+
+  g_beaconBatteryMv = tlm.batteryMv;
+
+  if (!g_beaconLowLatched && tlm.batteryMv <= BEACON_LOW_BATTERY_MV) {
+    g_beaconLowLatched = true;
+    Con.printf("[batt] !! beacon battery LOW: %u mV (warn at %d mV)\r\n",
+                  tlm.batteryMv, BEACON_LOW_BATTERY_MV);
+    Con.println(F("[batt] !! Replace it soon. A beacon that dies does NOT shut"));
+    Con.println(F("[batt] !! the door — the door refuses to act until it has"));
+    Con.println(F("[batt] !! heard the collar once since boot — but it stops"));
+    Con.println(F("[batt] !! working, and the animal is on the wrong side of it."));
+    EventLog::record(LOG_BEACON_LOW, 1, g_tracker.filteredRssi(),
+                     static_cast<int16_t>(tlm.batteryMv));
+  } else if (g_beaconLowLatched &&
+             tlm.batteryMv >= BEACON_LOW_BATTERY_MV + BEACON_LOW_BATTERY_CLEAR_MV) {
+    // A fresh cell, or the old one warming up. The margin is what stops this
+    // pair of entries repeating all day.
+    g_beaconLowLatched = false;
+    Con.printf("[batt] beacon battery back up: %u mV\r\n", tlm.batteryMv);
+    EventLog::record(LOG_BEACON_LOW, 0, g_tracker.filteredRssi(),
+                     static_cast<int16_t>(tlm.batteryMv));
+  }
 #else
   (void)nowMs;
-  return false;
 #endif
 }
 
@@ -2076,11 +2129,12 @@ void updatePosition(uint32_t nowMs) {
 // dashboard shows the old value while insisting the command succeeded.
 void publishStatusLines() {
 #if PETDOOR_ENABLE_WIFI
-  char line[352];
+  char line[416];
   snprintf(line, sizeof(line),
            "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
            "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s "
-           "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s",
+           "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
+           "batt=%ld battlow=%d",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -2121,7 +2175,13 @@ void publishStatusLines() {
            static_cast<unsigned long>(Actuator::measuredMs(DOOR_CLOSED)),
            Actuator::calState() == Actuator::CAL_OFF ? "-"
                : Actuator::calibrating() ? "running"
-               : Actuator::calState() == Actuator::CAL_DONE ? "done" : "failed");
+               : Actuator::calState() == Actuator::CAL_DONE ? "done" : "failed",
+           // The beacon's own battery. -1 means it has never sent telemetry,
+           // which is the normal state for an iBeacon-only beacon rather than a
+           // fault — so the dashboard must render it as "not reported" and not
+           // as a flat cell. 0 would be a beacon saying it is mains powered.
+           static_cast<long>(g_beaconBatteryMv),
+           g_beaconLowLatched ? 1 : 0);
   WifiLogger::setStatusLine(line);
 
   // Every tunable the remote channel can change, so the dashboard's
@@ -3350,6 +3410,8 @@ void controlTask(void *) {
       while (Actuator::consumeResult(res)) reportOutcome(res);
     }
     reportCalibration();
+    // Before updateLed(), which reads the latch this sets.
+    reportBeaconBattery(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);

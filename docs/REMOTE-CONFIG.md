@@ -349,7 +349,19 @@ Every upload now carries a status line, and `--doors` shows it:
     commands   : accepted
     sees       : rssi=-63 raw=-63 dist=1.4 present=1 door=OPEN gap=2087
                  samples=1246 adv=62845 weak=9 heap=138420 up=676
+                 act=idle gaveup=0 retry=0 mopen=10203 mclose=11229
+                 batt=2890 battlow=0
 ```
+
+Three groups worth knowing about in there:
+
+| Key | Means |
+|---|---|
+| `act=` | what the actuation path is doing — `idle`, `waking`, `waiting to move`, `travelling` |
+| `gaveup=1` | close attempts are exhausted and the door is **staying open on purpose**. The one field that distinguishes a deliberate open door from a dead one |
+| `mopen=` / `mclose=` | the duration of the last **verified** travel each way. Compare against the configured pair to spot a door getting slower |
+| `batt=` | the beacon's own battery in mV. **`-1` means it has never reported any** — normal for an iBeacon-only beacon, not a fault. `0` means the beacon said it is mains powered |
+| `battlow=1` | the low-battery latch is set. The server also emails on the crossing |
 
 `push to` is the door's **own** address, which it now reports itself. The server
 sees only whatever last hop connected — behind a reverse proxy that is the

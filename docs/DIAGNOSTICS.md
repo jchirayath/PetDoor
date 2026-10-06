@@ -356,6 +356,7 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 | `GAVE_UP` | Close attempts exhausted. `detail` is how many. **The door is staying open until a person deals with it** |
 | `UNCOMMANDED` | A switch reported the door at an end that nothing commanded it to. `detail` is which end |
 | `RETRY` | A press was repeated because the previous one moved nothing. `detail` is which attempt |
+| `BEACON_LOW` | The beacon's **own battery** crossed the threshold. `detail` 1 = went low, 0 = recovered; the spare field carries the millivolts. Latched with a recovery margin, so one crossing is one entry. **This is the event that gives you days of notice** — see below |
 | `WAKE` | Recorded **only** when a wake press turned out to move the door by itself — the near-miss worth counting. The ordinary case is carried as a flag on the actuation instead, so the ring is not filled with it |
 | `MAINT` | A maintenance window started, ended, or expired |
 | `CONSOLE` | The network console: attached, refused, or a wrong password |
@@ -364,6 +365,21 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 `REFUSED` is the one worth knowing about: it is what explains a door that did
 not move when you expected it to. Repeats are collapsed, so a boot-grace window
 logs once rather than sixteen times.
+
+**Why `BEACON_LOW` matters more than it looks.** A flat beacon does **not** shut
+the door on anything: the firmware refuses to act until it has heard the collar
+once since boot (invariant 5), so a cell that dies overnight leaves the door
+wherever it was, with the animal on the wrong side and nothing obviously broken.
+It stops the door *working* rather than making it dangerous — which is exactly
+the kind of failure nobody notices until it matters. The log server also emails
+on this one.
+
+It only works if your beacon sends **Eddystone-TLM** frames. Many beacons never
+do, and an iBeacon-only mode never does, so "no reading" is normal rather than a
+fault — `s` says `not reported` and the uploaded status carries `batt=-1`. And
+note it reported nothing at all on any firmware before the NUL fix: TLM service
+data begins `20 00`, which the BLE adapter truncated at the NUL, so the warning
+was inert for the whole life of the feature.
 
 **An `OPEN` without the verified flag is an intention, not a record.** With no
 limit switches fitted, every actuation reads that way — which is the honest
@@ -724,6 +740,7 @@ polling with `s`:
 | `[door] opening` / `closing` | A travel has just been **commanded**, and by whom |
 | `[door] OPEN` / `CLOSED` | A travel **resolved**, and how |
 | `[pos]` | A limit switch said something about where the door is |
+| `[batt]` | The beacon's own battery crossed the low threshold, or came back above it |
 | `[cal]` | Travel-time calibration |
 | `[radio]` | The scan watchdog's view of radio health changed |
 
