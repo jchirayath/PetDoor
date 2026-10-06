@@ -63,7 +63,8 @@
       "Bash(diff:*secrets.h*)",
       "Bash(git show:*secrets.h*)",
       "Bash(sort:*secrets.h*)",
-      "Bash(uniq:*secrets.h*)"
+      "Bash(uniq:*secrets.h*)",
+      "Bash(find:*secrets*)"
     ]
   }
 }

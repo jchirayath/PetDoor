@@ -229,14 +229,30 @@ apart. That is not a fault.
 
 ## secrets.h
 
-Git-ignored and `Read`-denied in `.claude/settings.json`, because this is a
-public repo. Claude cannot see it. It typically carries `BEACON_MAC`,
-`RSSI_ENTER_DBM`, `RSSI_EXIT_DBM`, `RELAY_ACTIVE_LOW`, `CONSOLE_PASSWORD` and
-the log-server credentials.
+Git-ignored, and denied in `.claude/settings.json`, because this is a public
+repo. It typically carries `BEACON_MAC`, `RSSI_ENTER_DBM`, `RSSI_EXIT_DBM`,
+`RELAY_ACTIVE_LOW`, `OTA_PASSWORD`, `CONSOLE_PASSWORD` and the log-server
+credentials.
 
-**Ask the user to read a value out of it rather than theorising about it.**
-`RELAY_ACTIVE_LOW` was a leading hypothesis for over an hour of one session for
-want of a question that would have taken one exchange.
+**The deny is a guardrail, not a sandbox — do not treat it as a guarantee.**
+`Read(./petdoor/secrets.h)` genuinely stops the Read tool, and a dozen
+`Bash(<tool>:*secrets.h*)` rules stop the obvious shell equivalents. But those
+match the COMMAND TEXT, not the file, so anything that reaches the file without
+spelling its name walks straight through — `grep -r PASSWORD petdoor/` is
+allowed by `Bash(grep:*)` and prints the line. That one cannot be closed by a
+substring rule without banning recursive grep altogether.
+
+So the rule that actually protects these values is a behavioural one:
+
+**Do not read `secrets.h`, and do not route around the deny to do it.** Ask the
+user to read a value out, or to extract it into a file you can use without
+seeing. One session needed `OTA_PASSWORD`, wrote the `sed` one-liner to pull it
+out, and then handed the command to the user rather than running it — that is
+the expected behaviour, and it came from judgement rather than from the config.
+
+**Ask rather than theorise.** `RELAY_ACTIVE_LOW` was a leading hypothesis for
+over an hour of one session for want of a question that would have taken one
+exchange.
 
 
 ## Layout
