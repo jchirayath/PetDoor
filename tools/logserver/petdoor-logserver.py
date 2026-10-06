@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import socketserver
+import threading
 import sqlite3
 import sys
 import time
@@ -889,6 +890,31 @@ def store(device, rows):
     return added
 
 
+# How long to stay quiet about the same KIND of event from the same door.
+#
+# INSERT OR IGNORE already stops the door's repeated ring uploads from mailing
+# the same row twice. This is for the other case: a genuinely new row each time,
+# arriving over and over because the underlying fault persists. A dead closed-end
+# reed produces a fresh STALLED on every close attempt — three per episode, every
+# episode, all night — and mailing each one is how the message that mattered ends
+# up buried with the rest.
+#
+# In memory on purpose. A restart re-arms every alert, which is the right way
+# round to fail: the worst case is one extra email, not a missed one.
+NOTIFY_COOLDOWN_S = int(os.environ.get("PETDOOR_NOTIFY_COOLDOWN_S", "3600"))
+_notified_at = {}
+
+
+def notify_due(device, kind):
+    """True if we have not mailed about this (door, kind) pair recently."""
+    now = time.time()
+    key = (device, kind)
+    if now - _notified_at.get(key, 0) < NOTIFY_COOLDOWN_S:
+        return False
+    _notified_at[key] = now
+    return True
+
+
 # Events the door reports that are worth an email on arrival. Kept deliberately
 # tiny: the door uploads its whole ring repeatedly, and a chatty rule here is
 # how PetDoor mail ends up in a folder nobody opens — at which point the one
@@ -986,6 +1012,142 @@ def notify_events(device, rows):
                 accent="alert")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for sensor fault: {why}\n")
+
+        # The door has STOPPED TRYING TO CLOSE and is standing open until a
+        # person deals with it. The most important thing this system produces:
+        # every other event is a record of something that happened, and this one
+        # is a request. No cooldown — it is terminal and it is rare, and a door
+        # that gave up twice in one night is a door you want told about twice.
+        elif r["type"] == "GAVE_UP":
+            ok, why = send_notification(
+                f"door is staying OPEN on {device}",
+                title="The door has given up closing and is standing open",
+                lede=f"{r['detail']} close attempts stalled in a row, so the door "
+                     "has stopped trying and is deliberately staying open.",
+                rows=[("door", device),
+                      ("attempts", r["detail"]),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="This is deliberate, not a crash. A door that stops partway "
+                     "while closing is exactly when something may be underneath "
+                     "it, so the firmware reverses and retries a few times and "
+                     "then stops rather than driving onto whatever is in the way. "
+                     "It will not close again by itself: clear the obstruction "
+                     "and press 'x' on the console, or send `door close`. Until "
+                     "then the doorway is open.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for gave-up: {why}\n")
+
+        # A travel started and never arrived. Rate limited, because a persistent
+        # cause produces one of these per attempt — and the attempts that follow
+        # end in GAVE_UP above, which is not rate limited and says more.
+        elif r["type"] == "STALLED" and notify_due(device, "STALLED"):
+            going = {1: "opening", 2: "closing"}.get(r["detail"], "moving")
+            ok, why = send_notification(
+                f"door stalled while {going} on {device}",
+                title=f"The door stalled while {going}",
+                lede="It started moving and never reached the other end.",
+                rows=[("door", device),
+                      ("direction", going),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="An obstruction, a jam, or a limit switch that has stopped "
+                     "making. A stalled CLOSE is reversed automatically and "
+                     "retried after a delay; if the retries run out you will get "
+                     "a second message saying the door is staying open. Further "
+                     "stalls on this door are suppressed for an hour so a "
+                     "persistent fault cannot bury that one.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for stall: {why}\n")
+
+
+# ---------------------------------------------------------------- watchdog
+#
+# THE ONE FAILURE NOTHING ELSE CAN CATCH.
+#
+# Every other alert in this file is triggered by the door SENDING something. A
+# door that has lost WiFi, browned out, or whose ESP32 has died sends nothing by
+# definition — so the quieter it gets, the less this system has to say about it.
+# Silence looked exactly like a door with nothing to report.
+#
+# So this watches the absence instead. It is the only check that runs without
+# the door's participation, which is precisely why it is the one worth having.
+#
+# The threshold has to clear the door's own heartbeat with room to spare: a
+# healthy door calls in every WIFI_HEARTBEAT_MS (30 minutes by default) even
+# with nothing happening, and misses one now and then to a busy radio or an OTA
+# window. Two hours is roughly four missed heartbeats — long enough not to cry
+# wolf over a single one, short enough to tell you the same evening.
+STALE_AFTER_S = int(os.environ.get("PETDOOR_STALE_AFTER_S", "7200"))
+WATCHDOG_EVERY_S = 300
+
+# device -> True once we have mailed about this outage. Cleared when it comes
+# back, so a door that flaps gets one message per outage rather than per check.
+_stale_alerted = {}
+
+
+def check_stale_doors():
+    """One pass. Mails for doors that have gone quiet, and for their return."""
+    if not NOTIFY_TO:
+        return
+    now = int(time.time())
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT device, last_seen, version FROM devices").fetchall()
+    for r in rows:
+        dev, seen = r["device"], r["last_seen"] or 0
+        if not seen:
+            continue          # never reported at all; nothing to be silent about
+        quiet = now - seen
+        if quiet >= STALE_AFTER_S and not _stale_alerted.get(dev):
+            _stale_alerted[dev] = True
+            hrs = quiet / 3600.0
+            ok, why = send_notification(
+                f"{dev} has stopped reporting",
+                title="A door has gone quiet",
+                lede=f"Nothing has been heard from {dev} for {hrs:.1f} hours.",
+                rows=[("door", dev),
+                      ("last heard", time.strftime("%Y-%m-%d %H:%M UTC",
+                                                   time.gmtime(seen))),
+                      ("firmware", r["version"] or "unknown")],
+                note="A healthy door calls in on a heartbeat even when nothing "
+                     "is happening, so silence this long means it is not "
+                     "running, not on the network, or not reaching this server. "
+                     "The door may still be working the collar perfectly well — "
+                     "it decides entirely on its own and never needs this "
+                     "server — but nothing can be seen or changed remotely "
+                     "until it comes back. Check power first, then WiFi.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for stale door {dev}: {why}\n")
+        elif quiet < STALE_AFTER_S and _stale_alerted.get(dev):
+            _stale_alerted[dev] = False
+            ok, why = send_notification(
+                f"{dev} is reporting again",
+                title="The door is back",
+                lede=f"{dev} has started calling in again.",
+                rows=[("door", dev), ("firmware", r["version"] or "unknown")],
+                note="Nothing needs doing. This closes out the earlier message "
+                     "about it having gone quiet.",
+                cta_label="Open the dashboard",
+                accent="calm")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for stale recovery {dev}: {why}\n")
+
+
+def watchdog_loop():
+    # Daemon: it must never hold the process open on shutdown. A failure in here
+    # must not take the server with it either — a crashed watchdog would stop
+    # the ingest endpoint, which is far worse than a missed alert.
+    while True:
+        time.sleep(WATCHDOG_EVERY_S)
+        try:
+            check_stale_doors()
+        except Exception as exc:                        # noqa: BLE001
+            sys.stderr.write(f"  watchdog error (continuing): {exc}\n")
 
 
 def parse_csv(text):
@@ -1782,6 +1944,13 @@ def main():
         print("  !! WEB CONTROL IS ON. Anyone who can load /dashboard can open,")
         print("  !! close, lock and unlock the door. That route must have")
         print("  !! authentication in front of it — see docs/WEB-DASHBOARD.md.")
+    if NOTIFY_TO:
+        threading.Thread(target=watchdog_loop, daemon=True).start()
+        print(f"  watchdog  : mails if a door goes quiet for "
+              f"{STALE_AFTER_S // 3600}h (checked every {WATCHDOG_EVERY_S // 60}m)")
+    else:
+        print("  watchdog  : off (no PETDOOR_NOTIFY_TO configured)")
+
     with Server((args.host, args.port), Handler) as srv:
         try:
             srv.serve_forever()

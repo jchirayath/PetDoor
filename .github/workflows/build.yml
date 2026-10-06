@@ -39,7 +39,7 @@ jobs:
   # ASan/UBSan here (TEST-10) as well as unit tested.
   host-tests:
     runs-on: ubuntu-latest
-    name: host tests (beacon parsers + fuzz)
+    name: host tests (beacon parsers, fuzz, server alerting)
     steps:
       - uses: actions/checkout@v4
       # Ubuntu's clang ships the libFuzzer runtime, so CI gets real
@@ -52,6 +52,11 @@ jobs:
           CXX: clang++
           FUZZ_SECONDS: 60
         run: tests/host/run.sh
+      # The log server's alerting is state-machine logic in dictionaries, and
+      # both its failure modes are silent: too eager buries the message that
+      # mattered, too shy never mentions the door that stopped reporting.
+      - name: Log server alerting rules
+        run: tests/server/run.sh
 
   compile:
     runs-on: ubuntu-latest

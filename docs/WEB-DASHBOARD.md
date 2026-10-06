@@ -452,6 +452,46 @@ reversible, and none of them is a thing happening *at* the door.
 `door close` and `door auto` are missing for the same reason the lockout only
 gates closing: they are the safe direction.
 
+#### …and when the door reports something wrong
+
+Commands are things *you* did. These are things the door found out, and they
+arrive on their own:
+
+| Mailed | Why it earns an interruption |
+|---|---|
+| **`GAVE_UP`** | Close attempts are exhausted and **the doorway is standing open** until someone deals with it. Every other event here is a record of something that happened; this one is a request. Never rate limited |
+| **`STALLED`** | A travel started and never arrived — an obstruction, a jam, or a switch that stopped making. **Rate limited to one an hour per door**, because a persistent cause produces one per attempt and they would bury the `GAVE_UP` that follows |
+| **`SENSOR_FAULT`** | A sensor has been caught lying, diagnosed by cross-checking it against the other one. Latched in the firmware, so one failure is one message |
+| **`BEACON_LOW`** | The collar's battery is going flat. Days of warning, not minutes |
+| **`CONSOLE`** (wrong password) | Somebody tried the door's network console and failed. That port can open the door |
+| **a door that has gone quiet** | See below — the only one not triggered by the door itself |
+
+Everything else is logged and visible on the dashboard but does not interrupt
+you: ordinary opens and closes, refusals, `RETRY`, `WAKE`, `UNCOMMANDED`,
+`NO_MOVEMENT`, maintenance windows.
+
+#### The watchdog, which is the only alert the door does not send
+
+Every alert above depends on the door **sending** something. A door that has
+lost WiFi, browned out, or whose ESP32 has died sends nothing by definition — so
+the more completely it fails, the less this system has to say about it. Silence
+looked exactly like a door with nothing to report.
+
+So the server watches the *absence*: a background pass every five minutes mails
+if any door's last upload is older than `PETDOOR_STALE_AFTER_S` (default two
+hours), and mails again when it comes back. One message per outage, not one per
+check.
+
+Two hours is roughly four missed heartbeats. A healthy door calls in every 30
+minutes even with nothing happening, and misses one now and then to a busy radio
+or an OTA window, so a single miss must not raise an alarm.
+
+**It says the door may still be working.** The door decides entirely on its own
+and never needs this server — a door that has dropped off WiFi can still be
+letting the animal in and out perfectly well. What has been lost is the ability
+to see or change anything remotely, and the message says so rather than implying
+the door is dead.
+
 The message says what was queued, for which door, when, from where, and — when
 it came from the dashboard — **which signed-in account asked**, taken from the
 identity the proxy passes through rather than anything the caller supplied. It
