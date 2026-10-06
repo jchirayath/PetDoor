@@ -72,6 +72,15 @@ Actuator::CalState g_lastCalState = Actuator::CAL_OFF;
 int32_t g_beaconBatteryMv = -1;
 bool g_beaconLowLatched = false;
 
+// Sensor health. Latched: a broken part stays broken, so one failure is one
+// console message, one log entry and one email — not one per travel.
+uint8_t g_sensorFault = 0;            // SensorFault, 0 = nothing wrong
+uint8_t g_vibSilentStrikes = 0;       // verified travels the vibration missed
+uint8_t g_reedMissedStrikes = 0;      // travels that ran and never arrived
+uint32_t g_vibIdleBaseline = 0;       // edge count when the door went quiet
+uint32_t g_vibIdleSinceMs = 0;
+bool g_vibIdleValid = false;
+
 // Why a LOG_REFUSED entry exists, for the reasons that are not an
 // ActuationResult. Kept well clear of that enum so adding a refusal to it can
 // never silently re-label history on the dashboard.
@@ -2049,6 +2058,67 @@ void reportBeaconBattery(uint32_t nowMs) {
 // door is, which matters because "already in that state" is how an actuation
 // request decides to do nothing: a stale belief leaves the door refusing to
 // correct itself after a swallowed press or a shove by hand.
+// Latch a sensor fault, once.
+//
+// Uploaded immediately, unlike the beacon battery. A dead sensor is not a
+// "sometime this week" problem: with the reeds fitted the firmware TRUSTS them,
+// so a reed that stopped making turns every close into a stall and parks the
+// door open — and a vibration sensor firing at idle suppresses the actuating
+// press outright. Both change what the door does tonight.
+void raiseSensorFault(uint8_t code, int16_t evidence) {
+  if (g_sensorFault == code) return;   // already latched on this one
+  g_sensorFault = code;
+  EventLog::record(LOG_SENSOR_FAULT, code, g_tracker.filteredRssi(), evidence);
+#if PETDOOR_ENABLE_WIFI
+  publishStatusLines();
+  WifiLogger::requestFlushNow();
+#endif
+}
+
+void clearSensorFault(uint8_t code) {
+  if (g_sensorFault != code) return;
+  g_sensorFault = 0;
+}
+
+// Vibration that accumulates while the door is standing still.
+//
+// Watched over a window rather than instantaneously, because a single knock —
+// a bird landing, someone closing a gate — is not a fault. Only the door being
+// idle counts: during a travel the sensor is SUPPOSED to be firing.
+void updateVibrationNoise(uint32_t nowMs) {
+  if (!Vibration::enabled() || Actuator::busy()) {
+    g_vibIdleValid = false;           // a travel invalidates the window
+    return;
+  }
+  if (!g_vibIdleValid) {
+    g_vibIdleBaseline = Vibration::pulses();
+    g_vibIdleSinceMs = nowMs;
+    g_vibIdleValid = true;
+    return;
+  }
+  if ((nowMs - g_vibIdleSinceMs) < VIBRATION_IDLE_WINDOW_MS) return;
+
+  const uint32_t seen = Vibration::pulses() - g_vibIdleBaseline;
+  if (seen >= VIBRATION_IDLE_NOISE_PULSES) {
+    Con.printf("[sensor] !! vibration sensor felt %lu edges in %lu s with the "
+                  "door STANDING STILL.\r\n",
+                  static_cast<unsigned long>(seen),
+                  static_cast<unsigned long>(VIBRATION_IDLE_WINDOW_MS / 1000UL));
+    Con.println(F("[sensor] !! At rest it should read nothing. This is not just"));
+    Con.println(F("[sensor] !! noise: the wake probe reads it as 'the door is"));
+    Con.println(F("[sensor] !! already moving' and SUPPRESSES the real press, so"));
+    Con.println(F("[sensor] !! the door stops responding."));
+    Con.println(F("[sensor] !! Back off the sensitivity screw, or move it — a"));
+    Con.println(F("[sensor] !! sensor on the frame feels the world, not the door."));
+    raiseSensorFault(SF_VIBRATION_NOISY,
+                     static_cast<int16_t>(seen > 32767 ? 32767 : seen));
+  }
+  // Re-arm either way, so a latched fault keeps being measured and a healthy
+  // door keeps being checked.
+  g_vibIdleBaseline = Vibration::pulses();
+  g_vibIdleSinceMs = nowMs;
+}
+
 void updatePosition(uint32_t nowMs) {
   if (!Position::enabled()) return;
   Position::tick(nowMs);
@@ -2060,8 +2130,13 @@ void updatePosition(uint32_t nowMs) {
       Con.println(F("[pos] !! That cannot happen on a working door — suspect a"));
       Con.println(F("[pos] !! shorted wire, a stuck switch, or a stray magnet."));
       Con.println(F("[pos] !! Position is being ignored until it clears."));
+      raiseSensorFault(SF_REEDS_CONTRADICT, 0);
     }
     return;
+  }
+  if (g_sensorFaultAnnounced) {
+    Con.println(F("[pos] limit switches agree again"));
+    clearSensorFault(SF_REEDS_CONTRADICT);
   }
   g_sensorFaultAnnounced = false;
 
@@ -2134,7 +2209,7 @@ void publishStatusLines() {
            "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
            "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s "
            "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
-           "batt=%ld battlow=%d",
+           "batt=%ld battlow=%d sfault=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -2181,7 +2256,12 @@ void publishStatusLines() {
            // fault — so the dashboard must render it as "not reported" and not
            // as a flat cell. 0 would be a beacon saying it is mains powered.
            static_cast<long>(g_beaconBatteryMv),
-           g_beaconLowLatched ? 1 : 0);
+           g_beaconLowLatched ? 1 : 0,
+           // 0 is healthy; otherwise a SensorFault code. The dashboard needs
+           // this to tell "the door is open because it gave up" from "the door
+           // is open because the switch that would have confirmed a close has
+           // stopped working".
+           static_cast<unsigned>(g_sensorFault));
   WifiLogger::setStatusLine(line);
 
   // Every tunable the remote channel can change, so the dashboard's
@@ -2338,6 +2418,62 @@ void reportOutcome(const Actuator::Result &r) {
 
     default:
       break;
+  }
+
+  // ---- the two sensors judging each other --------------------------------
+  //
+  // Only meaningful with both fitted, because each diagnosis uses the other as
+  // ground truth. With one sensor there is nothing to disagree with.
+  if (Vibration::enabled() && Position::enabled()) {
+    const uint32_t felt = Vibration::pulsesThisTravel();
+
+    if (r.outcome == Actuator::OUT_ARRIVED) {
+      // A limit switch confirmed arrival, so the door DEFINITELY moved. If the
+      // vibration sensor felt nothing through all of that, the sensor is the
+      // thing that is broken — there is no reading of this where the door is
+      // at fault.
+      if (felt < VIBRATION_MIN_PULSES) {
+        if (++g_vibSilentStrikes >= SENSOR_FAULT_STRIKES) {
+          Con.printf("[sensor] !! %u switch-VERIFIED travels felt like nothing "
+                        "(%lu edges).\r\n",
+                        g_vibSilentStrikes, static_cast<unsigned long>(felt));
+          Con.println(F("[sensor] !! The door moved — a limit switch says so — and"));
+          Con.println(F("[sensor] !! the vibration sensor did not notice. It is"));
+          Con.println(F("[sensor] !! deaf, unplugged, or has come off the door."));
+          Con.println(F("[sensor] !! Until it is fixed, a swallowed press can no"));
+          Con.println(F("[sensor] !! longer be told from a successful one."));
+          raiseSensorFault(SF_VIBRATION_SILENT, static_cast<int16_t>(felt));
+        }
+      } else {
+        g_vibSilentStrikes = 0;
+        g_reedMissedStrikes = 0;        // it arrived, so the reeds are fine too
+        clearSensorFault(SF_VIBRATION_SILENT);
+        clearSensorFault(SF_REED_MISSED);
+      }
+    } else if (r.outcome == Actuator::OUT_STALLED) {
+      // It stalled. Vibration says which kind of stall this was, and the two
+      // need completely different responses:
+      //
+      //   lots of movement  the door ran its travel and the switch never saw
+      //                     it. A lost magnet or a broken wire.
+      //   little movement   the door stopped. An obstruction or a jam, which
+      //                     is what STALLED already reports — not a sensor
+      //                     fault, so it is left alone here.
+      if (felt >= VIBRATION_MOVING_PULSES) {
+        if (++g_reedMissedStrikes >= SENSOR_FAULT_STRIKES) {
+          Con.printf("[sensor] !! %u travels RAN (%lu edges) and never arrived.\r\n",
+                        g_reedMissedStrikes, static_cast<unsigned long>(felt));
+          Con.printf("[sensor] !! The door is moving, so the %s limit switch is\r\n",
+                        r.target == DOOR_OPEN ? "OPEN" : "CLOSED");
+          Con.println(F("[sensor] !! not making. Check the magnet has not come off"));
+          Con.println(F("[sensor] !! and that its gap has not opened up — the"));
+          Con.println(F("[sensor] !! capture range is narrow."));
+          Con.println(F("[sensor] !! This matters tonight: every close now STALLS,"));
+          Con.println(F("[sensor] !! which fails the door OPEN by design."));
+          raiseSensorFault(SF_REED_MISSED, static_cast<int16_t>(felt));
+        }
+      }
+    }
   }
 
   // The door's own record of having gone somewhere. Only for outcomes where it
@@ -3412,6 +3548,7 @@ void controlTask(void *) {
     reportCalibration();
     // Before updateLed(), which reads the latch this sets.
     reportBeaconBattery(now);
+    updateVibrationNoise(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);

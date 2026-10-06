@@ -88,6 +88,33 @@ enum LogEventType : uint8_t {
   // Latched with a recovery margin, so a cell sitting on the threshold produces
   // one entry and not a stream of them.
   LOG_BEACON_LOW = 14,
+  // A SENSOR disagreed with the other one badly enough to be called broken.
+  // detail = SensorFault below; `reserved` carries the evidence (a vibration
+  // count, or 0 where the fault is binary).
+  //
+  // Distinct from STALLED and NO_MOVE, which say the DOOR did not do what it
+  // was told. This says the thing watching the door is lying, which is worse:
+  // a stall is visible, and a dead sensor is not.
+  LOG_SENSOR_FAULT = 15,
+};
+
+// Which sensor, and how it failed. Each is diagnosed by cross-checking against
+// the other sensor, so these name a part rather than a symptom.
+enum SensorFault : uint8_t {
+  // Both limit switches report the door at their end at once. Physically
+  // impossible: a shorted wire, a stuck switch, or a stray magnet.
+  SF_REEDS_CONTRADICT = 1,
+  // Travels the reeds VERIFIED produced no vibration. The door demonstrably
+  // moved, so the sensor is deaf, miswired, or has fallen off the door.
+  SF_VIBRATION_SILENT = 2,
+  // Vibration accumulating while the door stands still. Either the
+  // sensitivity screw is too far in, or it is mounted somewhere that feels the
+  // world rather than the door.
+  SF_VIBRATION_NOISY = 3,
+  // The door ran a full travel's worth of vibration and never arrived. The
+  // switch at that end is not making — a lost magnet or a broken wire — as
+  // opposed to an obstruction, which stops the vibration too.
+  SF_REED_MISSED = 4,
 };
 
 // Flags packed into a LOG_OPEN / LOG_CLOSE entry's `reserved` field. The entry

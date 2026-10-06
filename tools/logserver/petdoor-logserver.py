@@ -119,6 +119,27 @@ EVENT_LABEL = {
     # heard the collar once since boot, so a dead beacon does not shut the door
     # — it stops the door working, quietly, with the animal outside.
     "BEACON_LOW": "beacon battery",
+    # A sensor disagreed with the other one badly enough to be called broken.
+    # Distinct from STALLED/NO_MOVE, which say the DOOR misbehaved: this says
+    # the thing watching the door is lying, which is worse because a stall is
+    # visible and a dead sensor is not.
+    "SENSOR_FAULT": "sensor fault",
+}
+
+# petdoor/eventlog.h : enum SensorFault. Each is diagnosed by cross-checking
+# one sensor against the other, so each names a PART rather than a symptom.
+SENSOR_FAULT = {
+    1: ("both limit switches made at once",
+        "a shorted wire, a stuck switch, or a stray magnet"),
+    2: ("the vibration sensor felt nothing during a VERIFIED travel",
+        "the door moved and the sensor did not notice — deaf, unplugged, "
+        "or come off the door"),
+    3: ("the vibration sensor is firing with the door standing still",
+        "sensitivity screw too far in, or mounted where it feels the world "
+        "rather than the door"),
+    4: ("the door ran a full travel and never arrived",
+        "the limit switch at that end is not making — most likely a magnet "
+        "that has come off or drifted out of its narrow capture range"),
 }
 
 # What a door actuation's `detail` means: ActuationSource in petdoor/door.h.
@@ -929,6 +950,43 @@ def notify_events(device, rows):
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for beacon battery: {why}\n")
 
+        # A sensor went bad. The third event to earn a mail, and the most
+        # urgent of the three.
+        #
+        # Once the limit switches are fitted the firmware TRUSTS them, so a
+        # switch that stops making does not degrade gracefully: every close
+        # becomes a STALL, and a stalled close fails OPEN by design. The door
+        # then sits open night after night, having done exactly the right thing
+        # with wrong information, and nothing about it looks broken. Same shape
+        # for a vibration sensor firing at idle — the wake probe reads it as
+        # "already moving" and suppresses the actuating press.
+        #
+        # Latched in the firmware, so this is one message per failure and not
+        # one per travel.
+        elif r["type"] == "SENSOR_FAULT":
+            what, why_txt = SENSOR_FAULT.get(
+                r["detail"], (f"fault code {r['detail']}", "unrecognised"))
+            ev = r["src"] if "src" in r.keys() and r["src"] else None
+            ok, why = send_notification(
+                f"sensor fault on {device}",
+                title="A door sensor has stopped telling the truth",
+                lede=what.capitalize() + ".",
+                rows=[("door", device),
+                      ("likely cause", why_txt),
+                      ("evidence", f"{ev} vibration edges" if ev else "n/a"),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="This is worth looking at today. The door trusts these "
+                     "sensors: a limit switch that stops making turns every "
+                     "close into a stall, and a stalled close deliberately "
+                     "fails OPEN — so the door ends up standing open all night "
+                     "having followed its rules correctly on bad information. "
+                     "The door keeps working; what it has lost is the ability "
+                     "to know whether it did.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for sensor fault: {why}\n")
+
 
 def parse_csv(text):
     rows = []
@@ -1037,7 +1095,7 @@ def render():
 
     cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b",
            "NO_MOVE": "b", "STALLED": "b", "UNCOMMANDED": "b", "GAVE_UP": "b",
-           "RETRY": "b", "WAKE": "s", "BEACON_LOW": "b"}
+           "RETRY": "b", "WAKE": "s", "BEACON_LOW": "b", "SENSOR_FAULT": "b"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -1079,6 +1137,13 @@ def render():
         elif r["type"] == "WAKE":
             detail = ("the wake press moved the door by itself"
                       if r["detail"] == 1 else "a wake press was needed")
+        elif r["type"] == "SENSOR_FAULT":
+            what, why = SENSOR_FAULT.get(
+                r["detail"], (f"fault {r['detail']}", "unrecognised code"))
+            ev = r["src"] if "src" in r.keys() and r["src"] else None
+            detail = ('<strong style="color:var(--bad)">' + html.escape(what)
+                      + "</strong> — " + html.escape(why)
+                      + (f" ({ev} edges)" if ev else ""))
         elif r["type"] == "BEACON_LOW":
             # The millivolts ride in the spare field; detail is the direction.
             mv = r["src"] if "src" in r.keys() and r["src"] else None

@@ -656,6 +656,47 @@
 #define VIBRATION_MOVING_PULSES 50
 #endif
 
+// ---- telling a broken sensor from a broken door ---------------------------
+//
+// Both sensors can fail quietly, and a quiet sensor is worse than none: the
+// firmware keeps deciding, just on evidence that is no longer arriving. A reed
+// whose magnet fell off (which happened once during bench cycling) turns every
+// close into a STALL, and the fail-open rule then parks the door open night
+// after night with nothing obviously wrong.
+//
+// What makes this detectable without false alarms is that THE TWO SENSORS
+// CHECK EACH OTHER:
+//
+//   * a travel the reeds VERIFIED is proof the door moved. If the vibration
+//     sensor felt nothing during it, the sensor is deaf — not the door stuck.
+//   * heavy vibration during a travel that STALLED says the door ran its
+//     travel and the reed never noticed. That is a reed fault, where the same
+//     stall with NO vibration would be an obstruction.
+//
+// How many times a sensor must disagree with the other before it is called
+// broken. One disagreement is a short travel or a glancing magnet; two in a
+// row is a part.
+#ifndef SENSOR_FAULT_STRIKES
+#define SENSOR_FAULT_STRIKES 2
+#endif
+
+// Edges counted while the door is standing still that mean the vibration
+// sensor is crying wolf. At rest the reference sensor reads exactly 0, and a
+// sensor firing at idle is not harmless: the wake probe reads it as "the door
+// already moved" and SUPPRESSES the actuating press, so a noisy sensor stops
+// the door rather than merely annoying it.
+//
+// Generous, because wind and passing traffic are real and this must not cry
+// wolf either. The message says so, because either answer is actionable: back
+// the sensitivity screw off, or move the sensor.
+#ifndef VIBRATION_IDLE_NOISE_PULSES
+#define VIBRATION_IDLE_NOISE_PULSES 200
+#endif
+
+#ifndef VIBRATION_IDLE_WINDOW_MS
+#define VIBRATION_IDLE_WINDOW_MS 60000
+#endif
+
 // ---------------------------------------------------------------------------
 // Maintenance mode — a bounded window in which the beacon cannot move the door
 // ---------------------------------------------------------------------------

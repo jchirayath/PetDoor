@@ -362,6 +362,7 @@ Three groups worth knowing about in there:
 | `mopen=` / `mclose=` | the duration of the last **verified** travel each way. Compare against the configured pair to spot a door getting slower |
 | `batt=` | the beacon's own battery in mV. **`-1` means it has never reported any** — normal for an iBeacon-only beacon, not a fault. `0` means the beacon said it is mains powered |
 | `battlow=1` | the low-battery latch is set. The server also emails on the crossing |
+| `sfault=` | `0` is healthy; otherwise a sensor is broken — see the `SENSOR_FAULT` codes in [DIAGNOSTICS.md](DIAGNOSTICS.md). This is what tells "the door is open because it gave up" from "the door is open because the switch that would confirm a close has stopped working" |
 
 `push to` is the door's **own** address, which it now reports itself. The server
 sees only whatever last hop connected — behind a reverse proxy that is the

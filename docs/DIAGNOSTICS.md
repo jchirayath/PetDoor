@@ -356,6 +356,7 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 | `GAVE_UP` | Close attempts exhausted. `detail` is how many. **The door is staying open until a person deals with it** |
 | `UNCOMMANDED` | A switch reported the door at an end that nothing commanded it to. `detail` is which end |
 | `RETRY` | A press was repeated because the previous one moved nothing. `detail` is which attempt |
+| `SENSOR_FAULT` | A sensor disagreed with the other one badly enough to be called broken. `detail` names which (see below); the spare field carries the evidence. **Emailed.** Distinct from `STALLED`/`NO_MOVE`, which say the *door* misbehaved — this says the thing *watching* the door is lying |
 | `BEACON_LOW` | The beacon's **own battery** crossed the threshold. `detail` 1 = went low, 0 = recovered; the spare field carries the millivolts. Latched with a recovery margin, so one crossing is one entry. **This is the event that gives you days of notice** — see below |
 | `WAKE` | Recorded **only** when a wake press turned out to move the door by itself — the near-miss worth counting. The ordinary case is carried as a flag on the actuation instead, so the ring is not filled with it |
 | `MAINT` | A maintenance window started, ended, or expired |
@@ -365,6 +366,33 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 `REFUSED` is the one worth knowing about: it is what explains a door that did
 not move when you expected it to. Repeats are collapsed, so a boot-grace window
 logs once rather than sixteen times.
+
+### How a broken sensor is told from a broken door
+
+Both sensors can fail quietly, and a quiet sensor is worse than none: the door
+keeps deciding, just on evidence that is no longer arriving. A reed whose magnet
+has come off turns every close into a `STALLED`, and the fail-open rule then
+parks the door open night after night with nothing looking wrong.
+
+What makes this detectable without false alarms is that **the two sensors check
+each other** — each diagnosis uses the other as ground truth, so a single
+failing part is identifiable rather than merely suspected:
+
+| `detail` | What it saw | What is broken |
+|---|---|---|
+| `1` | both limit switches made at once | a shorted wire, a stuck switch, or a stray magnet |
+| `2` | a reed-**verified** travel produced no vibration | **the vibration sensor.** A switch confirmed arrival, so the door definitely moved; there is no reading where the door is at fault |
+| `3` | vibration accumulating with the door standing still | **the vibration sensor**, too sensitive or mounted on the frame rather than the door |
+| `4` | a full travel's worth of vibration, and it never arrived | **the limit switch at that end.** The door ran, so this is not an obstruction — an obstruction stops the vibration too |
+
+Faults 2 and 4 need `SENSOR_FAULT_STRIKES` consecutive disagreements, so one
+short travel or one glancing magnet is not enough. All four are **latched**: one
+failure is one console message, one log entry and one email, not one per travel.
+
+The pair `2`/`4` is the useful part. Both begin as "a travel did not go as
+expected", and vibration is what splits them — plenty of movement means the door
+ran and the switch missed it; little movement means the door stopped, which is
+an obstruction and is already reported as `STALLED`.
 
 **Why `BEACON_LOW` matters more than it looks.** A flat beacon does **not** shut
 the door on anything: the firmware refuses to act until it has heard the collar
@@ -741,6 +769,7 @@ polling with `s`:
 | `[door] OPEN` / `CLOSED` | A travel **resolved**, and how |
 | `[pos]` | A limit switch said something about where the door is |
 | `[batt]` | The beacon's own battery crossed the low threshold, or came back above it |
+| `[sensor]` | A sensor has been judged broken by cross-checking it against the other |
 | `[cal]` | Travel-time calibration |
 | `[radio]` | The scan watchdog's view of radio health changed |
 
