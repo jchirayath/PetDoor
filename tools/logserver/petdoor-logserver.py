@@ -179,10 +179,15 @@ def init_db():
             detail   INTEGER NOT NULL,
             rssi     INTEGER NOT NULL,
             received INTEGER NOT NULL,
-            -- Origin, when the event has one. 0 for almost everything; today
-            -- only CONSOLE rows set it, to the last octet of the address that
-            -- connected. Deliberately not part of the primary key: it says
-            -- something ABOUT the event, it does not identify it.
+            -- The event's one spare integer. 0 for most rows. Named for its
+            -- first use and since outgrown it, which is worth knowing before
+            -- reading a value here: CONSOLE rows put the last octet of the
+            -- connecting address in it, SENSOR_FAULT the evidence that raised
+            -- the fault, BEACON_LOW the millivolts, and an inferred
+            -- UNCOMMANDED the milliseconds of movement it was inferred from.
+            -- Read it according to `type` and never on its own.
+            -- Deliberately not part of the primary key: it says something
+            -- ABOUT the event, it does not identify it.
             src      INTEGER NOT NULL DEFAULT 0,
             -- The door has no unique event id, so identity is the tuple that
             -- cannot repeat for one device: which boot, how far into it, what
@@ -1293,10 +1298,26 @@ def render():
                       f'{r["detail"]} close attempts stalled; the door is staying OPEN'
                       "</strong>")
         elif r["type"] == "UNCOMMANDED":
-            where = {1: "open", 2: "closed"}.get(r["detail"], f'state {r["detail"]}')
+            # detail is the end the door reached. 1/2 mean a limit switch
+            # MEASURED it; 11/12 mean it was INFERRED from how long the
+            # vibration sensor felt the door moving, on a door whose switches
+            # could not see the travel. Rendered differently on purpose: an
+            # inference and a measurement are not the same claim, and showing
+            # them identically is how one quietly becomes the other.
+            d = r["detail"]
+            inferred = d >= 10
+            where = {1: "open", 2: "closed"}.get(d - 10 if inferred else d,
+                                                 f"state {d}")
+            if inferred:
+                ms = r["src"] if "src" in r.keys() and r["src"] else 0
+                how = ("inferred from %.1f s of movement — no limit switch saw it"
+                       % (ms / 1000.0)) if ms else \
+                      "inferred from the duration of the movement"
+            else:
+                how = "a limit switch saw it"
             detail = ('<strong style="color:var(--bad)">'
                       f"the door moved to {where} and nothing commanded it"
-                      "</strong>")
+                      f'</strong> <span class="muted">({how})</span>')
         elif r["type"] == "RETRY":
             detail = f'attempt {r["detail"]} — the previous press moved nothing'
         elif r["type"] == "WAKE":

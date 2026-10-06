@@ -730,6 +730,71 @@
 #endif
 
 // ---------------------------------------------------------------------------
+// Inferring a travel from vibration alone, when no limit switch can see one
+// ---------------------------------------------------------------------------
+//
+// A door pushed shut by hand is detected by the reed switches: OPEN, then ten
+// seconds of UNKNOWN, then CLOSED. With no switches fitted — they are optional,
+// and most builds will not have them — or with one disconnected, that is
+// invisible, and the believed state silently goes stale. A stale "open" is the
+// expensive one: the next open request is refused as "already there" and the
+// animal stands at a shut door.
+//
+// The vibration sensor cannot say WHICH WAY the door went. It does not need to.
+// A door sitting at a limit can only travel one way, so the direction follows
+// from where it was; what vibration has to establish is that the movement was a
+// FULL TRAVEL rather than a shove. Duration is what distinguishes them, because
+// the travel time is already measured per direction (R17) and a door that ran
+// for ten seconds ran from one end to the other.
+
+// Edges per second that mean "the door is moving". The reference door reads
+// about 2,900 while travelling and exactly 0 at rest, so this sits two orders
+// of magnitude clear of the noise floor and an order below the signal.
+#ifndef VIBRATION_MOVING_PPS
+#define VIBRATION_MOVING_PPS 100
+#endif
+
+// How long each movement/no-movement decision is averaged over. Long enough to
+// be stable across a 100 ms control tick, short enough to place the start and
+// end of a ten-second travel to well within the tolerance band below.
+#ifndef VIBRATION_SAMPLE_MS
+#define VIBRATION_SAMPLE_MS 500
+#endif
+
+// How long the sensor may fall quiet before the run counts as finished.
+//
+// These modules are a spring in a tube: they go briefly silent mid-travel when
+// the door is running smoothly. Ending the run on the first quiet sample would
+// chop one travel into several short ones, none of which would match.
+#ifndef VIBRATION_RUN_GAP_MS
+#define VIBRATION_RUN_GAP_MS 1500
+#endif
+
+// The band, as a percentage of the measured travel time for that direction,
+// within which a run is accepted as a full travel.
+//
+// Asymmetric on purpose. Short of the travel time means the door did not reach
+// the far end, so the lower bound is the tighter one. Over it is ordinary — a
+// hand resting on the door after it stops, a door that drags — so the upper
+// bound is loose. Both are deliberately well inside "someone leaned on it",
+// which is a second or two.
+#ifndef VIBRATION_TRAVEL_MIN_PCT
+#define VIBRATION_TRAVEL_MIN_PCT 70
+#endif
+
+#ifndef VIBRATION_TRAVEL_MAX_PCT
+#define VIBRATION_TRAVEL_MAX_PCT 160
+#endif
+
+// A run longer than this is not a door. It is a sensor stuck on, a sensitivity
+// screw wound all the way in, or a module mounted where it feels the world.
+// The run is abandoned rather than concluded, and counted as evidence of noise
+// — which is what it is.
+#ifndef VIBRATION_RUN_MAX_MS
+#define VIBRATION_RUN_MAX_MS 45000
+#endif
+
+// ---------------------------------------------------------------------------
 // Maintenance mode — a bounded window in which the beacon cannot move the door
 // ---------------------------------------------------------------------------
 //

@@ -557,7 +557,7 @@ indefinitely, and the animal is standing in it. What the switches buy is
 | A stale belief persists until the next command | Reality corrects it, so the next request actuates |
 | Travel time expires → assume arrival | Arrival is observed, and its duration measured |
 | A travel that failed looks like one that worked | It is `STALLED` or `NO_MOVE` — different causes, different fixes |
-| A door moved by a hand or by its own controller is invisible | It is `UNCOMMANDED`, logged and sounded |
+| A door moved by a hand or by its own controller is invisible | It is `UNCOMMANDED`, logged and sounded — measured by a limit switch, or inferred from how long the vibration sensor felt it move |
 | The status LED shows what was commanded | It shows where the door is |
 
 There is one deliberate omission in the other direction too: `observePosition()`

@@ -32,7 +32,7 @@ what the words in the log mean.
 | "the door is open" | it was **commanded** open | a switch **says** it is open |
 | a travel that jammed | reported as success | `STALLED` — logged, sounded, and a close is **reversed** |
 | a press the controller swallowed | reported as success | `NO_MOVE` — and the door does not change what it believes |
-| the door moved by itself | invisible | `UNCOMMANDED` — logged and sounded |
+| the door moved by itself | invisible | `UNCOMMANDED` — logged and sounded, from a limit switch or from how long the movement lasted |
 | the "arrived" chime | a stopwatch expiring | an arrival |
 | travel time | something you measure with a stopwatch | measured per travel, and `calibrate` adopts it |
 
@@ -202,9 +202,18 @@ The vendor controller has modes of its own. Before they were disabled it drove
 the reference door with nothing commanding it — most visibly **leaving the open
 limit about fifteen seconds after arriving, twice.**
 
-This firmware assumes it is not the only thing that moves the door. With
-switches fitted, a door that reaches an end with no travel in flight is logged
-as `UNCOMMANDED`, sounded, and uploaded immediately.
+This firmware assumes it is not the only thing that moves the door. A door that
+reaches an end with no travel in flight is logged as `UNCOMMANDED`, sounded, and
+uploaded immediately. With limit switches fitted that is measured. Without them,
+it is inferred from how long the vibration sensor felt the door moving: a run
+lasting about as long as a full travel, on a door that was sitting at a limit,
+can only have gone one way.
+
+An inferred **close** is acted on — the firmware records the door as closed.
+An inferred **open** is logged but not believed, and the position is recorded as
+`UNKNOWN` instead. The asymmetry is on purpose: wrongly believing the door is
+open is what refuses the next open request and shuts an animal out, and no
+inference is allowed to cause that. Only a switch commits an open.
 
 **If you see that event repeatedly, your controller still has an automatic mode
 enabled.** Find it and turn it off before trusting any measurement — including

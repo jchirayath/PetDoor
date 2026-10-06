@@ -92,10 +92,28 @@ uint32_t g_sensorFaultBeepMs = 0;     // when the reminder last sounded
 DoorState g_lastKnownEnd = DOOR_UNKNOWN;
 uint32_t g_lastTravelEndedMs = 0;     // so a late reed is not called a mystery
 
+// Inferring a travel from vibration alone — see updateVibrationTravel().
+uint32_t g_vibSampleBase = 0;         // edge count when this sample opened
+uint32_t g_vibSampleAtMs = 0;         // 0 = not seeded
+bool g_vibRunActive = false;          // currently inside a run of movement
+uint32_t g_vibRunStartMs = 0;
+uint32_t g_vibRunLastMoveMs = 0;
+uint8_t g_vibRunsThisWindow = 0;      // discrete runs seen since the idle window opened
+bool g_vibRunRanAway = false;         // a run hit VIBRATION_RUN_MAX_MS: that is noise
+
 // Why a LOG_REFUSED entry exists, for the reasons that are not an
 // ActuationResult. Kept well clear of that enum so adding a refusal to it can
 // never silently re-label history on the dashboard.
 constexpr uint8_t kRefusedBySchedule = 100;
+
+// LOG_UNCOMMANDED's detail is the end the door arrived at, as a DoorState, when
+// a limit switch MEASURED it. When it was INFERRED from how long the vibration
+// sensor felt the door moving, the same value carries this offset instead.
+//
+// Separated for the reason invariant 17 exists: a measurement and an inference
+// are not the same claim, and a dashboard that renders them identically quietly
+// turns one into the other. 11 is an inferred OPEN, 12 an inferred CLOSED.
+constexpr uint8_t kUncommandedInferred = 10;
 
 // Defined further down, beside the rest of the maintenance-window handling,
 // but needed by the console key dispatch above it.
@@ -600,6 +618,21 @@ void printStatus(uint32_t nowMs) {
     Con.printf("  vibration    : GPIO %d, %lu edges since boot%s\r\n",
                Vibration::pin(), static_cast<unsigned long>(Vibration::pulses()),
                Vibration::activeLow() ? " (pull-up on)" : "");
+    // Whether a hand-closed door would be noticed, and if not, why not. Both
+    // answers are actionable: calibrate, or fit a switch.
+    const uint32_t vTravel = Actuator::travelMs(DOOR_CLOSED);
+    if (vTravel == 0) {
+      Con.println(F("                 uncommanded travel NOT inferred: no close "
+                    "travel time ('c' to calibrate)"));
+    } else {
+      Con.printf("                 uncommanded travel inferred from %lu.%lu-%lu.%lu s "
+                 "of movement\r\n",
+                 static_cast<unsigned long>((vTravel / 100UL * VIBRATION_TRAVEL_MIN_PCT) / 1000UL),
+                 static_cast<unsigned long>(((vTravel / 100UL * VIBRATION_TRAVEL_MIN_PCT) % 1000UL) / 100UL),
+                 static_cast<unsigned long>((vTravel / 100UL * VIBRATION_TRAVEL_MAX_PCT) / 1000UL),
+                 static_cast<unsigned long>(((vTravel / 100UL * VIBRATION_TRAVEL_MAX_PCT) % 1000UL) / 100UL));
+    }
+    if (g_vibRunActive) Con.println(F("                 MOVING right now"));
   } else {
     Con.println(F("  vibration    : no sensor ('w' then 'vibration <pin>' to add one)"));
   }
@@ -2119,6 +2152,8 @@ void updateVibrationNoise(uint32_t nowMs) {
     g_vibIdleBaseline = Vibration::pulses();
     g_vibIdleSinceMs = nowMs;
     g_vibIdleEndAtStart = g_lastKnownEnd;
+    g_vibRunsThisWindow = 0;
+    g_vibRunRanAway = false;
     g_vibIdleValid = true;
     return;
   }
@@ -2135,6 +2170,21 @@ void updateVibrationNoise(uint32_t nowMs) {
     g_vibIdleBaseline = Vibration::pulses();
     g_vibIdleSinceMs = nowMs;
     g_vibIdleEndAtStart = g_lastKnownEnd;
+    g_vibRunsThisWindow = 0;
+    g_vibRunRanAway = false;
+    return;
+  }
+
+  // Discrete runs of movement are a DOOR, not a noisy sensor, even when no
+  // switch confirmed where it ended up and the end above therefore never
+  // changed. A sensor with its sensitivity screw wound in chatters more or less
+  // continuously; a door being handled produces bursts that start and stop. The
+  // run that ran past VIBRATION_RUN_MAX_MS is the exception — that one IS
+  // chatter, and it deliberately does not buy a stand-down.
+  if (g_vibRunsThisWindow > 0 && !g_vibRunRanAway) {
+    g_vibIdleBaseline = Vibration::pulses();
+    g_vibIdleSinceMs = nowMs;
+    g_vibRunsThisWindow = 0;
     return;
   }
 
@@ -2156,6 +2206,194 @@ void updateVibrationNoise(uint32_t nowMs) {
   // door keeps being checked.
   g_vibIdleBaseline = Vibration::pulses();
   g_vibIdleSinceMs = nowMs;
+  g_vibRunsThisWindow = 0;
+  g_vibRunRanAway = false;
+}
+
+// What a run of vibration, with no travel commanded, says about where the door
+// now is.
+//
+// The sensor cannot report direction — it counts edges, and a spring rattling
+// one way rattles the same the other. It does not have to. A door standing at a
+// limit has exactly one direction available to it, so the direction follows
+// from where the door was; all that has to be established is that the movement
+// was a FULL TRAVEL and not somebody leaning on the panel. The travel time is
+// already measured per direction, so duration answers that.
+//
+// WHY THE TWO DIRECTIONS ARE NOT TREATED ALIKE
+//
+// This is an inference, not a measurement, and it will occasionally be wrong.
+// What it costs when it is wrong is not symmetric:
+//
+//   believing CLOSED when the door is really OPEN — the next close is refused
+//   as "already there" and the door stays open. Visible, and fail-open.
+//
+//   believing OPEN when the door is really CLOSED — the next OPEN is refused as
+//   "already there", and the animal stands at a shut door. That is the one
+//   request invariant 13 says must never be refused.
+//
+// So an inferred CLOSE commits the belief and an inferred OPEN only logs,
+// dropping the belief to UNKNOWN. UNKNOWN refuses nothing: the next request in
+// either direction actuates, which is exactly the behaviour wanted from a
+// conclusion this firmware is not certain of. Only a limit switch commits an
+// open.
+static void concludeVibrationRun(uint32_t durationMs, uint32_t nowMs) {
+  // A limit switch that can see the door outranks anything inferred from how
+  // long it rattled. This path exists for doors that have no switches, and for
+  // the night one comes adrift; it must not second-guess a working one or
+  // double-log what updatePosition() already reported.
+  if (Position::enabled() && !Position::fault() &&
+      Position::state() != DOOR_UNKNOWN) {
+    return;
+  }
+
+  const DoorState from = g_door.state();
+  if (from == DOOR_UNKNOWN) {
+    Con.printf("[vib] %lu.%lu s of movement, but the door's position was already "
+               "unknown — nothing to infer from.\r\n",
+               static_cast<unsigned long>(durationMs / 1000UL),
+               static_cast<unsigned long>((durationMs % 1000UL) / 100UL));
+    return;
+  }
+
+  const DoorState to = (from == DOOR_OPEN) ? DOOR_CLOSED : DOOR_OPEN;
+  const uint32_t expected = Actuator::travelMs(to);
+  if (expected == 0) {
+    // No travel time for that direction, so there is no yardstick. Say so
+    // rather than guessing: 'c' calibrates it, and this is the one message
+    // that tells a user why the door felt movement and drew no conclusion.
+    Con.printf("[vib] felt %lu.%lu s of movement with nothing commanded, but no "
+               "travel time is set for %s — 'c' to calibrate.\r\n",
+               static_cast<unsigned long>(durationMs / 1000UL),
+               static_cast<unsigned long>((durationMs % 1000UL) / 100UL),
+               DoorController::stateName(to));
+    return;
+  }
+
+  const uint32_t lo = expected / 100UL * VIBRATION_TRAVEL_MIN_PCT;
+  const uint32_t hi = expected / 100UL * VIBRATION_TRAVEL_MAX_PCT;
+  if (durationMs < lo || durationMs > hi) {
+    // Worth printing, because "the door was shoved and did not travel" is a
+    // real thing to know, but not worth an event: it happens whenever an animal
+    // leans on the panel.
+    Con.printf("[vib] %lu.%lu s of movement — not a travel (a %s takes about "
+               "%lu.%lu s). Nothing concluded.\r\n",
+               static_cast<unsigned long>(durationMs / 1000UL),
+               static_cast<unsigned long>((durationMs % 1000UL) / 100UL),
+               DoorController::stateName(to),
+               static_cast<unsigned long>(expected / 1000UL),
+               static_cast<unsigned long>((expected % 1000UL) / 100UL));
+    return;
+  }
+
+  // Long enough to be the real thing.
+  Con.printf("[vib] !! %lu.%lu s of movement with NOTHING COMMANDED, and a %s "
+             "takes %lu.%lu s.\r\n",
+             static_cast<unsigned long>(durationMs / 1000UL),
+             static_cast<unsigned long>((durationMs % 1000UL) / 100UL),
+             DoorController::stateName(to),
+             static_cast<unsigned long>(expected / 1000UL),
+             static_cast<unsigned long>((expected % 1000UL) / 100UL));
+  Con.printf("[vib] !! The door was %s and a door at a limit can only go one "
+             "way, so it is now %s.\r\n",
+             DoorController::stateName(from), DoorController::stateName(to));
+
+  // Keep the reed path's idea of the last end in step even though no reed is
+  // reporting. If a disconnected switch is plugged back in later it will read
+  // the end the door is actually at, and without this that would compare
+  // against a pre-inference end and log the same movement a second time.
+  g_lastKnownEnd = to;
+
+  if (to == DOOR_CLOSED) {
+    g_door.observePosition(DOOR_CLOSED);
+  } else {
+    // Deliberately NOT observePosition(DOOR_OPEN) — see the comment above.
+    g_door.setBeliefUnknown();
+    Con.println(F("[vib] !! Recording the position as UNKNOWN rather than open:"));
+    Con.println(F("[vib] !! this was inferred, not measured, and a wrong 'open'"));
+    Con.println(F("[vib] !! is what refuses the next open and shuts an animal"));
+    Con.println(F("[vib] !! out. UNKNOWN refuses nothing."));
+  }
+
+  EventLog::record(LOG_UNCOMMANDED,
+                   static_cast<uint8_t>(kUncommandedInferred + static_cast<uint8_t>(to)),
+                   g_tracker.filteredRssi(),
+                   static_cast<int16_t>(durationMs > 32767UL ? 32767 : durationMs));
+  Chime::play(CHIME_UNCOMMANDED);
+#if PETDOOR_ENABLE_WIFI
+  publishStatusLines();
+  WifiLogger::requestFlushNow();
+#endif
+  (void)nowMs;
+}
+
+// Watches the vibration sensor for a run of movement while nothing is being
+// commanded, and hands the duration to concludeVibrationRun().
+//
+// Runs are measured rather than sampled instantaneously because the question is
+// "how long did it move for", and because these modules fall quiet for a moment
+// mid-travel: a run survives a gap of VIBRATION_RUN_GAP_MS so one travel is not
+// chopped into several that each match nothing.
+void updateVibrationTravel(uint32_t nowMs) {
+  if (!Vibration::enabled()) {
+    g_vibRunActive = false;
+    g_vibSampleAtMs = 0;
+    return;
+  }
+
+  // A commanded travel is the actuator's business — it is already watching this
+  // sensor for exactly this, and it owns the outcome. The settle window after
+  // one ends covers the door rocking onto its stop.
+  if (Actuator::busy() ||
+      (g_lastTravelEndedMs != 0 &&
+       (nowMs - g_lastTravelEndedMs) < UNCOMMANDED_SETTLE_MS)) {
+    g_vibRunActive = false;
+    g_vibSampleAtMs = 0;
+    return;
+  }
+
+  if (g_vibSampleAtMs == 0) {           // seed, including after any of the above
+    g_vibSampleBase = Vibration::pulses();
+    g_vibSampleAtMs = nowMs;
+    if (g_vibSampleAtMs == 0) g_vibSampleAtMs = 1;   // 0 means "not seeded"
+    return;
+  }
+  const uint32_t elapsed = nowMs - g_vibSampleAtMs;
+  if (elapsed < VIBRATION_SAMPLE_MS) return;
+
+  const uint32_t now = Vibration::pulses();
+  const uint32_t edges = now - g_vibSampleBase;
+  g_vibSampleBase = now;
+  g_vibSampleAtMs = nowMs;
+
+  const bool moving = (edges * 1000UL / elapsed) >= VIBRATION_MOVING_PPS;
+
+  if (moving) {
+    if (!g_vibRunActive) {
+      g_vibRunActive = true;
+      // The movement began somewhere inside the sample that noticed it, so
+      // charge the run from the start of that sample rather than its end. Over
+      // a ten-second travel this is the difference between measuring 10.2 s and
+      // 9.7 s, which matters at the bottom of the tolerance band.
+      g_vibRunStartMs = nowMs - elapsed;
+    }
+    g_vibRunLastMoveMs = nowMs;
+    if ((nowMs - g_vibRunStartMs) > VIBRATION_RUN_MAX_MS) {
+      // Not a door. Abandon the run and remember why, so the idle-noise check
+      // below counts this as the noise it is rather than standing down for it.
+      g_vibRunActive = false;
+      g_vibRunRanAway = true;
+    }
+    return;
+  }
+
+  if (!g_vibRunActive) return;
+  if ((nowMs - g_vibRunLastMoveMs) < VIBRATION_RUN_GAP_MS) return;  // a lull
+
+  const uint32_t durationMs = g_vibRunLastMoveMs - g_vibRunStartMs;
+  g_vibRunActive = false;
+  if (g_vibRunsThisWindow < 255) g_vibRunsThisWindow++;
+  concludeVibrationRun(durationMs, nowMs);
 }
 
 void updatePosition(uint32_t nowMs) {
@@ -2265,7 +2503,7 @@ void publishStatusLines() {
   char line[416];
   snprintf(line, sizeof(line),
            "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
-           "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s "
+           "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s "
            "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
            "batt=%ld battlow=%d sfault=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
@@ -2276,6 +2514,14 @@ void publishStatusLines() {
            static_cast<unsigned long>(g_tracker.maxGapMs()),
            static_cast<unsigned long>(g_tracker.totalSamples()),
            static_cast<unsigned long>(BleScanner::advCount()),
+           // Samples the BLE host task could not hand over because the control
+           // task was behind. The queue is 32 deep against a beacon advertising
+           // at ~2 Hz, so this is ~16 s of slack and should read 0 forever —
+           // which is exactly why it is worth uploading. It is the one number
+           // that answers "is the door missing the collar because the firmware
+           // is too busy", and until now it could only be read over a cable,
+           // which is the thing a mounted door does not have.
+           static_cast<unsigned long>(BleScanner::droppedSamples()),
            static_cast<unsigned long>(g_tracker.weakSamples()),
            static_cast<unsigned long>(ESP.getFreeHeap()),
            static_cast<unsigned long>(millis() / 1000),
@@ -3674,6 +3920,10 @@ void controlTask(void *) {
     reportCalibration();
     // Before updateLed(), which reads the latch this sets.
     reportBeaconBattery(now);
+    // After updatePosition(), which is what a fitted limit switch reports
+    // through, and before updateVibrationNoise(), which stands down for the
+    // runs this counts.
+    updateVibrationTravel(now);
     updateVibrationNoise(now);
     updateSensorFaultBeep(now);
     driveDoor(now);

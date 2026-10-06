@@ -354,7 +354,7 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 | `STALLED` | It started and never arrived. A stalled **close** is reversed |
 | `NO_MOVE` | Every press was swallowed, or the door is jammed solid. Nothing moved, so nothing is trapped |
 | `GAVE_UP` | Close attempts exhausted. `detail` is how many. **The door is staying open until a person deals with it** |
-| `UNCOMMANDED` | A switch reported the door at an end that nothing commanded it to — **a hand, the wind, or the door's own controller**. `detail` is which end. Logged, sounded and uploaded at once; not emailed, because most of them are you |
+| `UNCOMMANDED` | The door reached an end that nothing commanded it to — **a hand, the wind, or the door's own controller**. `detail` is which end: `1`/`2` when a limit switch measured it, `11`/`12` when it was inferred from the duration of the movement. Logged, sounded and uploaded at once; not emailed, because most of them are you |
 | `RETRY` | A press was repeated because the previous one moved nothing. `detail` is which attempt |
 | `SENSOR_FAULT` | A sensor disagreed with the other one badly enough to be called broken. `detail` names which (see below); the spare field carries the evidence. **Emailed.** Distinct from `STALLED`/`NO_MOVE`, which say the *door* misbehaved — this says the thing *watching* the door is lying |
 | `BEACON_LOW` | The beacon's **own battery** crossed the threshold. `detail` 1 = went low, 0 = recovered; the spare field carries the millivolts. Latched with a recovery margin, so one crossing is one entry. **This is the event that gives you days of notice** — see below |
@@ -370,8 +370,9 @@ logs once rather than sixteen times.
 ### Detecting a door that moved on its own
 
 A manual close — or the vendor controller acting on a mode of its own — is
-`UNCOMMANDED`. It needs the limit switches: without them nothing can tell the
-door moved, and the firmware simply keeps believing whatever it last commanded.
+`UNCOMMANDED`. There are two ways the door notices, and it prefers the first:
+a **limit switch** that saw the door arrive, or, when no switch can see it, the
+**duration** of what the vibration sensor felt.
 
 What it compares is **the last END the door was seen at**, not the last reading.
 That distinction is the whole feature. A door being pushed shut reads `OPEN`,
@@ -389,10 +390,65 @@ false positive:
 | it is at a **different** end now | a reed chattering as the door settles on its stop |
 | no travel resolved in the last `UNCOMMANDED_SETTLE_MS` | a travel given up on as `ASSUMED` or `STALLED` that was still finishing, and whose reed made a second later |
 
-The vibration sensor stays out of it. A hand-pushed door produces thousands of
-edges with no travel in flight, which is also the signature of a sensor firing
-at rest — so the noise check stands down whenever the door actually changed
-ends, rather than blaming the one part that reported the truth.
+A hand-pushed door produces thousands of edges with no travel in flight, which
+is also the signature of a sensor firing at rest. So the noise check stands down
+whenever the door actually changed ends, or whenever the movement came in
+discrete runs, rather than blaming the one part that reported the truth. A
+"run" that goes on past `VIBRATION_RUN_MAX_MS` is the exception — nothing on a
+door moves for forty-five seconds, so that one is counted as the chatter it is.
+
+#### Without limit switches: inferring the travel from its duration
+
+The switches are optional and most builds will not have them, so on those doors
+everything above is dead and the believed state silently goes stale. A stale
+**open** is the expensive one: the next open request is refused as "already
+there" and the animal stands at a shut door.
+
+The vibration sensor cannot say which way the door went. It does not need to —
+**a door sitting at a limit can only travel one way**, so the direction follows
+from where it was. What vibration has to establish is that the movement was a
+*full travel* rather than a shove, and duration answers that, because the travel
+time is already measured per direction.
+
+A run of movement is accepted as a travel when it lasts between
+`VIBRATION_TRAVEL_MIN_PCT` and `VIBRATION_TRAVEL_MAX_PCT` of that direction's
+measured travel time. On the reference door, whose close takes 11.2 s, that is a
+band of roughly **7.8 s to 17.9 s** — comfortably clear of someone leaning on
+the panel for a second or two. Runs survive a quiet patch of
+`VIBRATION_RUN_GAP_MS`, because these modules are a spring in a tube and go
+briefly silent mid-travel; without that, one travel would be chopped into
+several that each match nothing.
+
+**The two directions are not treated alike, and that is deliberate.** This is an
+inference, and it will sometimes be wrong. What it costs when it is wrong is not
+symmetric:
+
+| Inference | If wrong | Cost |
+|---|---|---|
+| it **closed** | the door is really open | the next close is refused, the door stays open. Visible, and fail-open |
+| it **opened** | the door is really closed | the next **open** is refused and the animal is shut out |
+
+The second is the one request that must never be refused. So an inferred close
+commits the believed state, and an inferred open only logs it — dropping the
+belief to `UNKNOWN`, which refuses nothing in either direction. **Only a limit
+switch commits an open.**
+
+The log says which happened. `detail` is the end the door reached — `1` open, `2`
+closed — when a switch measured it, and the same value plus 10 (`11`, `12`) when
+it was inferred, with the duration in the spare column. The dashboard renders the
+two differently on purpose: an inference and a measurement are not the same
+claim, and showing them identically is how one quietly becomes the other.
+
+`s` reports the band, so you can see at a glance whether a hand-closed door would
+be noticed on this door:
+
+```
+  vibration    : GPIO 33, 15932 edges since boot (pull-up on)
+                 uncommanded travel inferred from 7.8-17.9 s of movement
+```
+
+If it says `no close travel time` instead, press `c` to calibrate — nothing can
+be inferred without a yardstick.
 
 ### How a broken sensor is told from a broken door
 

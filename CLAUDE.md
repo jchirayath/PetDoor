@@ -53,11 +53,12 @@ Two compile-time switches move the size a lot. Measured on min_spiffs:
 
 | | flash | of 1.875 MB |
 |---|---|---|
-| **default (NimBLE + WiFi)** | **1,385,831** | **70%** |
-| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,843,115 | 93% |
+| **default (NimBLE + WiFi)** | **1,394,135** | **70%** |
+| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,851,251 | 94% |
 | `-DPETDOOR_ENABLE_WIFI=0` | 718,039 | 36% |
 
-Bluedroid has ~123 KB of flash left. Still supported, but it is the
+Bluedroid has ~114 KB of flash left, and that number only goes one way: it was
+~123 KB two features ago. Still supported, but it is the
 configuration that will break first — check it before and after any sizeable
 change, not just at the end.
 
@@ -373,6 +374,20 @@ comment above it explains why; keep the comment with the code.
     `getAddress().toString()` on that path: it is two heap allocations per
     advertisement per device in the BLE host task, and running out of heap
     there is what used to panic doors.
+19. **An inferred position may commit a close, never an open.** With no limit
+    switch to see it, a travel is inferred from how long the vibration sensor
+    felt the door moving — direction follows from the end it started at, because
+    a door at a limit has only one way to go. Being wrong is not symmetric:
+    a wrong "closed" refuses the next *close* and the door stays open, which is
+    fail-open, while a wrong "open" refuses the next *open* and shuts an animal
+    out. So `concludeVibrationRun()` calls `observePosition(DOOR_CLOSED)` for a
+    close and `setBeliefUnknown()` for an open. `UNKNOWN` refuses nothing. Do
+    not "finish" that branch by making it symmetrical.
+20. **An inference is logged distinguishably from a measurement.**
+    `LOG_UNCOMMANDED`'s detail is the `DoorState` when a switch measured it and
+    `kUncommandedInferred + state` (11, 12) when it was inferred, with the
+    duration in the spare column. Same reason as invariant 17: a dashboard that
+    renders the two identically turns one into the other.
 
 ## Conventions
 
