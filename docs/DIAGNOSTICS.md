@@ -354,7 +354,7 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 | `STALLED` | It started and never arrived. A stalled **close** is reversed |
 | `NO_MOVE` | Every press was swallowed, or the door is jammed solid. Nothing moved, so nothing is trapped |
 | `GAVE_UP` | Close attempts exhausted. `detail` is how many. **The door is staying open until a person deals with it** |
-| `UNCOMMANDED` | A switch reported the door at an end that nothing commanded it to. `detail` is which end |
+| `UNCOMMANDED` | A switch reported the door at an end that nothing commanded it to — **a hand, the wind, or the door's own controller**. `detail` is which end. Logged, sounded and uploaded at once; not emailed, because most of them are you |
 | `RETRY` | A press was repeated because the previous one moved nothing. `detail` is which attempt |
 | `SENSOR_FAULT` | A sensor disagreed with the other one badly enough to be called broken. `detail` names which (see below); the spare field carries the evidence. **Emailed.** Distinct from `STALLED`/`NO_MOVE`, which say the *door* misbehaved — this says the thing *watching* the door is lying |
 | `BEACON_LOW` | The beacon's **own battery** crossed the threshold. `detail` 1 = went low, 0 = recovered; the spare field carries the millivolts. Latched with a recovery margin, so one crossing is one entry. **This is the event that gives you days of notice** — see below |
@@ -366,6 +366,33 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 `REFUSED` is the one worth knowing about: it is what explains a door that did
 not move when you expected it to. Repeats are collapsed, so a boot-grace window
 logs once rather than sixteen times.
+
+### Detecting a door that moved on its own
+
+A manual close — or the vendor controller acting on a mode of its own — is
+`UNCOMMANDED`. It needs the limit switches: without them nothing can tell the
+door moved, and the firmware simply keeps believing whatever it last commanded.
+
+What it compares is **the last END the door was seen at**, not the last reading.
+That distinction is the whole feature. A door being pushed shut reads `OPEN`,
+then `UNKNOWN` for the ten seconds it is in transit, then `CLOSED` — so
+comparing against the previous *reading* always compares against `UNKNOWN`, and
+"did it change ends?" is always answered no. Written that way the event could
+never fire for any door that physically travels, which is all of them.
+
+Three things must hold before it is called uncommanded, and each excludes a real
+false positive:
+
+| | Excludes |
+|---|---|
+| it was at a **known** end before | the first reading after boot — the door was not moving, we simply had not looked |
+| it is at a **different** end now | a reed chattering as the door settles on its stop |
+| no travel resolved in the last `UNCOMMANDED_SETTLE_MS` | a travel given up on as `ASSUMED` or `STALLED` that was still finishing, and whose reed made a second later |
+
+The vibration sensor stays out of it. A hand-pushed door produces thousands of
+edges with no travel in flight, which is also the signature of a sensor firing
+at rest — so the noise check stands down whenever the door actually changed
+ends, rather than blaming the one part that reported the truth.
 
 ### How a broken sensor is told from a broken door
 

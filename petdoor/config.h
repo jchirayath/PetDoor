@@ -715,6 +715,16 @@
 // Raise it if the door is near a bedroom window. There is no quiet-hours logic:
 // the schedule module knows the time, so it could have some, but a fault that
 // stays silent until morning is a fault you find out about in the morning.
+// How long after a travel resolves before a limit switch making counts as
+// UNCOMMANDED movement rather than that travel arriving late.
+//
+// A travel given up on as ASSUMED or STALLED can still be finishing: the door
+// settles onto its stop a second or two later and the reed makes. Calling that
+// "the door moved and nothing commanded it" would be both wrong and alarming.
+#ifndef UNCOMMANDED_SETTLE_MS
+#define UNCOMMANDED_SETTLE_MS 5000
+#endif
+
 #ifndef SENSOR_FAULT_BEEP_MS
 #define SENSOR_FAULT_BEEP_MS 900000
 #endif

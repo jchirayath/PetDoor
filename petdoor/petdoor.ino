@@ -80,8 +80,17 @@ uint8_t g_vibDeadStrikes = 0;         // attempts that produced not one edge
 uint8_t g_reedMissedStrikes = 0;      // travels that ran and never arrived
 uint32_t g_vibIdleBaseline = 0;       // edge count when the door went quiet
 uint32_t g_vibIdleSinceMs = 0;
+DoorState g_vibIdleEndAtStart = DOOR_UNKNOWN;
 bool g_vibIdleValid = false;
 uint32_t g_sensorFaultBeepMs = 0;     // when the reminder last sounded
+
+// The last END the door was actually seen at, which is NOT the same as the last
+// thing observed. A door travelling between the two reeds reads UNKNOWN for the
+// whole journey, so comparing against the previous observation always compares
+// against UNKNOWN and never notices that the door changed ends. That is what
+// made uncommanded movement undetectable; see updatePosition().
+DoorState g_lastKnownEnd = DOOR_UNKNOWN;
+uint32_t g_lastTravelEndedMs = 0;     // so a late reed is not called a mystery
 
 // Why a LOG_REFUSED entry exists, for the reasons that are not an
 // ActuationResult. Kept well clear of that enum so adding a refusal to it can
@@ -2109,12 +2118,26 @@ void updateVibrationNoise(uint32_t nowMs) {
   if (!g_vibIdleValid) {
     g_vibIdleBaseline = Vibration::pulses();
     g_vibIdleSinceMs = nowMs;
+    g_vibIdleEndAtStart = g_lastKnownEnd;
     g_vibIdleValid = true;
     return;
   }
   if ((nowMs - g_vibIdleSinceMs) < VIBRATION_IDLE_WINDOW_MS) return;
 
   const uint32_t seen = Vibration::pulses() - g_vibIdleBaseline;
+
+  // If the door actually changed ends during the window, that vibration was a
+  // DOOR MOVING — someone pushing it shut, or the vendor controller acting on
+  // a mode of its own — and calling the sensor noisy would blame the one part
+  // that reported the truth. updatePosition() logs it as uncommanded movement,
+  // which is the right verdict; this one just gets out of the way.
+  if (g_lastKnownEnd != g_vibIdleEndAtStart) {
+    g_vibIdleBaseline = Vibration::pulses();
+    g_vibIdleSinceMs = nowMs;
+    g_vibIdleEndAtStart = g_lastKnownEnd;
+    return;
+  }
+
   if (seen >= VIBRATION_IDLE_NOISE_PULSES) {
     Con.printf("[sensor] !! vibration sensor felt %lu edges in %lu s with the "
                   "door STANDING STILL.\r\n",
@@ -2158,12 +2181,25 @@ void updatePosition(uint32_t nowMs) {
 
   const DoorState seen = Position::state();
   if (seen == g_lastObserved) return;
-  const DoorState previously = g_lastObserved;
   g_lastObserved = seen;
   if (seen == DOOR_UNKNOWN) return;   // the normal reading between the switches
 
+  // Which END the door was last seen at, which is the comparison that matters.
+  //
+  // THIS USED TO COMPARE AGAINST THE PREVIOUS OBSERVATION, AND SO NEVER FIRED.
+  // A door being pushed shut by hand reads OPEN, then UNKNOWN for the ten
+  // seconds it is in transit, then CLOSED — so the previous observation is
+  // always UNKNOWN by the time it arrives, and "did it change ends?" was always
+  // answered no. Uncommanded movement was undetectable for every door that
+  // physically travels, which is all of them. Remembering the last END instead
+  // of the last READING is the whole fix.
+  const DoorState from = g_lastKnownEnd;
+  g_lastKnownEnd = seen;
+
   // Arrival during a travel is the actuator's business — it is watching for
-  // exactly this and will resolve the attempt itself. Nothing to do here.
+  // exactly this and will resolve the attempt itself. Nothing to do here, but
+  // the end above is still recorded, or the next observation would compare
+  // against a stale one.
   if (Actuator::busy()) return;
 
   // THE DOOR MOVED AND NOTHING COMMANDED IT.
@@ -2174,9 +2210,15 @@ void updatePosition(uint32_t nowMs) {
   // it too. None of it was visible to this firmware before the switches were
   // fitted, which is why a door that "randomly" changed state was unfalsifiable.
   //
-  // `previously == DOOR_UNKNOWN` excludes the honest case: the first reading
-  // after boot, where the door is not moving, we simply had not looked yet.
-  const bool uncommanded = previously != DOOR_UNKNOWN;
+  // Three things have to hold. It must have been at a KNOWN end before, which
+  // excludes the first reading after boot — the door was not moving then, we
+  // simply had not looked. It must be at a DIFFERENT end now. And no travel may
+  // have resolved in the last few seconds, because a reed that makes just after
+  // a travel was given up on is that travel arriving late, not a mystery.
+  const bool uncommanded =
+      from != DOOR_UNKNOWN && from != seen &&
+      (g_lastTravelEndedMs == 0 ||
+       (nowMs - g_lastTravelEndedMs) > UNCOMMANDED_SETTLE_MS);
 
   if (g_door.observePosition(seen)) {
     if (uncommanded) {
@@ -2528,6 +2570,9 @@ void reportOutcome(const Actuator::Result &r) {
   // actually believes it got there — OUT_NO_MOVE and OUT_STALLED have their own
   // entries above, and recording an OPEN for a travel that failed is exactly
   // the lie this rebuild exists to stop telling.
+  g_lastTravelEndedMs = millis();
+  if (g_lastTravelEndedMs == 0) g_lastTravelEndedMs = 1;   // 0 means "never"
+
   const bool committed = (r.outcome == Actuator::OUT_ARRIVED ||
                           r.outcome == Actuator::OUT_ASSUMED ||
                           r.outcome == Actuator::OUT_UNTIMED);
