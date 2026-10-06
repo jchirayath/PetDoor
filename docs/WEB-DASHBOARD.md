@@ -525,11 +525,35 @@ petdoor.example.com {
         you $2a$14$...        # caddy hash-password
     }
     reverse_proxy 127.0.0.1:8080
+
+    # Set these too. The dashboard shows when a house is empty, so it wants the
+    # stricter end of each: DENY rather than SAMEORIGIN, no-referrer rather
+    # than strict-origin-when-cross-origin.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options           "DENY"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "no-referrer"
+        Permissions-Policy        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        -Server                   # the log server announces its Python version
+    }
 }
 ```
 
 With an identity provider, replace `basic_auth` with your `forward_auth` block
 against the same `@private` matcher — the matcher is the part that matters.
+
+**Put the headers on the HTTPS vhost only.** If you run a second plain-HTTP
+vhost so the door can reach `/ingest` without TLS — which is the usual shape,
+because an ESP32 cannot afford a handshake — it must not carry HSTS. HSTS is
+ignored on a plaintext response anyway, and advertising it there is just
+confusing.
+
+**No `Content-Security-Policy` is suggested here on purpose.** `dashboard.html`
+is a single file with its scripts inline, so a useful CSP needs hashes computed
+from the page itself. Add one as `Content-Security-Policy-Report-Only` first,
+watch for violations, and only then enforce — added blind it takes the
+dashboard down and the failure looks like a server fault.
 
 ### nginx
 
