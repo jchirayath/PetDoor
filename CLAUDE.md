@@ -148,6 +148,22 @@ things about it that cost time to learn:
   `espota.py -f` against a fresh `--output-dir`. The firmware's own hint prints
   a bare `arduino-cli upload`, which is exactly the command that once wrote a
   Bluedroid image to a NimBLE door.
+* **ArduinoOTA's port 3232 is UDP, not TCP.** The invitation is a UDP packet;
+  only after the door answers does it open a TCP socket, on an ephemeral port.
+  So `nc -z <door> 3232` — a TCP scan — can never succeed, whether the window is
+  open or shut. A session was spent watching a window that had in fact opened on
+  time and acked `applied`. **Use `espota.py` itself as the probe**, in a retry
+  loop: its own handshake is the only honest test of whether the window is up.
+* **The build timestamp the dashboard shows does NOT tell you which source the
+  image was built from.** `PETDOOR_BUILD` is `__DATE__ " " __TIME__`, and the
+  copy the server sees is the one baked into `wifi_logger.cpp`, as the
+  `X-PetDoor-Build` header. Edit only `petdoor.ino` and arduino-cli reuses the
+  cached `wifi_logger.cpp` object — so the banner reports whenever that file was
+  last compiled, which can be hours before the image you just pushed. This
+  directly weakens the check above: "a banner reading two builds old" is a
+  symptom of a rollback, but an UNCHANGED banner is **not** evidence the push
+  failed. Verify with something you actually changed — a new status field, a new
+  console line — or force the issue with `compile --clean`.
 
 ## The serial console
 
