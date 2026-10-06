@@ -2202,6 +2202,35 @@ void updateVibrationNoise(uint32_t nowMs) {
     raiseSensorFault(SF_VIBRATION_NOISY,
                      static_cast<int16_t>(seen > 32767 ? 32767 : seen));
   }
+  else {
+    // A WHOLE QUIET WINDOW. Let the fault go.
+    //
+    // This was the only sensor fault with no way back, and it is the one most
+    // likely to have been raised in error: a hand working the door produces
+    // tens of thousands of edges, and if the idle window happens to expire
+    // before a switch confirms the door changed ends, the sensor gets the
+    // blame. That happened on the reference door — 9,655 edges at 15:50, the
+    // fault raised, and the reeds reported the new end 41 s later.
+    //
+    // Latched forever, the consequence is not just a wrong line in the status:
+    // it is a buzzer sounding every SENSOR_FAULT_BEEP_MS until someone power
+    // cycles the door, for a sensor that is working. An alarm nobody can stand
+    // gets unplugged, and that loses every future message with it — which is
+    // the argument chime.cpp makes, and it applies here.
+    //
+    // A full window at rest below the threshold is the same standard the fault
+    // was raised on, so it is the right standard to drop it on.
+    if (g_sensorFault == SF_VIBRATION_NOISY) {
+      Con.println(F("[sensor] vibration quiet for a full window again — "
+                    "clearing the noise fault."));
+      clearSensorFault(SF_VIBRATION_NOISY);
+#if PETDOOR_ENABLE_WIFI
+      publishStatusLines();
+      WifiLogger::requestFlushNow();
+#endif
+    }
+  }
+
   // Re-arm either way, so a latched fault keeps being measured and a healthy
   // door keeps being checked.
   g_vibIdleBaseline = Vibration::pulses();
