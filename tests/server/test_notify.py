@@ -137,12 +137,61 @@ def test_stall_cooldown_but_gave_up_always():
     check(len(SENT) == 4, "a different door's stall is not suppressed by the first")
 
 
+def seed_event(device, boot, uptime, etype, detail, rssi=-70, src=0):
+    with srv.db() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO events"
+            "(device,epoch,uptime,boot,type,detail,rssi,received,src)"
+            " VALUES(?,?,?,?,?,?,?,?,?)",
+            (device, int(time.time()), uptime, boot, etype, detail, rssi,
+             int(time.time()), src))
+
+
+def test_inferred_movement_never_renders_as_measured():
+    """Invariant 20: an inference and a measurement are different claims.
+
+    LOG_UNCOMMANDED's detail is a DoorState when a limit switch measured the
+    door's arrival, and the same value plus 10 when it was only inferred from
+    how long the vibration sensor felt it move. Rendering the two identically is
+    how an inference quietly becomes a measurement — which is the failure this
+    guards, and it is silent: the page still looks right.
+    """
+    seed_device("render-door", int(time.time()))
+    # A measured close, and an inferred close that took 11.2 s.
+    seed_event("render-door", 7, 100, "UNCOMMANDED", 2)
+    seed_event("render-door", 7, 200, "UNCOMMANDED", 12, src=11229)
+    page = srv.render()
+
+    check("a limit switch saw it" in page,
+          "a measured UNCOMMANDED says a switch saw it")
+    check("inferred from 11.2 s of movement" in page,
+          "an inferred UNCOMMANDED says so, with the duration it was inferred from")
+    # Both must still name the end the door reached, and neither may be
+    # rendered as the literal detail number.
+    check(page.count("the door moved to closed and nothing commanded it") == 2,
+          "both rows name the end the door reached")
+    check("state 12" not in page,
+          "detail 12 is decoded as an inferred close, not shown as a raw state")
+
+
+def test_an_inferred_open_is_still_an_open():
+    """11 is an inferred OPEN. Off-by-one here would report the wrong end."""
+    seed_device("render-door2", int(time.time()))
+    seed_event("render-door2", 9, 100, "UNCOMMANDED", 11, src=10203)
+    page = srv.render()
+    check("the door moved to open and nothing commanded it" in page,
+          "detail 11 renders as an inferred OPEN, not a closed")
+    check("state 11" not in page, "detail 11 is decoded, not shown raw")
+
+
 def main():
     srv.init_db()
     print("log server — alerting tests")
     test_stale_door_alerts_once_then_recovers()
     test_healthy_and_unknown_doors_stay_silent()
     test_stall_cooldown_but_gave_up_always()
+    test_inferred_movement_never_renders_as_measured()
+    test_an_inferred_open_is_still_an_open()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 
