@@ -206,7 +206,7 @@ Type a single character. No Enter needed; newlines are ignored.
 
 | Key | Action |
 |---|---|
-| `h` | Help |
+| `h` or `?` | Help |
 | `s` | Status — presence, door, signal, radio health, heap |
 | `d` | Toggle discovery mode (list every BLE device in range) |
 | `c` | Toggle the calibration stream (live RSSI) |
@@ -227,6 +227,8 @@ Type a single character. No Enter needed; newlines are ignored.
 | `f` | Edit both filter shapes — the slow close filter and the fast open filter — saved on the device |
 | `!` | Reboot into flash mode — no IO0/EN buttons needed |
 | `C` | **Calibrate the travel time**, both directions. Needs both limit switches and an open maintenance window (`M` first); begins with a 90-second quiet period and aborts if the door moves during it. See [TUNING.md](TUNING.md#measuring-the-travel-time) |
+| `M` | **Maintenance window** — the door keeps listening and reporting but will not move, for a bounded period, and opens the console over WiFi. `M` again ends it early. Blocks *both* directions, unlike the lock, because the person calibrating is standing at the door holding the collar. Never written to NVS: a window always expires by itself, so a forgotten flag or a lost network cannot leave a door that an animal has no way into |
+| `n` | Edit the **scheduled lockout** windows — times the beacon may not open the door, an overnight lockout being the obvious one. Inert without a clock: a door that guesses the time can lock an animal out at noon believing it is midnight |
 
 ### `o` holds the door open
 

@@ -103,8 +103,13 @@ ago — so it is the configuration that will break first.
 
 The maintainer has said it will not be used. It is **not** being removed, because
 both stacks compiling is a stated invariant and CI covers all four board targets,
-so keeping it costs nothing but a job. What has stopped is treating its flash
-headroom as a design constraint.
+so keeping it costs nothing but a job — and nothing in wall-clock, since the four
+compile jobs run in parallel and this is not the slowest.
+
+**Its CI job is deliberately not a required status check on `main`.** The other
+three compile jobs are. Required-and-doomed is the worst of the available options:
+the first change that tips it past 100% would block every merge for a
+configuration nobody runs. It still runs and a red mark is still the signal.
 
 **Unblocked by:** a decision to drop it, which would delete the stack-adapter
 block at the top of `ble_scanner.cpp` and simplify that file considerably — or by

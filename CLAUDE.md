@@ -27,9 +27,16 @@ telemetry never decoded and iBeacon UUID matching could never match. See
 `tests/host/README.md`.
 
 `beacon.*` is the only attacker-controlled input the firmware has — every byte
-comes from an unauthenticated advertisement — so it is fuzzed under ASan/UBSan
-as well as unit tested. Most of the firmware still has no tests; adding them to
-`proximity.*` is the obvious next step, since it is pure logic too.
+comes from an unauthenticated advertisement — so it is fuzzed under ASan/UBSan as
+well as unit tested. **180 host checks** now cover it plus `proximity.*` (the
+filters, the hysteresis state machine and both `millis()`-wrap cases) and
+`sensor_verdict.h` (both sensor-health decision tables). `tests/server/run.sh`
+adds 53 on the log server's alerting.
+
+What is left untested needs a chip, a radio or a relay, and that is the honest
+boundary rather than a backlog — see `docs/PARKING_LOT.md`. The rule for extending
+it: **if logic can be lifted out of the hardware path, lift it and test it.**
+`sensor_verdict.h` exists for that reason and nothing else.
 
 Then compile — for both stacks:
 
@@ -307,6 +314,7 @@ the folder name and `petdoor.ino` in sync or Arduino IDE stops recognising it.
 | `position.*` | Optional limit switches: debounce, measured state. Never commands the motor |
 | `maintenance.*` | Bounded window in which the beacon cannot move the door; RSSI histogram for calibration |
 | `console.*` | The console as a Stream, fanned out to the UART and a window-bounded network client |
+| `eventlog.*` | The durable ring in NVS, the event and sensor-fault enums, and the CSV the uploader sends |
 | `schedule.*` | Time windows in which the beacon may not open the door. Inert without a clock |
 | `vibration.*` | Optional sensor answering "did it START moving", by counting edges in an ISR |
 | `sensor_verdict.h` | The sensor-health decisions as pure functions, so they can be host-tested. No Arduino, no config.h, no globals |
@@ -432,6 +440,17 @@ comment above it explains why; keep the comment with the code.
     instrument for a decision table. Do not move a threshold back inside, and do
     not re-test a condition the verdict already weighed: two sources of truth
     for one question is how they drift.
+22. **Age helpers use a signed delta, never `a > b`.** `sampleAgeMs()` and
+    `advAgeMs()` compute `(int32_t)(now - then)` and clamp negatives to zero.
+    Writing `(now > then) ? now - then : 0` looks equivalent and is not: at the
+    `millis()` wrap it reports a sample from BEFORE the wrap as brand new, which
+    would let a long-dead beacon read as present and open the door. Covered by
+    `tests/host/test_proximity.cpp`, both directions.
+23. **Never subtract a cross-task timestamp raw.** Use `advAgeMs()` /
+    `sampleAgeMs()`. A timestamp written by the BLE task can sit a few ms AHEAD
+    of the control task's `nowMs`, and `now - then` then underflows to ~2^32, so
+    the freshest reading there is reads as 49 days old — which drops the fix and
+    cancels a pending open. Clamping to 0 is the whole fix.
 
 ## Conventions
 
@@ -462,3 +481,27 @@ comment above it explains why; keep the comment with the code.
 `docs/` is written for a stranger with a soldering iron, not for us. If you
 change wiring, pins, defaults, or safety behaviour, update the matching doc in
 the same change — `docs/SAFETY.md` and `docs/WIRING.md` especially.
+
+**Where the non-obvious documents live, and what each is FOR** — they look
+overlapping and are not, and putting something in the wrong one is how it stops
+being read:
+
+| File | Holds | Does NOT hold |
+|---|---|---|
+| `docs/OBSERVABILITY.md` | the producer × sink table: which events reach the console, the buzzer, the log, the status line and email | anything about what the events mean |
+| `docs/PARKING_LOT.md` | work blocked on an external event, and what would unblock it | anything that can be worked on now |
+| `docs/STANDARD_EXCEPTIONS.md` | rules the repo does not meet, each with an owner and an **expiry** | anything blocked (that is the parking lot) |
+| `SECURITY.md` | how to report a vulnerability, and the scope — including that a door refusing to open outranks any confidentiality issue | per-chapter evidence |
+| `mappings/ASVS-5.0.md` | the per-chapter ASVS position with the mechanism named for each | the generated 345-row matrix, which is the standard's own |
+| `tools/logserver/caddy/` | the **live** vhost, verbatim, because it used to exist only on one VM | a generic example — that is `docs/WEB-DASHBOARD.md` |
+
+Two rules about these that are easy to get wrong:
+
+**Closing a deviation means DELETING its row**, not marking it done.
+`STANDARD_EXCEPTIONS.md` is a list of what is currently untrue, and a row saying
+"fixed" makes it longer without making it more informative.
+
+**A new event needs the five questions in `OBSERVABILITY.md`**, in order. Three
+bugs in one evening were the same shape — the door knew something and no sink a
+person reads carried it. `drop=` was console-only on a door with no cable, a
+sensor fault *clearing* was in no history, and a panic was entirely silent.

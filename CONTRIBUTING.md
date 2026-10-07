@@ -29,15 +29,26 @@ ARDUINO_CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/re
 "$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32 petdoor
 ```
 
-`tests/host/run.sh` builds `petdoor/beacon.cpp` on your machine and tests it
-against real advertisement payloads, then fuzzes it under ASan/UBSan. Run it for
-any change to `beacon.*` or to the BLE stack adapter in `ble_scanner.cpp`. It
-exists because a bug that compiled cleanly ran on a real door for weeks — see
-[tests/host/README.md](tests/host/README.md).
+`tests/host/run.sh` needs no hardware and no Arduino toolchain. It runs **180
+checks** and a fuzz pass under ASan/UBSan:
 
-Most of the firmware still has no tests, because most of it needs the chip, a
-radio or a relay. If you are changing something that is pure logic, a test is
-welcome and `tests/host/` is where it goes.
+| | |
+|---|---|
+| `beacon.*` | the advertisement parsers — the only attacker-controlled input the firmware has, so also fuzzed |
+| `proximity.*` | the filters and the presence state machine, including both `millis()`-wrap cases |
+| `sensor_verdict.h` | the two sensor-health decisions, whole decision tables |
+| a lint rule | fails the build if `String(x.c_str())` returns to the BLE adapter |
+
+It exists because a bug that compiled cleanly ran on a real door for weeks — see
+[tests/host/README.md](tests/host/README.md). `tests/server/run.sh` adds 53 checks
+on the log server's alerting.
+
+**The rest of the firmware is verified on hardware**, because it needs a chip, a
+radio and a relay: you cannot unit-test "the relay pulse was long enough for this
+vendor controller to notice". So if you are changing something that is pure logic,
+**lift it out and test it** — `petdoor/sensor_verdict.h` exists for exactly that
+reason. If you are changing something that is not, say in the PR what you ran on
+what hardware.
 
 A standalone `arduino-cli` on `PATH` works identically. Target is **ESP32
 Arduino core 3.x** (3.3.5 is what this was developed against).
@@ -52,9 +63,11 @@ Say in the PR whether you tested on hardware, and on which board. "Compiles,
 untested on hardware" is a perfectly acceptable and useful thing to write — it
 just tells the reviewer what to check.
 
-Flash usage sits around **83%** of the default partition scheme. If your change
-pushes it much higher, say so, and switch partition schemes rather than quietly
-trimming features.
+Flash usage sits at **70%** of `min_spiffs`, which is the scheme this firmware
+requires — the default does not fit at all. Bluedroid
+(`-DPETDOOR_USE_NIMBLE=0`) is at **94%** with ~114 KB spare and is the
+configuration that will break first, so check it before and after any sizeable
+change, not just at the end. If your change pushes either much higher, say so.
 
 ---
 
@@ -90,38 +103,37 @@ forking. Never hard-code at the point of use.
 
 ### Weakening a safety invariant
 
-These are not incidental. Each protects an animal or a motor:
+**The full list lives in [CLAUDE.md](CLAUDE.md#invariants--do-not-regress-these)
+— 23 of them, each with the incident behind it.** This file used to carry its own
+copy, which drifted to eleven and still named a function that had been deleted; one
+list is the fix, not two tidier ones.
 
-1. `RSSI_ENTER_DBM > RSSI_EXIT_DBM` — the gap is the hysteresis band.
-2. `MIN_ACTUATION_INTERVAL_MS < EXIT_CONFIRM_MS` — or the lockout delays
-   closing.
-3. **A stale signal can close the door but never open it.**
-4. **Never actuate before the beacon has been heard once since boot.** A dead
-   beacon battery must not read as "absent".
-5. **Never close during `BOOT_GRACE_MS`.** A power blip must not slam the door
-   on an animal standing in it.
-6. **Relays are interlocked.** `pulse()` always releases the opposite relay and
-   waits `DIRECTION_CHANGE_GAP_MS` first.
-7. **The BLE callback stays cheap and never blocks.** No `Serial` output, no
-   blocking waits. Samples go over a queue; the discovery table is taken with a
-   zero timeout and skipped if busy.
-8. **Door state is owned by one task.** `controlTask` is the only caller of
-   `DoorController`. Never actuate from `loop()` or from a callback.
-9. **Opening is never rate-limited.** The actuation lockout applies to closing
-   only. Reintroducing it on `requestOpen()` would delay reopening a door that
-   just closed on an animal.
-10. **Age helpers use a signed delta, not `a > b`.** `sampleAgeMs()` and
-    `advAgeMs()` compute `(int32_t)(now - then)` and clamp negatives to zero.
-    Writing `(now > then) ? now - then : 0` looks equivalent and is not: at the
-    `millis()` wrap it reports a sample from before the wrap as brand new, which
-    would let a long-dead beacon read as present and open the door.
-11. **Never subtract a cross-task timestamp raw.** Use `advAgeMs()` /
-   `sampleAgeMs()`. A timestamp written by the BLE task can sit a few ms ahead
-   of the control task's `nowMs`, and `now - then` underflows to ~2^32. See
-   [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#timestamps-cross-a-task-boundary-never-subtract-them-raw).
+They are not incidental. Each protects an animal or a motor, and most were written
+after something went wrong on a real door. The shape of them:
 
-If you have a good reason to change one, that is a discussion to have in an
-issue first, not a surprise in a diff.
+- **Thresholds and timings have relationships**, and `static_assert` enforces the
+  ones that could misbehave silently — the hysteresis band, the lockout against the
+  exit dwell, the fast filter never being slower than the slow one.
+- **A stale or absent signal can close the door but never open it**, and nothing
+  actuates before the beacon has been heard once since boot. A flat beacon battery
+  must not read as "the animal has gone".
+- **One task owns the door.** `controlTask` is the only caller of `Actuator`, and
+  `Actuator` is the only caller of `DoorController::press()`/`commit()`. Never
+  actuate from `loop()` or from a callback.
+- **Opening is never rate-limited.** The actuation lockout applies to closing only;
+  `check()` returns early for `DOOR_OPEN` before it ever consults `lockedOut()`.
+  Delaying an open is the one direction that can trap an animal.
+- **A stalled close fails open**, reversed rather than retried, and says so
+  everywhere when it gives up. A door that silently stopped trying is worse than
+  one that is visibly open.
+- **The BLE callback stays cheap, never blocks, and allocates nothing for a device
+  that is not the target.** Running out of heap in that task is what used to panic
+  doors.
+- **Timestamps are never subtracted raw**, because one task stamps them and another
+  reads them. Use `sampleAgeMs()` / `advAgeMs()`.
+
+If you have a good reason to change one, that is a discussion to have in an issue
+first, not a surprise in a diff.
 
 ### Breaking the other BLE stack
 

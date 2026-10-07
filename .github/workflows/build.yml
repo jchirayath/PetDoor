@@ -68,6 +68,17 @@ jobs:
           # Bluedroid is no longer the default, so this job has to ask for it
           # explicitly. Without the flag it would build NimBLE and the older
           # stack would go untested while the job still passed.
+          #
+          # THIS JOB IS DELIBERATELY NOT A REQUIRED STATUS CHECK on main, unlike
+          # the other three compile jobs. It sits at 94% of min_spiffs with about
+          # 114 KB spare and has been creeping — 123 KB two features ago — so it
+          # will eventually overflow, and when it does it must not block a merge
+          # for a configuration nobody runs. It still runs, and a red mark here is
+          # still the signal that the day has come.
+          #
+          # Do not "fix" the asymmetry by adding it back to the required list.
+          # The real decision — commit to Bluedroid or delete the stack adapter
+          # at the top of ble_scanner.cpp — is recorded in docs/PARKING_LOT.md.
           - fqbn: esp32:esp32:esp32
             name: ESP32 (Bluedroid)
             stackflags: >-

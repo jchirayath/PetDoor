@@ -113,10 +113,27 @@ not a requirement.
 
 ### Flash and partitions
 
-The firmware uses about **83% of the default partition scheme** (roughly 1.09 MB
-of 1.31 MB). That is comfortable but not roomy. A 4 MB board is the norm and is
-plenty; if you add substantial features, switch to a larger app partition rather
-than trimming existing ones.
+**The default partition scheme is not used, and will not fit.** With WiFi enabled
+the image does not come close — it needs about 136% of it. Build with
+**`min_spiffs`** (Arduino IDE: Tools → Partition Scheme → *Minimal SPIFFS (1.9MB
+APP with OTA/190KB SPIFFS)*); PlatformIO picks it up from `board_build.partitions`
+in `platformio.ini`.
+
+`min_spiffs` is required rather than merely roomier, for a second reason: it keeps
+a **second app slot**, which is what over-the-air updates need. A mounted door is
+updated over WiFi, so losing that slot would mean a ladder.
+
+Measured on a classic ESP32, 6 Oct 2026, of the 1.875 MB `min_spiffs` app
+partition:
+
+| Build | Flash | |
+|---|---|---|
+| default (NimBLE + WiFi) | **1,395,443** | **70%** |
+| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,852,523 | 94% |
+| `-DPETDOOR_ENABLE_WIFI=0` | 718,039 | 36% |
+
+A 4 MB board is the norm and is plenty. Bluedroid has only ~114 KB spare and is
+the configuration that will run out first.
 
 ---
 

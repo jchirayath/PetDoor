@@ -395,9 +395,16 @@ core **2.x**. This project needs **3.x**. Update the board core in Arduino IDE's
 board manager, or for PlatformIO use the `pioarduino` platform fork already
 configured in `platformio.ini` (the registry's `espressif32` is pinned to 2.x).
 
-**`Sketch too big`** — the build uses about 83% of the default partition scheme.
-If you have added code, select a partition scheme with a larger app partition
-(Tools → Partition Scheme in the Arduino IDE).
+**`Sketch too big`** — you are almost certainly on the **default partition
+scheme**, which this firmware does not fit: with WiFi enabled it needs about 136%
+of it. Select **Minimal SPIFFS (1.9MB APP with OTA/190KB SPIFFS)** under
+Tools → Partition Scheme; PlatformIO already does this via
+`board_build.partitions`.
+
+On `min_spiffs` the default build uses **70%**, so there is room. If you are
+already on `min_spiffs` and still over, you are probably building Bluedroid
+(`-DPETDOOR_USE_NIMBLE=0`), which sits at 94% with ~114 KB spare and is the first
+configuration to run out.
 
 **`static_assert` failures** — these are guardrails, and each says what is
 wrong:
