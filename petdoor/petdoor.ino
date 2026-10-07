@@ -2588,10 +2588,11 @@ void updatePosition(uint32_t nowMs) {
 // dashboard shows the old value while insisting the command succeeded.
 void publishStatusLines() {
 #if PETDOOR_ENABLE_WIFI
-  char line[416];
+  char line[512];   // grown when the memory fields were added below
   snprintf(line, sizeof(line),
            "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
-           "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s "
+           "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu maxalloc=%lu "
+           "heaplow=%lu cstack=%lu ustack=%lu up=%lu maint=%lu ip=%s real=%s "
            "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
            "batt=%ld battlow=%d sfault=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
@@ -2612,6 +2613,28 @@ void publishStatusLines() {
            static_cast<unsigned long>(BleScanner::droppedSamples()),
            static_cast<unsigned long>(g_tracker.weakSamples()),
            static_cast<unsigned long>(ESP.getFreeHeap()),
+           // THE THREE NUMBERS A PANIC NEEDS, WHICH USED TO STAY ON THE CABLE.
+           //
+           // A door panicked opening an OTA window 3.5 hours into a boot, and
+           // nothing uploaded could say why. Free heap was a comfortable 124 KB
+           // — but free heap is not what an allocation needs. It needs a
+           // CONTIGUOUS block, and that was measured nowhere at all. Heap
+           // low-water and the task stack high-waters existed, on the console
+           // only, which is the one place a mounted door cannot be read.
+           //
+           // maxalloc is the largest single block available: when it falls far
+           // below heap, the heap is fragmented, and that is the shape of
+           // failure that takes a door out while every other number looks fine.
+           // cstack/ustack are minimum-ever-free, not current — the uploader is
+           // the one that brings up WiFi and ArduinoOTA, so it is the one whose
+           // margin matters when a window will not open.
+           static_cast<unsigned long>(ESP.getMaxAllocHeap()),
+           static_cast<unsigned long>(ESP.getMinFreeHeap()),
+           static_cast<unsigned long>(
+               g_controlTaskHandle != nullptr
+                   ? uxTaskGetStackHighWaterMark(g_controlTaskHandle) * sizeof(StackType_t)
+                   : 0),
+           static_cast<unsigned long>(WifiLogger::stackFreeBytes()),
            static_cast<unsigned long>(millis() / 1000),
            // Seconds left in the maintenance window, 0 when there is none. The
            // dashboard needs this to say the door is deliberately not moving —

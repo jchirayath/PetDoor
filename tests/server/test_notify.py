@@ -213,6 +213,47 @@ def test_a_lost_reed_is_rendered_and_explained():
     check("fault 6" not in page, "fault 6 is not rendered as an unrecognised code")
 
 
+def test_a_crashed_door_emails_but_a_normal_restart_does_not():
+    """A panic was silent until now, which is how one went unnoticed for an hour.
+
+    The line to walk carefully: an OTA push restarts the door on purpose (reset
+    3), and so does a plug (reset 1). Emailing those would mean an email per
+    flash, which is how an alert becomes noise and then becomes a filter.
+    """
+    SENT.clear()
+    seed_device("crash-door", int(time.time()))
+
+    srv.notify_events("crash-door", [
+        {"type": "BOOT", "detail": 3, "boot": 50, "uptime": 0, "src": 0, "epoch": 0}])
+    check(len(SENT) == 0, "a software restart (an OTA push) sends nothing")
+
+    srv.notify_events("crash-door", [
+        {"type": "BOOT", "detail": 1, "boot": 51, "uptime": 0, "src": 0, "epoch": 0}])
+    check(len(SENT) == 0, "a power-on sends nothing")
+
+    srv.notify_events("crash-door", [
+        {"type": "BOOT", "detail": 4, "boot": 52, "uptime": 0, "src": 0, "epoch": 0}])
+    check(len(SENT) == 1, "a PANIC emails")
+    check("panic" in SENT[-1][0].lower(), "and says so in the subject")
+
+    # Not rate limited, on purpose: the history that forced the NimBLE default
+    # was three consecutive panics, and a cooldown would have hidden two.
+    srv.notify_events("crash-door", [
+        {"type": "BOOT", "detail": 4, "boot": 53, "uptime": 0, "src": 0, "epoch": 0}])
+    check(len(SENT) == 2, "a second consecutive panic is NOT suppressed")
+
+    srv.notify_events("crash-door", [
+        {"type": "BOOT", "detail": 9, "boot": 54, "uptime": 0, "src": 0, "epoch": 0}])
+    check(len(SENT) == 3, "a brownout emails too")
+
+    # Every abnormal reason must colour as alert. An unknown accent falls back to
+    # teal — "something happened, nothing is wrong" — which is the wrong thing to
+    # say about a door that fell over.
+    for code in sorted(srv.ABNORMAL_RESET):
+        check(code in srv.RESET_ADVICE, f"reset {code} has advice, not 'unknown'")
+        check(code in srv.RESET_REASON, f"reset {code} has a human name")
+
+
 def main():
     srv.init_db()
     print("log server — alerting tests")
@@ -223,6 +264,7 @@ def main():
     test_an_inferred_open_is_still_an_open()
     test_fault_evidence_is_read_according_to_its_fault()
     test_a_lost_reed_is_rendered_and_explained()
+    test_a_crashed_door_emails_but_a_normal_restart_does_not()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 

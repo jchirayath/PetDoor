@@ -450,6 +450,33 @@ be noticed on this door:
 If it says `no close travel time` instead, press `c` to calibrate — nothing can
 be inferred without a yardstick.
 
+### Reading a crash you were not plugged in for
+
+A panic's backtrace exists only on the serial console, so on a mounted door it is
+gone. Three numbers in the uploaded status line are what is left to reason with,
+and all three used to be console-only — which is how one crash cost an hour:
+
+| field | meaning |
+|---|---|
+| `heap` | total free heap right now |
+| `maxalloc` | the **largest single block** available. An allocation needs contiguous memory, so this is the number that fails, not `heap` |
+| `heaplow` | the least free heap this boot has ever seen |
+| `cstack` / `ustack` | minimum-ever-free stack for the control and uploader tasks |
+
+**A large gap between `heap` and `maxalloc` means the heap is fragmented**, and
+that is the failure that takes a door out while every other number looks
+healthy. A door with 124 KB free can still fail to allocate 8 KB.
+
+`ustack` is the one to watch when an **OTA window will not open**: `beginOtaWindow()`
+only raises a flag, and the work — associating, then `ArduinoOTA.begin()` — runs
+on the uploader task, so that is whose margin matters.
+
+An abnormal reset also **emails now**. Power-on (1) and software restart (3) are
+ordinary — a software restart is exactly what an OTA push does — but panic (4),
+the watchdogs (5, 6, 7) and brownout (9) each send one, and deliberately without
+a cooldown: the history that forced the NimBLE default was *three consecutive*
+panics, and suppressing the repeats would have hidden the evidence that found it.
+
 ### The switch that quietly stops making
 
 Every other cross-check needs something to *happen*. "Both switches made at

@@ -182,6 +182,25 @@ ACTUATION_FLAGS = ((0x0001, "verified by a switch"), (0x0002, "after a wake pres
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
 
+# Which of those mean the door FELL OVER, as opposed to being restarted on
+# purpose. 1 (power-on) and 3 (software) are ordinary — a software restart is
+# exactly what an OTA push does, and power-on is a plug. Everything else is the
+# door dying and coming back, and every one of them used to be silent: a door
+# panicked opening an OTA window and the only way to find out was to go and look.
+ABNORMAL_RESET = {4, 5, 6, 7, 9}
+
+RESET_ADVICE = {
+    4: "a crash. The backtrace only ever exists on the serial console, so it is "
+       "gone unless a cable was attached. Compare maxalloc against heap in the "
+       "status line: a large gap means the heap is fragmented, which takes a door "
+       "out while every other number still looks healthy.",
+    5: "an interrupt watchdog — something blocked with interrupts disabled.",
+    6: "a task watchdog — a task stopped yielding.",
+    7: "a watchdog reset.",
+    9: "the supply sagged. Check the PSU and anything sharing it with the motor; "
+       "a relay coil on a marginal supply is the classic cause.",
+}
+
 
 # --------------------------------------------------------------------------- db
 def db():
@@ -1051,6 +1070,29 @@ def notify_events(device, rows):
         # every other event is a record of something that happened, and this one
         # is a request. No cooldown — it is terminal and it is rare, and a door
         # that gave up twice in one night is a door you want told about twice.
+        # A door that fell over and came back.
+        #
+        # Deliberately NOT behind notify_due(): repeated crashes are the signal,
+        # not noise. The history that forced the NimBLE default was three
+        # consecutive reset=4 boots, and a cooldown would have hidden two of them
+        # — which is precisely the information that identified the cause.
+        elif r["type"] == "BOOT" and r["detail"] in ABNORMAL_RESET:
+            reason = RESET_REASON.get(r["detail"], f'reset {r["detail"]}')
+            ok, why = send_notification(
+                f"{device} restarted unexpectedly ({reason})",
+                title="A door fell over and came back",
+                lede=f"{device} came up on boot #{r['boot']} after {reason}. It is "
+                     "running again, so this is a report rather than an outage — "
+                     "but nothing asked it to restart.",
+                rows=[("door", device),
+                      ("reset reason", reason),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note=RESET_ADVICE.get(r["detail"], "Unrecognised reset reason."),
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for abnormal boot: {why}\n")
+
         elif r["type"] == "GAVE_UP":
             ok, why = send_notification(
                 f"door is staying OPEN on {device}",
