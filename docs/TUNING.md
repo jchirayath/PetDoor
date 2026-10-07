@@ -207,8 +207,8 @@ With switches fitted, `s` reports the duration of the last verified travel in
 each direction beside the configured pair:
 
 ```
-  door travel  : open 11366 ms, close  9105 ms configured
-  last verified: open 11409 ms, close  9044 ms (measured, this boot)
+  door travel  : open 11366 ms, close 11000 ms configured
+  last verified: open 11409 ms, close 10912 ms (measured, this boot)
 ```
 
 That comparison is the whole of travel-time maintenance. A measured figure
@@ -217,13 +217,23 @@ or a mechanism starting to bind — and the firmware says so before it starts
 reporting stalls:
 
 ```
-[door] !! that is within a second of the 12105 ms deadline — raise it with
+[door] !! that is within a second of the 14000 ms deadline — raise it with
 [door] !! 'w' then 'travel', or run 'calibrate'
 ```
 
 `TRAVEL_GRACE_MS` (3 s by default) is the margin that absorbs the ordinary
 variation. Raising the travel time is the fix for a door that has genuinely
 slowed; raising the grace is the fix for one that varies.
+
+**`calibrate` measures a WARM door, and the close is where that shows.** It
+drives the door several times in a few minutes, so the mechanism never gets
+cold. On the reference door five passes gave 9,034–9,209 ms, and the first real
+close afterwards — four hours idle, in the evening — took **10,912 ms**: 1.8 s
+outside the whole calibration range, leaving barely a second of the 3 s grace.
+Since a close that misses its deadline is declared STALLED and **fails open**,
+that is a door that reverses perfectly good closes and eventually parks itself
+open. So treat the calibrated close as a **floor**, check the first cold close
+in `last verified`, and raise the configured figure to match it.
 
 ---
 

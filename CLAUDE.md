@@ -261,13 +261,15 @@ relays 16/17 **active HIGH**, LED 23, reeds **32**/**25**, buzzer **27**
 (passive), vibration **33**. None of the sensor pins are compiled-in defaults —
 they are set at runtime and saved on the device.
 
-**Mounted UPRIGHT, which is the configuration in service.** Means of five
-`calibrate` passes, 2026-10-07:
+**Mounted UPRIGHT, which is the configuration in service.** Measured
+2026-10-07:
 
 | | |
 |---|---|
-| travel, reed to reed | open **11,366 ms**, close **9,105 ms** |
-| repeatability, upright | open spread **78 ms**, close spread **175 ms** (n=5) |
+| travel CONFIGURED | open **11,366 ms**, close **11,000 ms** |
+| `calibrate`, five passes | open **11,366 ms** mean, close **9,105 ms** mean |
+| real close after 4 h idle | **10,912 ms** — 1.8 s slower than ANY warm pass |
+| repeatability, warm | open spread **78 ms**, close spread **175 ms** (n=5) |
 | travel, closed BY HAND | **12,500 ms** — measured as vibration, not reeds |
 | relay pulse | **1,500 ms** stored on the device (500 ms is swallowed) |
 | vibration while moving | ~2,900 edges/s; **0** at rest |
@@ -281,25 +283,38 @@ wrong in sign: it gives the open leg ~1.2 s less than it needs while handing the
 close ~2.1 s of slack it does not. Re-calibrate after any change in mounting
 angle, and do not interpolate between the two sets.
 
-The close figure is **bimodal rather than noisy**: two passes measured
-9,209/9,204 ms and three measured 9,034/9,034/9,044 ms, each cluster tight to
-~10 ms. The 9,105 ms mean is a value the door never actually produced. It is
-safe as a deadline — `TRAVEL_GRACE_MS` is 3,000 ms, 17× the entire spread — but
-do not quote it as a typical travel, and do not chase the 175 ms as drift.
+**`calibrate` runs the door WARM, and it under-reports the close.** The five
+passes ran back to back over about ten minutes and measured 9,034–9,209 ms. The
+first real close afterwards — beacon leaving, door open four hours, evening —
+took **10,912 ms**, which is 1.8 s outside the entire calibration range and left
+only 1,193 ms of the 3,000 ms grace. A close that misses its deadline is
+declared STALLED and **fails open**, retries, and eventually stays open and says
+so, so a close time calibrated warm buys false stalls on a cold door. The
+configured close is therefore **11,000 ms**, taken from the cold measurement and
+not from the calibration mean. Treat `calibrate` as a floor for the close, and
+confirm it against a real cold travel before trusting it. Weak corroboration
+that the cold figure is the representative one: at 11,000 ms the hand-close
+figure below sits at 114% of the vibration band, almost exactly the 111% it had
+flat, where the warm 9,105 ms put it at a thin 137%.
+
+Within the warm passes the close was **bimodal rather than noisy**: two at
+9,209/9,204 ms and three at 9,034/9,034/9,044 ms, each cluster tight to ~10 ms.
+The 9,105 ms mean is a value the door never actually produced — do not quote it
+as a typical travel, and do not chase the 175 ms as drift.
 
 Reed-to-reed is shorter than the stopwatch figures in `docs/REQUIREMENTS.md`
 §1, and correctly so: a reed makes before the door reaches its physical stop.
 It is also the number the arrival deadline wants.
 
 A hand is slower than the motor, which is why `VIBRATION_TRAVEL_MAX_PCT` is the
-loose end of the band — but **upright that margin is much thinner than it was.**
-12.5 s by hand against a motorised **9.1 s** is **137%** against a bound of
-160%; flat, the same comparison was 111%. A hand close only ~17% slower than the
-one measured would fall outside the band and not be inferred at all. The
-inference in `concludeVibrationRun()` was verified on this door with the closed
-reed unplugged. Do not tighten that bound to flatter the motorised figure — the
-travels this code exists to notice are the hand-driven ones, and upright they
-sit much closer to the edge.
+loose end of the band: 12.5 s by hand against the configured **11.0 s** is
+**114%**, comfortably inside, and close to the 111% it read flat. The inference
+in `concludeVibrationRun()` was verified on this door with the closed reed
+unplugged. Do not tighten that bound to flatter the motorised figure — the
+travels this code exists to notice are the hand-driven ones. Note that the band
+is a percentage of the CLOSE travel, so it moves whenever that does: at the warm
+9,105 ms it would have put the same hand close at 137%, within ~17% of falling
+outside the band and not being inferred at all.
 
 **Free heap is not monotonic, so two samples cannot show a leak.** The figure in
 the uploaded status line is captured with the WiFi and TLS stack resident, and

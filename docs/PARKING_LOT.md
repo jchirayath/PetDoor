@@ -61,15 +61,27 @@ from a measured 2,650-byte peak that had since been exceeded. Both stacks are no
 **This is not claimed as the fix.** It was never reproduced, and an OTA window
 opened cleanly from the console at 27 minutes' uptime on the same build.
 
-**Unblocked by:** another panic. `maxalloc`, `heaplow`, `cstack` and `ustack` now
-ride in the uploaded status line, and an abnormal reset now emails — so the next
-one will arrive with its own evidence instead of costing an hour. If it recurs
-*with* a wide `heap`-to-`maxalloc` gap it is the heap after all; if `ustack` is
-small it is the stack; if neither, start again.
+**IT HAS RECURRED — twice, and the stack hypothesis does not survive it.** The
+event ring shows `BOOT reset=4` at boot **#1037** (~2026-10-07 00:53Z) and again
+at **#1042** (~2026-10-07 18:54Z), roughly eighteen hours apart. The #1042 panic
+came about 46 minutes after a maintenance window closed, with the door idle and
+nothing logged in between — so, unlike the original, it was **not** within
+seconds of an `ota` command.
 
-A serial cable attached at the time would capture the backtrace, which is the one
-piece of evidence that would settle it outright and that no amount of telemetry
-replaces.
+Against the decision tree below: `ustack` read **4,268 free of 7,168** and
+`cstack` 3,780, so the uploader stack is not exhausted — that was the leading
+hypothesis and it is now unlikely. Free heap was 127,816 with a 69,648 low-water,
+which does not look starved either. That leaves **fragmentation**, discriminated
+by `maxalloc`, which rides in the uploaded status line rather than the console —
+check the two panic emails, which fire without cooldown.
+
+If it recurs *with* a wide `heap`-to-`maxalloc` gap it is the heap after all; if
+`ustack` is small it is the stack; if neither, start again.
+
+**Still blocked on:** a backtrace. It exists only on the serial console, so it
+needs a cable attached at the moment it happens. The cable was deliberately kept
+on rather than mounting the door, precisely to catch the next one — on an
+~18-hour interval that is a realistic wait rather than a vigil.
 
 ---
 

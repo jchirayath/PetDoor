@@ -1043,8 +1043,17 @@
 //   flat:
 //     stopwatch, press to physical stop     open 12,180 ms   close 12,704 ms
 //     reed to reed, what the firmware sees  open 10,203 ms   close 11,229 ms
-//   upright, in service (mean of 5 calibrate passes):
-//     reed to reed, what the firmware sees  open 11,366 ms   close  9,105 ms
+//   upright, in service:
+//     reed to reed, CONFIGURED              open 11,366 ms   close 11,000 ms
+//     mean of 5 back-to-back calibrate runs open 11,366 ms   close  9,105 ms
+//     first real close after 4 h idle                        close 10,912 ms
+//
+// Note the last two. `calibrate` drives the door five times in ten minutes, so
+// it measures a WARM mechanism; the first cold close was 1.8 s slower than any
+// of those passes and left only 1,193 ms of TRAVEL_GRACE_MS. A close time taken
+// warm therefore buys false stalls on a cold door — and a stalled close fails
+// OPEN. Treat `calibrate` as a floor for the close and confirm it against a real
+// cold travel, which is why the configured close above is the cold figure.
 //
 // Reed-to-reed is shorter, and correctly so: a reed makes before the door reaches
 // its stop. It is also the number the arrival deadline wants, because the arrival
