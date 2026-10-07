@@ -233,12 +233,27 @@ they are set at runtime and saved on the device.
 |---|---|
 | travel, reed to reed | open **10,203 ms**, close **11,229 ms** |
 | repeatability | within ~220 ms across separate travels |
+| travel, closed BY HAND | **12,500 ms** — measured as vibration, not reeds |
 | relay pulse | **1,500 ms** stored on the device (500 ms is swallowed) |
 | vibration while moving | ~2,900 edges/s; **0** at rest |
 
 Reed-to-reed is shorter than the stopwatch figures in `docs/REQUIREMENTS.md`
 §1, and correctly so: a reed makes before the door reaches its physical stop.
 It is also the number the arrival deadline wants.
+
+A hand is slower than the motor, which is why `VIBRATION_TRAVEL_MAX_PCT` is the
+loose end of the band: 12.5 s against a motorised 11.2 s is 111%, comfortably
+inside, and the inference in `concludeVibrationRun()` was verified on this door
+with the closed reed unplugged. Do not tighten that bound to flatter the
+motorised figure — the travels this code exists to notice are the hand-driven
+ones.
+
+**Free heap is not monotonic, so two samples cannot show a leak.** The figure in
+the uploaded status line is captured with the WiFi and TLS stack resident, and
+the same door read 89 KB mid-upload and 124 KB idle half an hour later. A reading
+taken ~60 s after boot is higher still, before buffers settle. Comparing a
+post-boot sample against a mid-upload one manufactures a slope that is not there;
+an hour of samples at the same phase is the only honest comparison.
 
 **The wake press is swallowed every time** on this controller, as F1 predicts —
 so a cold actuation legitimately sends two relay pulses about two seconds
