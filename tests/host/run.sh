@@ -20,6 +20,15 @@ echo "▸ unit: beacon.cpp"
 $CXX $FLAGS $SAN -o "$OUT/test_beacon" test_beacon.cpp "$REPO/petdoor/beacon.cpp"
 "$OUT/test_beacon" || status=1
 
+# The filters and the presence state machine that decide whether the door opens.
+# Every invariant in here fails silently: a door that opens a little too eagerly,
+# or closes on a returning animal, looks exactly like one that works. Needs
+# beacon.cpp for the distance estimate.
+echo "▸ unit: proximity.cpp (filters, hysteresis, the millis() wrap)"
+$CXX $FLAGS $SAN -o "$OUT/test_proximity" test_proximity.cpp \
+    "$REPO/petdoor/proximity.cpp" "$REPO/petdoor/beacon.cpp"
+"$OUT/test_proximity" || status=1
+
 # Header-only and dependency-free, so this needs neither the Arduino shim nor
 # config.h. Both decisions fail silently in both directions — see the file.
 echo "▸ unit: sensor_verdict.h (noise and reed-at-rest decisions)"

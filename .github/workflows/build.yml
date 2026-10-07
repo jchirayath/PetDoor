@@ -39,7 +39,7 @@ jobs:
   # ASan/UBSan here (TEST-10) as well as unit tested.
   host-tests:
     runs-on: ubuntu-latest
-    name: host tests (beacon parsers, fuzz, server alerting)
+    name: host tests (beacon, proximity, sensor verdicts, fuzz, server alerting)
     steps:
       - uses: actions/checkout@v4
       # Ubuntu's clang ships the libFuzzer runtime, so CI gets real

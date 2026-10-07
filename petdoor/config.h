@@ -394,12 +394,16 @@
 // Compile the WiFi subsystem in at all. Setting this to 0 removes the uploader,
 // OTA and the whole network stack from the binary.
 //
-// Measured, classic ESP32:
-//     with WiFi     1,757,751 flash (89% of min_spiffs)   65,588 static RAM
-//     without       1,118,063 flash (56%)                 46,188 static RAM
-//                    -639,688 flash                       -19,400 RAM
+// Measured, classic ESP32 with NimBLE (the default), 6 Oct 2026:
+//     with WiFi     1,395,331 flash (70% of min_spiffs)   70,528 static RAM
+//     without         718,039 flash (36%)
 //
-// That is 33 percentage points of the partition and ~19 KB of RAM for a feature
+// The older figures here read 1,757,751 / 89% and were taken on Bluedroid, before
+// NimBLE became the default — which is 450 KB of flash on its own, so the saving
+// attributed to WiFi was being measured against the wrong baseline. Re-measure
+// after any change of BLE stack, not just after a change to this flag.
+//
+// That is 34 percentage points of the partition and ~19 KB of RAM for a feature
 // a local-only door never uses. If you are not uploading logs and not using
 // over-the-air updates, turn it off — you get the space back and the radio is
 // never shared with Bluetooth at all.
@@ -455,10 +459,18 @@
 
 // Compile in TLS support for the log upload.
 //
-// OFF by default because it does not fit on a classic ESP32. Measured on real
-// hardware: with WiFi, BLE and this firmware resident, free heap is ~80 KB, and
-// a TLS handshake drove the low-water mark to 18 KB and then failed to connect.
-// It also costs ~170 KB of flash whether or not the endpoint uses it.
+// OFF by default. It cost ~170 KB of flash whether or not the endpoint used it,
+// and on Bluedroid — where free heap was ~80 KB — a handshake drove the low-water
+// mark to 18 KB and then failed to connect.
+//
+// ON NIMBLE THAT HEADROOM ARGUMENT NO LONGER HOLDS, and the note should not be
+// read as if it did: the reference door measures 147 KB free at idle and 93 KB
+// with the radio up (6 Oct 2026). Whether a handshake fits has not been
+// re-measured since the stack changed. If you try it, raise WIFI_TASK_STACK
+// first — a handshake needs several KB more stack than a plain POST — and watch
+// heaplow and maxalloc in the uploaded status line, not just heap.
+//
+// Uploads still do not need it, which is the actual reason this stays off.
 //
 // Uploads do not need it: each one is signed with HMAC-SHA256 so it cannot be
 // forged or replayed, and the key never crosses the wire. TLS would add
@@ -1020,9 +1032,19 @@
 // with a close that means reversing a door that was closing perfectly well.
 //
 // OPEN AND CLOSE ARE SEPARATE, and on a mounted door they are not equal.
-// Gravity assists one direction and opposes the other: measured flat, the
-// reference door took 12,180 ms to open and 12,704 ms to close, and mounted
-// upright those two diverge further. Measure both.
+// Gravity assists one direction and opposes the other, and mounted upright the
+// two diverge further. Measure both.
+//
+// TWO DIFFERENT NUMBERS GET CALLED "THE TRAVEL TIME", and this setting wants the
+// second one. On the reference door, flat:
+//
+//     stopwatch, press to physical stop     open 12,180 ms   close 12,704 ms
+//     reed to reed, what the firmware sees  open 10,203 ms   close 11,229 ms
+//
+// Reed-to-reed is shorter, and correctly so: a reed makes before the door reaches
+// its stop. It is also the number the arrival deadline wants, because the arrival
+// deadline is waiting on a reed. Using the stopwatch figure here adds two seconds
+// of slack to every stall decision.
 //
 // Measure them in service rather than with a stopwatch: `s` reports the
 // duration of the last verified travel in each direction, and `calibrate`

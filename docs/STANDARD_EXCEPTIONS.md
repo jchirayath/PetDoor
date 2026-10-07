@@ -1,0 +1,83 @@
+# Deviations from the engineering standard
+
+Every rule in `~/code/engineering-standard/ENGINEERING_STANDARD.md` that this
+repo does not meet, with the reason, an owner, and an expiry. Rules not listed
+here are either met or genuinely not applicable in the way §1 describes.
+
+**Owner for everything below: Jacob Chirayath.** This is a one-maintainer
+hobbyist project; there is no second owner to escalate to, and saying so is more
+useful than writing a name twice.
+
+Reviewed: **2026-10-06**.
+
+---
+
+## Why so much of the standard does not apply
+
+The standard is written for web services and apps. This repo is **ESP32 firmware
+plus a ~2,000-line single-file log server**. Rules about nav inventories, design
+tokens, icon registries, e2e walkthroughs and store releases have no referent
+here — there is no nav, no router, no icon set and no store. Those are marked
+**N/A** rather than listed as debt, because recording them as debt would bury the
+handful of real gaps in a list nobody reads.
+
+The two places the standard applies with full force are:
+
+1. **`petdoor/beacon.*`** — the only attacker-controlled input in the firmware.
+   Every byte comes from an unauthenticated broadcast. This is fuzzed under
+   ASan/UBSan in CI (TEST-10) and has unit tests with real payloads.
+2. **`tools/logserver/`** — a public website with an authenticated dashboard that
+   can open a door. The §2A website gate and the WEB-* rules apply to it
+   properly.
+
+---
+
+## Open deviations
+
+| Rule | Deviation | Reason | Expiry |
+|---|---|---|---|
+| **§2A** | The dashboard's `Content-Security-Policy` is `-Report-Only`, so nothing is enforced | Half done. The Report-Only header is deployed and is collecting the violation inventory in the browser console. What remains is moving `dashboard.html`'s inline script and its two inline `on*` handlers into a served file, after which the same policy can enforce. A `script-src 'unsafe-inline'` CSP would have been theatre, which is why this was not shortcut | 2026-12-31 |
+| **VULN-3** | No Dependabot/Renovate, no scheduled `osv-scanner` run | The firmware has one third-party dependency (NimBLE-Arduino, pinned) and the log server imports only the Python standard library — so there is almost no dependency surface to monitor. Worth turning on anyway because "almost none" is not none, and the ESP32 core itself is pinned by hand | 2027-01-31 |
+| **VULN-6** | No OpenSSF Scorecard workflow | Same reason as VULN-3: cheap to add, not yet added | 2027-01-31 |
+| **TEST-0 / TEST-7** | No feature→test map; no e2e or walkthrough tests | There is no nav inventory to map to. Most of the firmware needs a chip, a radio and a relay, so it is verified on the reference door and recorded in commit messages instead. The parts that are pure logic — `beacon.*`, `proximity.*`, the sensor verdicts, the server's alerting — do have unit tests (180 host checks, 53 server checks) | No expiry — see note below |
+| **REL-1 / REL-3** | No `docs/SLO.md`, no incident section in a `docs/RUNBOOK.md` | The "service" is one door and one log server with one user. An SLO would be fiction. `docs/TROUBLESHOOTING.md` and `docs/DIAGNOSTICS.md` are the runbook in practice | 2027-03-31, to revisit if anyone else deploys the server |
+| **Checklist** | No `mappings/ASVS-5.0.md` | The ASVS L1–L2 review was done and acted on (the NUL-truncation P0, the security headers, the public/private route split) but never written up as a mapping document | 2027-01-31 |
+| **Checklist** | No `docs/THREAT_MODEL.md` or `docs/OBSERVABILITY.md` | The threat model exists in prose, in the Scope section of `SECURITY.md`, which is where a contributor will actually look. A separate document would duplicate it | 2027-03-31 |
+| **§7.1** | CI gates are not *blocking* — no branch protection on `main` | One maintainer, so there is no review to block on. CI does run on every PR and must be green before merge by convention. Worth making mechanical | 2026-12-31 |
+
+### On TEST-0 having no expiry
+
+Writing an expiry would be pretending. The rule asks for four kinds of test per
+feature, and for a door controller the meaningful ones need hardware: you cannot
+unit-test "the relay pulse was long enough for this particular vendor controller
+to notice". What this project does instead is stated in CLAUDE.md — verification
+is host tests *plus* "it compiles for every target", and anything hardware-proven
+says so in its commit message along with the numbers measured. Where logic can be
+extracted and tested on a host, it has been, and `petdoor/sensor_verdict.h` exists
+specifically because that extraction is worth doing.
+
+---
+
+## Accepted permanently, with reasoning
+
+These are not debt. They are decisions, recorded so they are not re-litigated as
+oversights.
+
+| Rule | Decision | Reasoning |
+|---|---|---|
+| **VULN-1** (supported versions) | Only `main` is supported; there are no release branches | People copy this onto their own hardware from source. Maintaining a release branch for a one-maintainer hobbyist project would mean backporting fixes nobody is running |
+| Transport confidentiality | Log uploads are **signed, not encrypted**, and TLS is off by default | Each upload carries HMAC-SHA256 and the key never crosses the wire, so forgery and replay are covered. TLS cost ~170 KB of flash and, measured on Bluedroid, drove the heap low-water to 18 KB and then failed to connect. Integrity was the property that mattered; confidentiality of an RSSI log was not worth a door that panics. See `LOG_ALLOW_TLS` in `config.h` — and note that comment now records the headroom argument no longer holding on NimBLE, so this may be revisited on its merits |
+| Secrets in a local file | `petdoor/secrets.h` is a git-ignored header, not a secret manager | It is compiled into the binary because it has to be — the device has no network at boot and no secure element. The guardrails are the gitignore, the `Read` deny in `.claude/settings.json`, and `secrets.example.h`. CLAUDE.md states plainly that the deny is a guardrail and not a sandbox |
+| Physical access | Out of scope: no secure boot, no flash encryption | The relays are screw terminals and the board has a reset button. Anyone who can reach the hardware can open the door with a paperclip, so firmware hardening would protect nothing |
+| Two semgrep SQL findings | Marked not-affected rather than fixed | Both are f-strings building SQL in `tools/logserver/`, and in both the interpolated value is a **literal in the source**, not input — they interpolate an identifier, which SQLite cannot parameterise. Rewriting them to satisfy the scanner would make the code less clear without changing what it does. VULN-4 requires the triage to be recorded, which is what this row is |
+
+---
+
+## How to change this file
+
+If you close one of the open deviations, delete its row — do not mark it done.
+This file is a list of what is currently untrue, and a row that says "fixed" is a
+row that makes the list longer without making it more informative.
+
+If you add a deviation, it needs all four columns. A deviation with no expiry
+needs a reason it cannot have one, like TEST-0 above.

@@ -576,6 +576,20 @@ petdoor.example.com {
         Referrer-Policy           "no-referrer"
         Permissions-Policy        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
         -Server                   # the log server announces its Python version
+        # Report-Only to begin with — see below. This reports, and blocks nothing.
+        Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+    }
+
+    # A security contact behind a sign-in page is not a security contact, so this
+    # goes with the PUBLIC routes, explicitly, rather than falling through to the
+    # private catch-all. Served by the proxy rather than the app so a deploy
+    # cannot break it.
+    handle /.well-known/security.txt {
+        header Content-Type "text/plain; charset=utf-8"
+        respond `Contact: mailto:you@example.com
+Expires: 2027-01-01T00:00:00.000Z
+Policy: https://github.com/you/PetDoor/blob/main/SECURITY.md
+` 200
     }
 }
 ```
@@ -589,11 +603,20 @@ because an ESP32 cannot afford a handshake — it must not carry HSTS. HSTS is
 ignored on a plaintext response anyway, and advertising it there is just
 confusing.
 
-**No `Content-Security-Policy` is suggested here on purpose.** `dashboard.html`
-is a single file with its scripts inline, so a useful CSP needs hashes computed
-from the page itself. Add one as `Content-Security-Policy-Report-Only` first,
-watch for violations, and only then enforce — added blind it takes the
-dashboard down and the failure looks like a server fault.
+**The CSP above is `-Report-Only`, and that is step one of two.**
+`dashboard.html` is a single file with its script and style inline plus two
+inline `on*` handlers, so the enforcing version of that same policy would break
+it outright — and the failure looks like a server fault, not a header.
+
+Report-Only cannot break anything: the browser enforces nothing and logs what it
+*would* have blocked. Load `/dashboard`, open the console, and the violations are
+the inventory of what the page actually needs. Step two is to move the inline
+script and the two handlers into a served file, then drop `-Report-Only`.
+
+The two font permissions are real and will survive into the enforcing policy:
+the page loads IBM Plex, so `fonts.googleapis.com` serves the stylesheet and
+`fonts.gstatic.com` serves the font files — different directives, both required.
+Drop both if you self-host the fonts, which is the tidier end state.
 
 ### nginx
 
