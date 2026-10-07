@@ -200,6 +200,31 @@ reads (`min 200`) makes every read block until the port speaks again, which
 hangs the capture the moment the output ends. If a long dump arrives truncated,
 add iterations — do not raise `min`.
 
+**But iterations are not seconds, so pace a TIMED operation by the clock.** A
+`dd` that finds data returns immediately; only a silent read burns its full
+`time N`. This console emits `[wifi]`/`[cmd]` lines every few seconds, so a
+135-iteration loop elapsed well under 135 s — which desynchronised a run of five
+`calibrate` passes, got one `C` refused with `[cal] the door is already
+travelling`, and lost one verdict that printed after the descriptor closed. For
+anything with a known duration — a travel, a ~115 s calibration pass — use a
+deadline inside the one held descriptor:
+
+```bash
+END=$(( $(date +%s) + 150 ))
+while [ $(date +%s) -lt $END ]; do dd bs=8192 count=1 <&3 2>/dev/null; done
+```
+
+A verdict lost to a closed descriptor is still recoverable: `s` reports both the
+`configured` and the `last verified` pair, so the device remembers what the
+missed `[cal]` line said.
+
+**Send a submenu key with NO carriage return.** `printf 'w\r'` does not open the
+timing menu, it opens and immediately exits it — the CR *is* the empty line that
+cancels, and the reply is `[mac] cancelled, nothing changed.` Everything typed
+next is then interpreted as top-level keystrokes, which is how a `travel ...`
+line became `t` plus a thresholds-menu buffer. Send the bare key, grep the reply
+for the menu header, and only then send the line.
+
 **Output printed while no descriptor is open is gone** — there is no flow
 control. Capture across a whole operation in one connection rather than
 reconnecting between steps, or verdicts that print during the gap are lost.
@@ -231,29 +256,50 @@ seconds apart — that is the wake press, not a fault.
 
 ## The reference door, as measured
 
-Flat, controller and motor connected, both reeds + vibration + buzzer fitted.
-Pins: relays 16/17 **active HIGH**, LED 23, reeds **32**/**25**, buzzer **27**
+Controller and motor connected, both reeds + vibration + buzzer fitted. Pins:
+relays 16/17 **active HIGH**, LED 23, reeds **32**/**25**, buzzer **27**
 (passive), vibration **33**. None of the sensor pins are compiled-in defaults —
 they are set at runtime and saved on the device.
 
+**Mounted UPRIGHT, which is the configuration in service.** Means of five
+`calibrate` passes, 2026-10-07:
+
 | | |
 |---|---|
-| travel, reed to reed | open **10,203 ms**, close **11,229 ms** |
-| repeatability | within ~220 ms across separate travels |
+| travel, reed to reed | open **11,366 ms**, close **9,105 ms** |
+| repeatability, upright | open spread **78 ms**, close spread **175 ms** (n=5) |
 | travel, closed BY HAND | **12,500 ms** — measured as vibration, not reeds |
 | relay pulse | **1,500 ms** stored on the device (500 ms is swallowed) |
 | vibration while moving | ~2,900 edges/s; **0** at rest |
+
+**Upright REVERSES which direction is slower, and that is the whole reason to
+re-measure after mounting.** Lying flat the same door read open 10,203 ms /
+close 11,229 ms, so closing was the slow leg by ~1.0 s. Upright, *opening* is
+the slow leg by ~2.3 s — gravity opposes the lift and assists the drop. A travel
+time carried over from a flat bench is therefore wrong in both directions and
+wrong in sign: it gives the open leg ~1.2 s less than it needs while handing the
+close ~2.1 s of slack it does not. Re-calibrate after any change in mounting
+angle, and do not interpolate between the two sets.
+
+The close figure is **bimodal rather than noisy**: two passes measured
+9,209/9,204 ms and three measured 9,034/9,034/9,044 ms, each cluster tight to
+~10 ms. The 9,105 ms mean is a value the door never actually produced. It is
+safe as a deadline — `TRAVEL_GRACE_MS` is 3,000 ms, 17× the entire spread — but
+do not quote it as a typical travel, and do not chase the 175 ms as drift.
 
 Reed-to-reed is shorter than the stopwatch figures in `docs/REQUIREMENTS.md`
 §1, and correctly so: a reed makes before the door reaches its physical stop.
 It is also the number the arrival deadline wants.
 
 A hand is slower than the motor, which is why `VIBRATION_TRAVEL_MAX_PCT` is the
-loose end of the band: 12.5 s against a motorised 11.2 s is 111%, comfortably
-inside, and the inference in `concludeVibrationRun()` was verified on this door
-with the closed reed unplugged. Do not tighten that bound to flatter the
-motorised figure — the travels this code exists to notice are the hand-driven
-ones.
+loose end of the band — but **upright that margin is much thinner than it was.**
+12.5 s by hand against a motorised **9.1 s** is **137%** against a bound of
+160%; flat, the same comparison was 111%. A hand close only ~17% slower than the
+one measured would fall outside the band and not be inferred at all. The
+inference in `concludeVibrationRun()` was verified on this door with the closed
+reed unplugged. Do not tighten that bound to flatter the motorised figure — the
+travels this code exists to notice are the hand-driven ones, and upright they
+sit much closer to the edge.
 
 **Free heap is not monotonic, so two samples cannot show a leak.** The figure in
 the uploaded status line is captured with the WiFi and TLS stack resident, and

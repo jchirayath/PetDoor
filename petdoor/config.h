@@ -1032,14 +1032,19 @@
 // with a close that means reversing a door that was closing perfectly well.
 //
 // OPEN AND CLOSE ARE SEPARATE, and on a mounted door they are not equal.
-// Gravity assists one direction and opposes the other, and mounted upright the
-// two diverge further. Measure both.
+// Gravity assists one direction and opposes the other. Mounted upright the two
+// do not merely diverge — on the reference door they SWAP OVER, because gravity
+// opposes the lift and assists the drop. Measure both, in the orientation the
+// door will actually run in; a flat-bench pair is wrong in sign once upright.
 //
 // TWO DIFFERENT NUMBERS GET CALLED "THE TRAVEL TIME", and this setting wants the
-// second one. On the reference door, flat:
+// second one. On the reference door:
 //
+//   flat:
 //     stopwatch, press to physical stop     open 12,180 ms   close 12,704 ms
 //     reed to reed, what the firmware sees  open 10,203 ms   close 11,229 ms
+//   upright, in service (mean of 5 calibrate passes):
+//     reed to reed, what the firmware sees  open 11,366 ms   close  9,105 ms
 //
 // Reed-to-reed is shorter, and correctly so: a reed makes before the door reaches
 // its stop. It is also the number the arrival deadline wants, because the arrival
