@@ -900,23 +900,44 @@
 // changing these: it reports how much each task has never used. Too small is a
 // crash on an unusual input; too large is heap doing nothing.
 //
-// Measured on hardware after exercising the heaviest paths (discovery dump plus
-// a log upload): control peaked at ~1,970 bytes used, uploader at ~2,650. These
-// sizes leave roughly 3 KB and 1.4 KB of margin respectively, and hand about
-// 5 KB back to the heap versus the 8192/6144 they started at.
+// THESE WERE 5120/5120, ON A MEASUREMENT THAT HAS SINCE BEEN EXCEEDED.
 //
-// Raise WIFI_TASK_STACK if you enable LOG_ALLOW_TLS — a TLS handshake needs
-// several KB more stack than a plain POST.
+// The old note recorded "control peaked at ~1,970 bytes used, uploader at
+// ~2,650" after "the heaviest paths (discovery dump plus a log upload)", and
+// shrank both from 8192/6144 on the strength of it. Re-measured on the reference
+// door, both peaks are higher than that:
+//
+//   control    1,970 documented  ->  3,304 actually used   (1,816 free of 5,120)
+//   uploader   2,650 documented  ->  2,996 actually used   (2,124 free of 5,120)
+//
+// The control figure is 1.7x the number that justified the size, which left
+// 1.8 KB of margin rather than the 3 KB the note claimed.
+//
+// THE PATH THAT WAS NEVER IN THE MEASURED SET IS THE OTA WINDOW, and it is the
+// heaviest thing the uploader does: beginOtaWindow() only raises a flag, so
+// radioUp() and ArduinoOTA.begin() both run on the uploader task. A door
+// panicked opening a window 3.5 hours into a boot, and while that was never
+// reproduced and may yet prove to be heap fragmentation rather than stack, a
+// 2 KB margin in front of WiFi association is not a margin worth defending for
+// the 4 KB of heap these two cost.
+//
+// A stack overflow is a hard crash, not a degraded anything. Check `task stacks`
+// in the `s` output — or cstack/ustack in the uploaded status line, which is how
+// to read this on a door with no cable attached — and keep real headroom.
+//
+// Raise WIFI_TASK_STACK further if you enable LOG_ALLOW_TLS — a TLS handshake
+// needs several KB more stack than a plain POST.
 #ifndef CONTROL_TASK_STACK
-#define CONTROL_TASK_STACK 5120
+#define CONTROL_TASK_STACK 7168
 #endif
 //
-// 4096 was tried and measured at only ~1.4 KB of headroom, which is too thin
-// for a task handling variable-length HTTP responses — a stack overflow is a
-// hard crash, not a degraded upload. 5120 restores ~2.4 KB while still handing
-// 1 KB back versus the original 6144.
+// 4096 was tried and measured at only ~1.4 KB of headroom, which is too thin for
+// a task handling variable-length HTTP responses. 5120 was the next attempt and
+// measured 2,124 free once an OTA window had been opened — see above. 7168 puts
+// the margin back above 4 KB, which is what WiFi association and
+// ArduinoOTA.begin() running on this task deserve.
 #ifndef WIFI_TASK_STACK
-#define WIFI_TASK_STACK 5120
+#define WIFI_TASK_STACK 7168
 #endif
 
 // Max distinct devices held in the discovery table.
