@@ -152,6 +152,7 @@ How near is "near". See [TUNING.md](TUNING.md) for the procedure.
 | `RSSI_FAST_WINDOW` | `1` | Median width for the **open** decision. Odd, **1–15** — 1 is allowed here, because the open path is confirmed by `ENTER_CONFIRM_MS` rather than by smoothing. |
 | `RSSI_FAST_ALPHA` | `0.9f` | Smoothing for the **open** decision. Higher = faster. |
 | `PATH_LOSS_EXPONENT` | `2.5f` | For the displayed distance estimate only: ~2.0 open air, 2.5–3.0 through a coop wall, 3.0+ cluttered. **Never affects the open/close decision**, which uses RSSI directly. |
+| `BEACON_LOW_BATTERY_CLEAR_MV` | `150` | How far the battery must climb back above the threshold before the warning clears. A coin cell's reading is not monotonic — it sags under each transmit pulse and recovers between them, and it rises with temperature — so a cell sitting on the threshold crosses it repeatedly. Without this margin that is a latch that flaps, and a flapping latch means a log entry and an email per flap. Only the latch uses it; the reported millivolts are always whatever the beacon last said. |
 | `BEACON_LOW_BATTERY_MV` | `2400` | Beacon battery level (from Eddystone-TLM) at or below which the status LED flashes at 2 Hz. `0` disables the warning. |
 | `BEACON_MEASURED_POWER_DBM` | `-59` | Fallback calibrated RSSI at 1 m, used for the distance display when the beacon does not advertise one. iBeacon frames carry this; **Eddystone and sensor tags do not** and show `?` without it. Set to `0` to go back to `?`. Display only. |
 
@@ -315,15 +316,57 @@ anything here.**
 | `SENSOR_ACTIVE_LOW` | `1` | `1` = switch shorts the pin to GND, pin idles high on an internal pull-up. Almost always what you want: a broken wire then reads as "not at that end" rather than a false arrival. `0` needs your own pull-down. |
 | `SENSOR_DEBOUNCE_MS` | `50` | A reed switch chatters as the magnet passes and a door settling bounces it. Without this the door announces three arrivals for one. |
 | `RELAY_ACTIVE_LOW` | `0` | `1` for the common blue relay boards, whose coil energises when the input is pulled to GND. `0` for active-high boards and MOSFET drivers. **Getting this wrong means the door runs backwards or runs constantly.** |
-| `RELAY_PULSE_MS` | `200` | Momentary pulse length — how long the relay stays closed. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. Raise it if the relay clicks but the door does not move, or if your motor needs the contact held for the whole travel — see [WIRING.md](WIRING.md#momentary-pulse-vs-held-contact). |
-| `RELAY_PULSE_COUNT` | `1` | Presses per actuation, 1–3. Raise to 2 only if the door's **own button** sometimes needs pressing twice. A blind retry: if the first press worked, the second may stop the door mid-travel. |
+| `RELAY_PULSE_MS` | `1000` | Momentary pulse length — how long the relay holds the controller's button down. **Not a margin:** on the reference controller a 500 ms press is *swallowed* and 1000 ms works, every time. This was 200 ms before anyone measured it. **Adjustable at runtime** with `w` → `pulse <ms>` (50–10000), saved on the device. See [SAFETY.md](SAFETY.md#a-press-too-short-to-register). |
+| `RELAY_PULSE_COUNT` | `1` | Presses inside a single press, 1–3. **Leave it at 1.** It is the old blind double-press and it *stacks* with the wake press below, so at 2 a cold actuation sends four presses — and a press mid-travel reads as STOP. Kept only for a controller the wake logic cannot handle. |
 | `RELAY_PULSE_GAP_MS` | `1000` | Gap between repeated presses, 200–5000 ms. Only used when `RELAY_PULSE_COUNT` > 1. |
 | `MIN_ACTUATION_INTERVAL_MS` | `5000` | Minimum gap before the door may **close** again. Protects the motor from thrash. **Opening is never rate-limited** — delaying an open is the one direction that can strand an animal outside a door it just watched close. |
 | `DIRECTION_CHANGE_GAP_MS` | `250` | Dead time before asserting a relay, with the opposite one released. Both relays energised at once is a short across the motor's direction contacts. |
-| `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. |
+| `BOOT_GRACE_MS` | `30000` | The door is never driven closed for this long after boot. Prevents a power blip from slamming the door on an animal standing in it. Cannot be overridden by hand — not by `o`/`x`, not from the dashboard. |
 
 **`MIN_ACTUATION_INTERVAL_MS` must be shorter than `EXIT_CONFIRM_MS`**, or the
 lockout delays closing. Also `static_assert`ed.
+
+### 3b. The actuation attempt
+
+These govern what happens *after* the relay fires: whether the controller was
+awake, whether the door moved, whether it arrived, and what to do when it did
+not. The reasoning behind each is in
+[ARCHITECTURE.md](ARCHITECTURE.md#the-actuation-path) and
+[SAFETY.md](SAFETY.md#the-controller-may-not-be-awake).
+
+| Setting | Default | Description |
+|---|---|---|
+| `DOOR_TRAVEL_MS` | `0` | How long the door takes to travel, ms. `0` = "not measured", which disables both announcement and verification. Deliberately not a guess: a travel time set too short reads every good travel as a stall, and for a close that means reversing a door that was closing perfectly well. |
+| `DOOR_TRAVEL_OPEN_MS` | `DOOR_TRAVEL_MS` | Per-direction override. On a **mounted** door these are not equal — gravity assists the close and opposes the open. Measured flat, the reference door took 12,180 ms to open and 12,704 ms to close; upright they diverge further. |
+| `DOOR_TRAVEL_CLOSE_MS` | `DOOR_TRAVEL_MS` | As above. Set both with `w` → `travel 12200 12700`, or let `calibrate` measure them. |
+| `TRAVEL_GRACE_MS` | `3000` | How much longer than the travel time to wait before calling it a stall. A door is slower in January and slower as it wears; keeping the margin separate keeps the travel time an honest measurement. |
+| `ARRIVAL_WAIT_MAX_MS` | `60000` | The arrival deadline when switches are fitted but no travel time is known. With a switch at the destination the door does not need a travel time to know it arrived — this only bounds the wait, and the duration becomes the measurement. |
+| `WAKE_IDLE_MS` | `30000` | Idle time after which the controller is assumed asleep and a **wake press** is sent first. `0` disables it. Below this, one press. Deriving the press count from idle time is what satisfies both "the first press is swallowed" and "a repeat press mid-travel is a STOP" — a fixed "always press twice" satisfies neither. |
+| `WAKE_PROBE_MS` | `1800` | How long to watch after a wake press before deciding it did nothing. Must be comfortably past motion onset (~1300 ms measured) or a press that *did* take gets followed by one that stops the door. It is also dead time on every cold actuation. |
+| `MOTION_ONSET_MS` | `2500` | How long to wait for the door to start moving after the actuating press. Only meaningful with a vibration sensor or a switch at the starting end; with neither, nothing can observe a start and this is unused. |
+| `SWALLOW_RETRY_LIMIT` | `2` | How many times a press that demonstrably moved nothing may be repeated **immediately**. Safe to retry at once: nothing moved, so nothing is trapped, and the failure is distinguishable from a stall. |
+| `FAILED_ATTEMPT_COOLDOWN_MS` | `30000` | How long to leave a direction alone after an attempt in it achieved nothing. Without this the door loops: a failed attempt commits nothing, so whatever asked for it asks again on the next tick — ten presses a second. **Per direction**, so a failed close never delays the open after it. |
+| `CLOSE_RETRY_DELAY_MS` | `300000` | After a **stalled close**: how long before trying again. Minutes, not seconds — whatever stopped the door needs time to move or be noticed. |
+| `CLOSE_RETRY_LIMIT` | `3` | How many close attempts may stall before the door stays **open** and says so. An open door is an inconvenience; a door grinding onto an obstruction is not. |
+| `DOOR_REPORT_MIN_MS` | `60000` | The floor between immediate "the door moved" uploads. A completed travel is reported at once rather than waiting for the door to be idle — an open door is *not* idle, so without this the status could sit unreported until the half-hour heartbeat while the dashboard still showed the door as it was before it moved. Floored because a forced flush bypasses `upmin` entirely, and a door flapping at the threshold would otherwise hold the radio up indefinitely. |
+| `CAL_QUIET_MS` | `90000` | How long `calibrate` requires the door to sit still, with nothing commanded and no switch changing, before it trusts a measurement. 90 s because that is the quiet period that recorded zero movement once the vendor's own modes were disabled. |
+| `SENSOR_FAULT_STRIKES` | `2` | How many times a sensor must disagree with the other before it is called broken. One disagreement is a short travel or a glancing magnet; two in a row is a part. |
+| `VIBRATION_IDLE_NOISE_PULSES` | `200` | Edges counted with the door standing still that mean the vibration sensor is crying wolf. At rest the reference sensor reads exactly 0. Not harmless: the wake probe reads idle vibration as "already moving" and **suppresses the actuating press**, so a noisy sensor stops the door rather than merely annoying it. |
+| `UNCOMMANDED_SETTLE_MS` | `5000` | How long after a travel resolves before a limit switch making counts as the door moving on its own, rather than that travel arriving late. A travel given up on as `ASSUMED` or `STALLED` can still be finishing — the door settles onto its stop a second later and the reed makes. |
+| `REED_LOST_MS` | `120000` | How long the door may sit at an end, at rest, with that end's limit switch **not made** before the switch is called broken (`SENSOR_FAULT` detail 6). Generous, because a reed can open for a moment as the door settles onto its stop and the cost of crying wolf is a buzzer every quarter hour plus an email. Only consulted when a switch is actually fitted at that end, so a single-switch build is never nagged. |
+| `SENSOR_FAULT_BEEP_MS` | `900000` | How often to re-sound a latched sensor fault; `0` silences it. The only repeating tune in the firmware. A door that gave up is standing open where you can see it; a reed that stopped making looks like an ordinary door until the night it matters — so a fault with no outward sign is the one case where playing once is the wrong default. Sparse on purpose: a reminder every quarter hour never becomes the thing somebody unplugs. |
+| `VIBRATION_IDLE_WINDOW_MS` | `60000` | The window the count above is measured over. Generous on purpose — wind and passing traffic are real, and this must not cry wolf either. |
+| `VIBRATION_MOVING_PULSES` | `50` | The edge count that means the door is genuinely **in motion**, as opposed to `VIBRATION_MIN_PULSES`, which only means something happened. Used for the wake probe, where a false positive suppresses the actuating press entirely. Real travel emits ~2,000 edges/s, so this is reached in ~25 ms of movement. |
+| `VIBRATION_MOVING_PPS` | `100` | Edges per **second** that mean "the door is moving", for the uncommanded-travel detector below. The reference door reads ~2,900 while travelling and exactly 0 at rest, so this sits well clear of both. |
+| `VIBRATION_SAMPLE_MS` | `500` | How long each moving/not-moving decision is averaged over. Long enough to be stable across a 100 ms control tick, short enough to place the ends of a ten-second travel accurately. |
+| `VIBRATION_RUN_GAP_MS` | `1500` | How long the sensor may fall quiet before a run of movement counts as finished. These modules are a spring in a tube and go briefly silent mid-travel; without this, one travel is chopped into several that each match nothing. |
+| `VIBRATION_TRAVEL_MIN_PCT` | `70` | Lower bound of the band, as a percentage of that direction's measured travel time, within which a run is accepted as a **full travel** and the door's position inferred from it. The tighter bound: short of the travel time means the door never reached the far end. |
+| `VIBRATION_TRAVEL_MAX_PCT` | `160` | Upper bound of the same band. Loose on purpose — a hand resting on the door after it stops, or a door that drags, are ordinary. |
+| `VIBRATION_RUN_MAX_MS` | `45000` | A run longer than this is not a door; it is a sensor stuck on or mounted where it feels the world. The run is abandoned rather than concluded, and counted as evidence of noise. |
+
+All of `travel`, `wake` and `retry` are settable at runtime — from the console
+under `w`, or over the network — and saved on the device, because every one of
+them is a property of *your* controller rather than of this firmware.
 
 ---
 
@@ -439,7 +482,7 @@ so a door that turned the collar away overnight can be asked about afterwards.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `PIN_VIBRATION` | `-1` | GPIO for an SW-420/801S digital output. `-1` disables it. Runtime-settable with `vibration <pin>`. |
+| `PIN_VIBRATION` | `-1` | GPIO for an SW-420/801S digital output. `-1` disables it. Runtime-settable with `vibration <pin>` **and saved on the device**, like the buzzer and the switches — it is wiring, and wiring should survive a power cut. It did not, originally: the pin was runtime-only, so a brownout silently took the sensor away and with it the ability to tell a swallowed press from a successful one. Found by reflashing a door that had been configured by hand. |
 | `VIBRATION_ACTIVE_LOW` | `1` | Only decides whether the internal pull-up is on — the sensor is read as *edges*, so either polarity works. |
 | `VIBRATION_BLANK_MS` | `400` | How long after a relay pulse to ignore the sensor, so the relay's own click is not mistaken for the door. |
 | `VIBRATION_MIN_PULSES` | `3` | Edges needed before a travel counts as movement, so one spurious reading is not enough. |
@@ -497,8 +540,8 @@ The event log is unaffected: it lives in NVS and never needed a network. That is
 |---|---|---|
 | `SERIAL_BAUD` | `115200` | Serial console speed. |
 | `CONTROL_TICK_MS` | `100` | Control loop **idle** period. The loop normally wakes the moment a BLE sample arrives; this only caps how long it waits when the beacon is silent. It also sets how often the status LED is refreshed, so it bounds the shortest LED pattern that can be rendered — much above 250 ms and the blip and fault flutter visibly break. |
-| `CONTROL_TASK_STACK` | `5120` | Control-task stack in bytes. Sized from measurement — check the `task stacks` line in the `s` output before changing it. |
-| `WIFI_TASK_STACK` | `5120` | Uploader-task stack. Raise it if you enable `LOG_ALLOW_TLS`; a TLS handshake needs several KB more stack than a plain POST. |
+| `CONTROL_TASK_STACK` | `7168` | Control-task stack in bytes. Sized from measurement — check `task stacks` in the `s` output, or `cstack`/`ustack` in the uploaded status line, which is how to read it on a door with no cable. Both were 5120 until a re-measure found the peaks they were sized against had been exceeded: control used 3,304 bytes against a documented 1,970. A stack overflow is a hard crash, not a degraded anything. |
+| `WIFI_TASK_STACK` | `7168` | Uploader-task stack. Raise it if you enable `LOG_ALLOW_TLS`; a TLS handshake needs several KB more stack than a plain POST. |
 | `DEVICE_TABLE_SIZE` | `40` | Max distinct devices held in the discovery table. Costs RAM and BLE-callback time. |
 | `TABLE_MIN_UPDATE_MS` | `500` | Per-device throttle on discovery-table writes, so a busy RF environment cannot flood the heap from the BLE callback. |
 | `EVENT_LOG_CAPACITY` | `128` | Events kept in the persistent NVS log. Each entry is 16 bytes and the whole ring is rewritten on every event, so keep it modest — 128 is 2 KB and covers weeks of a door cycling a few times a day. |

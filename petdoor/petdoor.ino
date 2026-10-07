@@ -39,6 +39,7 @@
 #define PETDOOR_CAN_REBOOT_TO_FLASH 0
 #endif
 
+#include "actuator.h"
 #include "ble_scanner.h"
 #include "chime.h"
 #include "config.h"
@@ -47,6 +48,7 @@
 #include "eventlog.h"
 #include "maintenance.h"
 #include "position.h"
+#include "sensor_verdict.h"
 #include "vibration.h"
 #include "proximity.h"
 #include "schedule.h"
@@ -57,25 +59,64 @@ namespace {
 ProximityTracker g_tracker;
 DoorController g_door;
 
-// How long the door is believed to take to travel, and whether it is believed
-// to be travelling right now. Open-loop: this is a stopwatch started by an
-// actuation, not a position sensor. See DOOR_TRAVEL_MS in config.h.
-uint32_t g_travelMs = DOOR_TRAVEL_MS;
-bool g_travelling = false;
+// Announcement bookkeeping. The travel itself is owned by the actuator; these
+// are only about what the buzzer and the console have already said.
 bool g_lockRefusedAnnounced = false;
-bool g_travelVerified = false;      // did a switch confirm the last travel?
-bool g_workingPending = false;      // travel started; waiting for an ack to finish
+bool g_gaveUpAnnounced = false;
 DoorState g_lastObserved = DOOR_UNKNOWN;
 bool g_sensorFaultAnnounced = false;
+Actuator::CalState g_lastCalState = Actuator::CAL_OFF;
 
-// Is the door believed to be moving?
+// The beacon's battery, as IT reports it in Eddystone-TLM. -1 until a frame
+// carrying telemetry arrives; many beacons never send one, and iBeacon-only
+// modes never do, so "no reading" is the normal state rather than a fault.
+int32_t g_beaconBatteryMv = -1;
+bool g_beaconLowLatched = false;
+
+// Sensor health. Latched: a broken part stays broken, so one failure is one
+// console message, one log entry and one email — not one per travel.
+uint8_t g_sensorFault = 0;            // SensorFault, 0 = nothing wrong
+uint8_t g_vibSilentStrikes = 0;       // verified travels the vibration missed
+uint8_t g_vibDeadStrikes = 0;         // attempts that produced not one edge
+uint8_t g_reedMissedStrikes = 0;      // travels that ran and never arrived
+uint32_t g_vibIdleBaseline = 0;       // edge count when the door went quiet
+uint32_t g_vibIdleSinceMs = 0;
+DoorState g_vibIdleEndAtStart = DOOR_UNKNOWN;
+bool g_vibIdleValid = false;
+uint32_t g_sensorFaultBeepMs = 0;     // when the reminder last sounded
+uint32_t g_reedLostSinceMs = 0;        // 0 = the believed end's switch is made
+
+// The last END the door was actually seen at, which is NOT the same as the last
+// thing observed. A door travelling between the two reeds reads UNKNOWN for the
+// whole journey, so comparing against the previous observation always compares
+// against UNKNOWN and never notices that the door changed ends. That is what
+// made uncommanded movement undetectable; see updatePosition().
+DoorState g_lastKnownEnd = DOOR_UNKNOWN;
+uint32_t g_lastTravelEndedMs = 0;     // so a late reed is not called a mystery
+
+// Inferring a travel from vibration alone — see updateVibrationTravel().
+uint32_t g_vibSampleBase = 0;         // edge count when this sample opened
+uint32_t g_vibSampleAtMs = 0;         // 0 = not seeded
+bool g_vibRunActive = false;          // currently inside a run of movement
+uint32_t g_vibRunStartMs = 0;
+uint32_t g_vibRunLastMoveMs = 0;
+uint8_t g_vibRunsThisWindow = 0;      // discrete runs seen since the idle window opened
+bool g_vibRunRanAway = false;         // a run hit VIBRATION_RUN_MAX_MS: that is noise
+
+// Why a LOG_REFUSED entry exists, for the reasons that are not an
+// ActuationResult. Kept well clear of that enum so adding a refusal to it can
+// never silently re-label history on the dashboard.
+constexpr uint8_t kRefusedBySchedule = 100;
+
+// LOG_UNCOMMANDED's detail is the end the door arrived at, as a DoorState, when
+// a limit switch MEASURED it. When it was INFERRED from how long the vibration
+// sensor felt the door moving, the same value carries this offset instead.
 //
-// OPEN LOOP. This is a stopwatch started by the last actuation, not a position
-// sensor: it reports "moving" for g_travelMs after a relay pulse whether or not
-// anything actually moved, and it will report "arrived" for a door jammed
-// halfway. It exists to turn fifteen seconds of silence into fifteen seconds of
-// visible and audible "yes, I heard you" — nothing more. A limit switch is the
-// only thing that could make this a measurement; see docs/SAFETY.md.
+// Separated for the reason invariant 17 exists: a measurement and an inference
+// are not the same claim, and a dashboard that renders them identically quietly
+// turns one into the other. 11 is an inferred OPEN, 12 an inferred CLOSED.
+constexpr uint8_t kUncommandedInferred = 10;
+
 // Defined further down, beside the rest of the maintenance-window handling,
 // but needed by the console key dispatch above it.
 bool applyScheduleLine(const char *line, String &result);
@@ -83,17 +124,11 @@ void printScheduleMenu();
 bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message);
 void endMaintenance(String &message);
 void publishStatusLines();
-
-bool doorTravelling(uint32_t nowMs) {
-  if (g_travelMs == 0 || !g_door.hasActuated()) return false;
-  return (nowMs - g_door.lastActuationMs()) < g_travelMs;
-}
-
+void announceMovement(ActuationSource src, DoorState target);
 
 bool g_calibrate = false;
 uint32_t g_lastDiscoverDumpMs = 0;
 uint32_t g_lastCalibrateMs = 0;
-DoorState g_lastReportedDoorState = DOOR_UNKNOWN;
 PresenceState g_lastReportedPresence = PRESENCE_ABSENT;
 bool g_lastReportedFix = false;        // no fix at boot
 bool g_lastReportedScanHealthy = true; // radio assumed good until proven otherwise
@@ -206,6 +241,26 @@ bool g_locked = false;
 // Set by a `scan` command: upload the discovery table with the next flush.
 bool g_scanRequested = false;
 
+// A bounded, self-expiring LED test. updateLed() rewrites the pin on every
+// tick, so a command that simply lit the LED would be dark again 100 ms later
+// — the test has to live inside the pattern engine rather than beside it.
+//
+// Three deliberate flashes, mirroring the buzzer's three beeps, because it
+// answers the same question: is this peripheral on the pin I think it is. The
+// low duty cycle keeps it clearly apart from the even 1 Hz / 2 Hz / 5 Hz fault
+// blinks, and it expires by itself — a test that could be left running would
+// be a status light that lies.
+bool g_ledTestActive = false;
+uint32_t g_ledTestStartMs = 0;
+constexpr uint32_t kLedTestPeriodMs = 800;
+constexpr uint32_t kLedTestOnMs = 200;
+constexpr uint32_t kLedTestMs = 3 * kLedTestPeriodMs;
+
+void startLedTest(uint32_t nowMs) {
+  g_ledTestActive = true;
+  g_ledTestStartMs = nowMs;
+}
+
 // dumpTable() writes to a Stream because it was built for the console. This
 // collects that output into a String instead, so the same rendering can be
 // uploaded — one implementation, so the remote view can never drift from what
@@ -268,18 +323,37 @@ void printBanner() {
     Con.println(F("  !! repeat presses are sent blind — the door cannot tell whether"));
     Con.println(F("  !! the first worked. If it did, the second may stop it mid-travel."));
   }
-  if (g_travelMs > 0) {
-    Con.printf("  door travel   : %lu ms (announced on the LED and buzzer)\r\n",
-                  static_cast<unsigned long>(g_travelMs));
-    // Warned about at boot rather than static_assert'ed, because both values
-    // are runtime-adjustable and can be changed long after compiling.
-    if (g_door.minIntervalMs() < g_travelMs) {
-      Con.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
-                    static_cast<unsigned long>(g_door.minIntervalMs()),
-                    static_cast<unsigned long>(g_travelMs));
-      Con.println(F("  !! A reversing command can land mid-travel; most controllers"));
-      Con.println(F("  !! read that as STOP, leaving the door parked half open."));
-      Con.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
+  {
+    const uint32_t tOpen = Actuator::travelMs(DOOR_OPEN);
+    const uint32_t tClose = Actuator::travelMs(DOOR_CLOSED);
+    if (tOpen > 0 || tClose > 0) {
+      Con.printf("  door travel   : open %lu ms, close %lu ms (%s)\r\n",
+                    static_cast<unsigned long>(tOpen),
+                    static_cast<unsigned long>(tClose),
+                    Position::enabled() ? "verified by the limit switches"
+                                        : "announced only — a stopwatch");
+      // Warned about at boot rather than static_assert'ed, because both values
+      // are runtime-adjustable and can be changed long after compiling.
+      const uint32_t longest = tOpen > tClose ? tOpen : tClose;
+      if (g_door.minIntervalMs() < longest) {
+        Con.printf("  !! min interval (%lu ms) is SHORTER than door travel (%lu ms).\r\n",
+                      static_cast<unsigned long>(g_door.minIntervalMs()),
+                      static_cast<unsigned long>(longest));
+        Con.println(F("  !! A reversing command can land mid-travel; most controllers"));
+        Con.println(F("  !! read that as STOP, leaving the door parked half open."));
+        Con.println(F("  !! Raise it with 'w', or set MIN_ACTUATION_INTERVAL_MS."));
+      }
+    } else if (Position::enabled()) {
+      // Switches fitted and no travel time: the door can still tell that it
+      // arrived, but it cannot tell how long it is allowed to take, so a stall
+      // takes ARRIVAL_WAIT_MAX_MS to report instead of travel + grace.
+      Con.println(F("  door travel   : NOT MEASURED — limit switches are fitted, so"));
+      Con.println(F("  !! arrival is still verified, but a stall takes a full minute"));
+      Con.println(F("  !! to report. Run 'calibrate' once to fix that."));
+    }
+    if (Actuator::wakeIdleMs() > 0) {
+      Con.printf("  wake press    : after %lu s idle, a press to wake the controller\r\n",
+                    static_cast<unsigned long>(Actuator::wakeIdleMs() / 1000UL));
     }
   }
   Con.printf("  status LED    : GPIO %d\r\n", PIN_STATUS_LED);
@@ -355,25 +429,39 @@ void printHelp() {
   Con.println(F("  !  flash-mode help (this chip needs the IO0/EN buttons)"));
 #endif
 #if ALLOW_MANUAL_SERIAL_CONTROL
-  Con.println(F("  o  pulse the OPEN relay now, and hold it open (see 'O')"));
-  Con.println(F("  x  pulse the CLOSE relay now, and clear any hold"));
+  Con.println(F("  o  OPEN the door now, and hold it open (see 'O')"));
+  Con.println(F("  x  CLOSE the door now, and clear any hold"));
   Con.println(F("  O  clear the manual hold, handing control back to the beacon"));
+  Con.println(F("  C  calibrate the travel time, both directions (needs 'M' first)"));
   Con.println(F("  k  LOCK — the beacon may no longer open the door"));
   Con.println(F("  M  MAINTENANCE — the door listens but does not move, for a"));
   Con.println(F("     bounded window; opens the console over WiFi. 'M' again ends it."));
   Con.println(F("  K  unlock"));
 #endif
   Con.println(F("status LED:"));
-  Con.println(F("  solid        door last OPENED"));
-  Con.println(F("  brief blip   door last CLOSED"));
-  Con.println(F("  near-solid   door MOVING (for the configured travel time)"));
+  Con.println(F("  solid        door OPEN"));
+  Con.println(F("  brief blip   door CLOSED  (double blip = closed and LOCKED)"));
+  Con.println(F("  near-solid   door MOVING"));
+  Con.println(F("  off          position UNKNOWN — with switches fitted, that means"));
+  Con.println(F("               genuinely between the two ends"));
+  Con.println(F("  3 blips      GAVE UP closing: staying open until somebody helps"));
   Con.println(F("  1 Hz blink   no beacon configured / never heard"));
   Con.println(F("  2 Hz flash   beacon battery LOW"));
   Con.println(F("  5 Hz flutter radio unhealthy"));
   Con.println(F("buzzer (if fitted — 'w' to configure):"));
-  Con.println(F("  tick .. tick door MOVING"));
-  Con.println(F("  rising pair  travel time is up"));
-  Con.println(F("  low buzz     refused: this door is LOCKED"));
+  Con.println(F("  WHO ASKED, by how many beeps. The long beep is last to open and"));
+  Con.println(F("  first to close, so you also hear which way it is going:"));
+  Con.println(F("    . -        2 beeps: the COLLAR arrived     (- . closing)"));
+  Con.println(F("    . . -      3 beeps: the CONSOLE asked      (- . . closing)"));
+  Con.println(F("    . . . -    4 beeps: the NETWORK asked      (- . . . closing)"));
+  Con.println(F("  then, while it travels and when it finishes:"));
+  Con.println(F("    tick..tick still moving"));
+  Con.println(F("    rising pair ARRIVED (verified by a switch, or the timer expired)"));
+  Con.println(F("    two long    it NEVER MOVED — the press was swallowed"));
+  Con.println(F("    5 fast      it STALLED partway. A stalled close is REVERSED"));
+  Con.println(F("    long . .    GAVE UP closing; staying open"));
+  Con.println(F("    . pause .   the door moved and NOTHING commanded it"));
+  Con.println(F("    one long    refused (locked, or a schedule window)"));
 }
 
 void printStatus(uint32_t nowMs) {
@@ -446,16 +534,64 @@ void printStatus(uint32_t nowMs) {
                 g_tracker.maxGapMs() > SAMPLE_MAX_AGE_MS ? "  << EXCEEDS SAMPLE_MAX_AGE_MS" : "");
   Con.printf("  relay pulse  : %lu ms\r\n",
                 static_cast<unsigned long>(g_door.pulseMs()));
-  if (g_travelMs > 0) {
-    if (doorTravelling(nowMs)) {
-      Con.printf("  door travel  : MOVING, %lu ms left of %lu (open loop — a timer)\r\n",
-                    static_cast<unsigned long>(g_travelMs -
-                                               (nowMs - g_door.lastActuationMs())),
-                    static_cast<unsigned long>(g_travelMs));
+  if (Actuator::busy()) {
+    Con.printf("  actuating    : %s %s — %lu ms elapsed, %lu ms before it counts as a stall\r\n",
+                  Actuator::phaseName(Actuator::phase()),
+                  DoorController::stateName(Actuator::target()),
+                  static_cast<unsigned long>(Actuator::elapsedMs(nowMs)),
+                  static_cast<unsigned long>(Actuator::deadlineRemainingMs(nowMs)));
+  }
+  {
+    // The configured times and the measured ones, side by side, because that
+    // comparison is the whole of travel-time tuning: a measurement that keeps
+    // landing near the deadline is a door about to start reporting stalls.
+    const uint32_t tOpen = Actuator::travelMs(DOOR_OPEN);
+    const uint32_t tClose = Actuator::travelMs(DOOR_CLOSED);
+    if (tOpen > 0 || tClose > 0) {
+      Con.printf("  door travel  : open %lu ms, close %lu ms configured\r\n",
+                    static_cast<unsigned long>(tOpen),
+                    static_cast<unsigned long>(tClose));
     } else {
-      Con.printf("  door travel  : %lu ms announced after each actuation\r\n",
-                    static_cast<unsigned long>(g_travelMs));
+      Con.println(F("  door travel  : not measured ('calibrate', or 'w' then 'travel')"));
     }
+    const uint32_t mOpen = Actuator::measuredMs(DOOR_OPEN);
+    const uint32_t mClose = Actuator::measuredMs(DOOR_CLOSED);
+    if (mOpen > 0 || mClose > 0) {
+      Con.printf("  last verified: open %lu ms, close %lu ms (measured, this boot)\r\n",
+                    static_cast<unsigned long>(mOpen),
+                    static_cast<unsigned long>(mClose));
+    }
+  }
+  if (g_sensorFault != 0) {
+    // This was reaching the log, the email and the uploaded status, but not the
+    // one place somebody with a cable actually looks.
+    const char *what =
+        g_sensorFault == SF_REEDS_CONTRADICT ? "both limit switches made at once"
+        : g_sensorFault == SF_VIBRATION_SILENT ? "vibration felt nothing during a VERIFIED travel"
+        : g_sensorFault == SF_VIBRATION_NOISY ? "vibration firing with the door still"
+        : g_sensorFault == SF_REED_MISSED ? "the door ran and no limit switch saw it arrive"
+        : g_sensorFault == SF_VIBRATION_DEAD ? "the vibration sensor produced no edges at all"
+        : g_sensorFault == SF_REED_LOST ? "a limit switch at the door's own end is not making"
+        : "unknown";
+    Con.printf("  !! SENSOR    : fault %u — %s\r\n", g_sensorFault, what);
+    Con.println(F("  !!             the door is deciding on evidence it can no"));
+    Con.println(F("  !!             longer trust. See docs/DIAGNOSTICS.md."));
+  }
+  if (Actuator::gaveUp()) {
+    Con.printf("  !! GAVE UP   : %u close attempts stalled. The door is staying OPEN\r\n",
+                  Actuator::closeAttempts());
+    Con.println(F("  !!             until somebody clears whatever is in the way."));
+    Con.println(F("  !!             'x' or 'o' from here clears this and tries again."));
+  } else if (Actuator::retryWaitRemainingMs(nowMs) > 0) {
+    Con.printf("  retrying in  : %lu s (attempt %u of %u after a stalled close)\r\n",
+                  static_cast<unsigned long>(Actuator::retryWaitRemainingMs(nowMs) / 1000UL),
+                  static_cast<unsigned>(Actuator::closeAttempts() + 1),
+                  static_cast<unsigned>(Actuator::retryLimit()));
+  }
+  if (Actuator::calState() != Actuator::CAL_OFF) {
+    const uint32_t left = Actuator::calRemainingMs(nowMs);
+    Con.printf("  calibrating  : %s%s\r\n", Actuator::calMessage(),
+                  left ? (String(" — ") + (left / 1000UL) + " s of quiet left").c_str() : "");
   }
   if (Position::enabled()) {
     if (Position::fault()) {
@@ -485,6 +621,21 @@ void printStatus(uint32_t nowMs) {
     Con.printf("  vibration    : GPIO %d, %lu edges since boot%s\r\n",
                Vibration::pin(), static_cast<unsigned long>(Vibration::pulses()),
                Vibration::activeLow() ? " (pull-up on)" : "");
+    // Whether a hand-closed door would be noticed, and if not, why not. Both
+    // answers are actionable: calibrate, or fit a switch.
+    const uint32_t vTravel = Actuator::travelMs(DOOR_CLOSED);
+    if (vTravel == 0) {
+      Con.println(F("                 uncommanded travel NOT inferred: no close "
+                    "travel time ('c' to calibrate)"));
+    } else {
+      Con.printf("                 uncommanded travel inferred from %lu.%lu-%lu.%lu s "
+                 "of movement\r\n",
+                 static_cast<unsigned long>((vTravel / 100UL * VIBRATION_TRAVEL_MIN_PCT) / 1000UL),
+                 static_cast<unsigned long>(((vTravel / 100UL * VIBRATION_TRAVEL_MIN_PCT) % 1000UL) / 100UL),
+                 static_cast<unsigned long>((vTravel / 100UL * VIBRATION_TRAVEL_MAX_PCT) / 1000UL),
+                 static_cast<unsigned long>(((vTravel / 100UL * VIBRATION_TRAVEL_MAX_PCT) % 1000UL) / 100UL));
+    }
+    if (g_vibRunActive) Con.println(F("                 MOVING right now"));
   } else {
     Con.println(F("  vibration    : no sensor ('w' then 'vibration <pin>' to add one)"));
   }
@@ -805,28 +956,98 @@ constexpr uint32_t kMaxTravelMs = 120000;
 // Both of these are shared by the console and the remote command channel, so
 // that `travel 15000` typed at the door and `travel 15000` queued on the server
 // take exactly the same path. Two parsers for one setting is how they drift.
+// "<ms>" sets both directions; "<openMs> <closeMs>" sets them separately.
+//
+// One argument still works because that is what every door that has ever been
+// configured was told, and because a door lying flat really does travel at
+// much the same speed either way. Two exist because a door mounted upright
+// does not: gravity assists the close and opposes the open.
 bool applyTravelMs(const char *arg, String &msg) {
-  uint32_t ms = 0;
-  if (!parseBoundedMs(arg, 0, kMaxTravelMs, ms)) {
-    msg = String("travel rejected: 0-") + kMaxTravelMs + " ms (0 = do not announce)";
+  uint32_t openMs = 0, closeMs = 0;
+  unsigned long a = 0, b = 0;
+  const int n = (arg != nullptr) ? sscanf(arg, "%lu %lu", &a, &b) : 0;
+  if (n == 1) {
+    openMs = closeMs = static_cast<uint32_t>(a);
+  } else if (n == 2) {
+    openMs = static_cast<uint32_t>(a);
+    closeMs = static_cast<uint32_t>(b);
+  } else {
+    msg = F("travel needs <ms>, or <open ms> <close ms>  (0 = do not announce)");
     return false;
   }
-  g_travelMs = ms;
-  BleScanner::storeTravelMs(ms);
+  if ((openMs != 0 && (openMs < 1000 || openMs > kMaxTravelMs)) ||
+      (closeMs != 0 && (closeMs < 1000 || closeMs > kMaxTravelMs))) {
+    msg = String("travel rejected: 0, or 1000-") + kMaxTravelMs +
+          " ms (0 = do not announce or verify)";
+    return false;
+  }
+  if (!Actuator::setTravelMs(openMs, closeMs)) {
+    msg = F("travel rejected");
+    return false;
+  }
+  BleScanner::storeTravelPair(openMs, closeMs);
   g_timingStored = true;
-  if (ms == 0) {
-    msg = F("travel 0: the door no longer announces that it is moving");
+
+  if (openMs == 0 && closeMs == 0) {
+    msg = F("travel 0: the door no longer announces or verifies its travels");
     // Leaving the buzzer mid-pattern here would strand a tone on the pin.
-    g_travelling = false;
     Chime::stop();
     return true;
   }
-  msg = String("travel ") + ms + " ms";
-  if (g_door.minIntervalMs() < ms) {
+  msg = String("travel: open ") + openMs + " ms, close " + closeMs + " ms";
+  const uint32_t longest = openMs > closeMs ? openMs : closeMs;
+  if (g_door.minIntervalMs() < longest) {
     msg += "; WARNING min interval (";
     msg += g_door.minIntervalMs();
     msg += " ms) is shorter, so a reversal can land mid-travel";
   }
+  if (!Position::enabled()) {
+    msg += "; with no limit switches this is a stopwatch, not a measurement";
+  }
+  return true;
+}
+
+// "<ms>" — how long an idle vendor controller is assumed to need a wake press.
+bool applyWakeSpec(const char *arg, String &msg) {
+  if (arg == nullptr) {
+    msg = F("wake needs <ms>, or 0 to never send a wake press");
+    return false;
+  }
+  const uint32_t ms = strtoul(arg, nullptr, 10);
+  if (!Actuator::setWakeIdleMs(ms)) {
+    msg = F("wake rejected: 0 (off), or 5000-3600000 ms");
+    return false;
+  }
+  BleScanner::storeActuation(Actuator::wakeIdleMs(), Actuator::retryDelayMs(),
+                             Actuator::retryLimit());
+  g_timingStored = true;
+  if (ms == 0) {
+    msg = F("wake OFF — one press per actuation. If your controller sleeps, "
+            "expect the first press after an idle hour to be swallowed");
+    return true;
+  }
+  msg = String("wake: a press after ") + ms +
+        " ms of idle is preceded by a wake press";
+  return true;
+}
+
+// "<minutes> <attempts>" — what happens after a close that stalled.
+bool applyRetrySpec(const char *args, String &msg) {
+  unsigned long mins = 0, tries = 0;
+  if (args == nullptr || sscanf(args, "%lu %lu", &mins, &tries) != 2) {
+    msg = F("retry needs <minutes> <attempts>, e.g. 5 3");
+    return false;
+  }
+  if (!Actuator::setRetryPolicy(static_cast<uint32_t>(mins) * 60000UL,
+                                static_cast<uint8_t>(tries))) {
+    msg = F("retry rejected: 1-1440 minutes, 1-10 attempts");
+    return false;
+  }
+  BleScanner::storeActuation(Actuator::wakeIdleMs(), Actuator::retryDelayMs(),
+                             Actuator::retryLimit());
+  g_timingStored = true;
+  msg = String("retry: wait ") + mins + " min between failed closes, " + tries +
+        " attempts, then stay open";
   return true;
 }
 
@@ -1014,6 +1235,50 @@ bool applyBuzzerSpec(const char *args, String &msg) {
   return true;
 }
 
+// Shared by the `w` menu and the remote verb, like the buzzer and sensor specs
+// beside it. It was remote-only until the console's own status line
+// ("'w' then 'vibration <pin>' to add one") turned out to name a command the
+// `w` menu did not implement — the one place a user is told to look was the one
+// place it could not be set.
+bool applyVibrationSpec(const char *args, String &msg) {
+  if (args == nullptr) {
+    msg = F("vibration needs a GPIO number, or 'off'");
+    return false;
+  }
+  char buf[48];
+  snprintf(buf, sizeof(buf), "%s", args);
+  // strtok_r for the same reason as applyBuzzerSpec: the remote dispatcher is
+  // itself mid-strtok when it calls this.
+  char *save = nullptr;
+  char *tok = strtok_r(buf, " \t", &save);
+  if (tok == nullptr) {
+    msg = F("vibration needs a GPIO number, or 'off'");
+    return false;
+  }
+  if (strcmp(tok, "off") == 0 || strcmp(tok, "none") == 0) {
+    Vibration::configure(-1, false);
+    BleScanner::storeVibration(-1, false);
+    msg = F("vibration sensor disabled");
+    return true;
+  }
+  const int pin = atoi(tok);
+  const char *problem = Vibration::pinProblem(pin);
+  if (!Vibration::configure(pin, VIBRATION_ACTIVE_LOW != 0)) {
+    msg = String("vibration rejected: ") + (problem != nullptr ? problem : "unusable pin");
+    return false;
+  }
+  BleScanner::storeVibration(pin, VIBRATION_ACTIVE_LOW != 0);
+  msg = String("vibration sensor on GPIO ") + pin;
+  // A warning, not a refusal: configure() took the pin, so say what is odd
+  // about it and let the edge count settle the argument.
+  if (problem != nullptr) {
+    msg += " (warning: ";
+    msg += problem;
+    msg += ")";
+  }
+  return true;
+}
+
 void printTimingMenu() {
   Con.println();
   Con.println(F("---- dwell / timing ----"));
@@ -1036,8 +1301,14 @@ void printTimingMenu() {
                 static_cast<unsigned long>(WifiLogger::settleMs()),
                 static_cast<unsigned long>(WifiLogger::minIntervalMs()),
                 static_cast<unsigned long>(WifiLogger::heartbeatMs() / 60000));
-  Con.printf("  door travel  : %5lu ms (0 = do not announce)\r\n",
-                static_cast<unsigned long>(g_travelMs));
+  Con.printf("  door travel  : open %5lu ms, close %5lu ms (0 = do not announce)\r\n",
+                static_cast<unsigned long>(Actuator::travelMs(DOOR_OPEN)),
+                static_cast<unsigned long>(Actuator::travelMs(DOOR_CLOSED)));
+  Con.printf("  wake press   : %5lu ms of idle before one is sent (0 = never)\r\n",
+                static_cast<unsigned long>(Actuator::wakeIdleMs()));
+  Con.printf("  failed close : retry after %lu min, %u attempts, then stay open\r\n",
+                static_cast<unsigned long>(Actuator::retryDelayMs() / 60000UL),
+                Actuator::retryLimit());
   if (Chime::enabled()) {
     Con.printf("  buzzer       : GPIO %d, %s, active %s\r\n", Chime::pin(),
                   Chime::passive() ? "passive" : "active",
@@ -1071,20 +1342,31 @@ void printTimingMenu() {
   Con.println(F("      if the first press DID take, the second may stop it mid-travel"));
   Con.println(F("      raise this if the relay clicks but the door does not move:"));
   Con.println(F("      many controllers debounce their button and ignore a short tap"));
-  Con.println(F("    travel 15000     how long YOUR door takes to move, ms (0 = off)"));
-  Con.println(F("      the LED goes near-solid and the buzzer ticks for this long"));
-  Con.println(F("      after every actuation, then chimes. A STOPWATCH, not a sensor:"));
-  Con.println(F("      it will chime cheerfully at a door stuck halfway"));
+  Con.println(F("    travel 12200 12700   how long YOUR door takes: <open> <close> ms"));
+  Con.println(F("      one value sets both. With limit switches this is the deadline"));
+  Con.println(F("      for arrival, and a travel that misses it is a STALL. Without"));
+  Con.println(F("      them it is only a stopwatch, and will chime at a stuck door"));
+  Con.println(F("    calibrate        time both directions and adopt the result"));
+  Con.println(F("      needs both switches and a maintenance window. Starts with a"));
+  Con.println(F("      quiet period: if the door moves on its own, it says so"));
+  Con.println(F("    wake 30000       idle time after which a wake press is sent, ms"));
+  Con.println(F("      a sleeping controller swallows the first press. 0 = off"));
+  Con.println(F("    retry 5 3        after a stalled CLOSE: wait <min>, <n> attempts"));
+  Con.println(F("      then stay open and say so. A stalled close always fails OPEN"));
   Con.println(F("    buzzer 27        which GPIO the buzzer is on ('buzzer off' = none)"));
   Con.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
   Con.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
   Con.println(F("    beep             three beeps now — find the pin by trying it"));
+  Con.println(F("    led              three flashes now — the same trick for the LED"));
   Con.println(F("    upload 60000 300000 1800000   how often the door calls in:"));
   Con.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
   Con.println(F("      Lower the middle one for faster commands, at the cost of"));
   Con.println(F("      radio time the BLE scan would otherwise have. 0 heartbeat = off"));
   Con.println(F("    sensors 32 25    limit switch pins: <open> <closed> ('sensors off')"));
   Con.println(F("    sensors 32 25 low   same, for switches that pull the pin to GND"));
+  Con.println(F("    vibration 33     which GPIO the vibration sensor's DO is on"));
+  Con.println(F("      answers 'did it START moving', seconds before a limit"));
+  Con.println(F("      switch can answer 'did it arrive' ('vibration off' = none)"));
   Con.println(F("      the door stops guessing where it is. Without them it only"));
   Con.println(F("      knows what it COMMANDED, which is why the chime is a timer"));
   Con.println(F("    clear            forget saved values"));
@@ -1147,7 +1429,11 @@ void processTimingLine(char *line) {
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
     g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
-    g_travelMs = DOOR_TRAVEL_MS;
+    Actuator::setTravelMs(DOOR_TRAVEL_OPEN_MS, DOOR_TRAVEL_CLOSE_MS);
+    BleScanner::storeTravelPair(DOOR_TRAVEL_OPEN_MS, DOOR_TRAVEL_CLOSE_MS);
+    Actuator::setWakeIdleMs(WAKE_IDLE_MS);
+    Actuator::setRetryPolicy(CLOSE_RETRY_DELAY_MS, CLOSE_RETRY_LIMIT);
+    BleScanner::storeActuation(WAKE_IDLE_MS, CLOSE_RETRY_DELAY_MS, CLOSE_RETRY_LIMIT);
     g_timingStored = false;
     Con.println(F("\r\n[dwell] reverted to the compiled-in defaults."));
     Con.println(F("[dwell] the buzzer pin is kept — that is wiring, not tuning."));
@@ -1188,6 +1474,14 @@ void processTimingLine(char *line) {
     g_entry = ENTRY_NONE;
     return;
   }
+  if (strcmp(line, "led") == 0) {
+    startLedTest(millis());
+    Con.printf("\r\n[dwell] three flashes on GPIO %d. Nothing at all means the\r\n",
+                  PIN_STATUS_LED);
+    Con.println(F("[dwell] wrong pin; lit solid and then dark means it is reversed."));
+    g_entry = ENTRY_NONE;
+    return;
+  }
   if (strncmp(line, "travel", 6) == 0 && (line[6] == ' ' || line[6] == '\0')) {
     String msg;
     if (!applyTravelMs(line[6] ? line + 7 : nullptr, msg)) {
@@ -1223,6 +1517,18 @@ void processTimingLine(char *line) {
                     DoorController::stateName(Position::state()));
       Con.println(F("[dwell] move the door by hand and press 's' to watch it change."));
     }
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  if (strncmp(line, "vibration", 9) == 0 && (line[9] == ' ' || line[9] == '\0')) {
+    String msg;
+    if (!applyVibrationSpec(line[9] ? line + 10 : nullptr, msg)) {
+      Con.printf("\r\n[dwell] %s\r\n", msg.c_str());
+      printTimingMenu();
+      return;
+    }
+    Con.printf("\r\n[dwell] %s.\r\n", msg.c_str());
+    Con.println(F("[dwell] tap the sensor, then press 's' — the edge count must climb."));
     g_entry = ENTRY_NONE;
     return;
   }
@@ -1628,9 +1934,16 @@ void handleSerial(uint32_t nowMs) {
         Con.print(F("[sys] press 'y' to confirm, anything else cancels: "));
         break;
 #if ALLOW_MANUAL_SERIAL_CONTROL
-      case 'o':
+      case 'o': {
         Con.println(F("[cmd] forcing OPEN"));
-        g_door.forcePulseOpen();
+        const ActuationResult r =
+            Actuator::request(DOOR_OPEN, SRC_MANUAL, nowMs, /*force=*/true);
+        if (r != ACT_DONE) {
+          Con.printf("[cmd] refused: %s\r\n", DoorController::resultName(r));
+          Chime::play(CHIME_REFUSED);
+          break;
+        }
+        announceMovement(SRC_MANUAL, DOOR_OPEN);
         if (MANUAL_HOLD_MS > 0) {
           g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
           if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;  // 0 means "off"
@@ -1639,13 +1952,37 @@ void handleSerial(uint32_t nowMs) {
           Con.println(F("[cmd] 'x' closes now, 'O' hands control back immediately."));
         }
         break;
-      case 'x':
+      }
+      case 'x': {
         Con.println(F("[cmd] forcing CLOSE"));
         // Clearing the hold here is what makes `x` mean "I am done" rather than
         // "close it, and then let the hold quietly keep it from closing again".
         g_manualHoldUntilMs = 0;
-        g_door.forcePulseClose();
+        // Forced, so this also clears a gave-up state: somebody is standing at
+        // the door asking for a close, and they can see what the firmware
+        // cannot. They get the full attempt budget back.
+        const ActuationResult r =
+            Actuator::request(DOOR_CLOSED, SRC_MANUAL, nowMs, /*force=*/true);
+        if (r != ACT_DONE) {
+          Con.printf("[cmd] refused: %s\r\n", DoorController::resultName(r));
+          if (r == ACT_BOOT_GRACE) {
+            Con.println(F("[cmd] the boot grace is deliberate and cannot be forced:"));
+            Con.println(F("[cmd] a door that just rebooted does not know whether"));
+            Con.println(F("[cmd] something is standing in it."));
+          }
+          Chime::play(CHIME_REFUSED);
+          break;
+        }
+        announceMovement(SRC_MANUAL, DOOR_CLOSED);
         break;
+      }
+      case 'C': {
+        String msg;
+        const bool ok = Actuator::startCalibration(nowMs, Maintenance::active(nowMs), msg);
+        Con.printf("[cal] %s\r\n", msg.c_str());
+        if (!ok) Chime::play(CHIME_REFUSED);
+        break;
+      }
       case 'n':
         g_entry = ENTRY_SCHEDULE;
         g_macLineLen = 0;
@@ -1692,25 +2029,84 @@ void handleSerial(uint32_t nowMs) {
 // One LED, several states, in priority order — most urgent wins.
 //
 //   5 Hz flutter   radio is unhealthy (no adverts from any device)
+//   3 quick blips  GAVE UP closing — the door is staying open on purpose
 //   2 Hz flash     beacon battery is low
 //   1 Hz blink     no beacon configured, or never heard since boot
-//   solid          door was last commanded OPEN
-//   brief blip     door was last commanded CLOSED
-//   off            nothing commanded since boot
+//   near-solid     the door is travelling
+//   solid          door OPEN
+//   brief blip     door CLOSED (a double blip if it is also locked)
+//   off            position unknown
+//
+// With limit switches fitted the last three show the MEASURED position rather
+// than the commanded one, which is the whole point of fitting them: the LED
+// stops reporting what the door was told and starts reporting where it is. A
+// door stopped partway then reads as "unknown" instead of as whichever end it
+// was last sent to.
+//
+// The gave-up blips sit above the battery flash deliberately. A flat beacon
+// battery is a job for the weekend; a door that has stopped closing is
+// tonight's.
 //
 // Door state is shown here rather than by pulsing a relay: a relay's indicator
 // is driven by its coil, so "flashing" one would energise the motor and
 // physically move the door. See docs/SAFETY.md.
+// Is the beacon's battery low? Reads the LATCH, not the instantaneous value.
+//
+// It used to compare the live millivolts on every call, which meant the LED and
+// the event log could disagree inside one tick: a cell sitting on the threshold
+// sags under each transmit pulse and recovers between them, so the LED flickered
+// between "low" and "fine" while nothing was logged. One latch, updated once a
+// tick by reportBeaconBattery(), is what makes the LED, the log, the upload and
+// the console all say the same thing.
 bool beaconBatteryLow(uint32_t nowMs) {
+  (void)nowMs;
+  return g_beaconLowLatched;
+}
+
+// Watches the beacon's self-reported battery and latches a warning.
+//
+// THIS ONLY WORKS AT ALL BECAUSE OF THE NUL FIX. Eddystone TLM service data
+// begins 20 00, and the BLE adapter used to convert it through c_str(), which
+// stops at the first NUL — so telemetry never decoded, batteryMv was never set,
+// and this warning was inert for the whole life of the feature. See
+// tests/host/README.md.
+//
+// Deliberately does NOT force an upload. A flat coin cell gives days of
+// warning, so it is not worth a radio burst at a moment the animal may be at
+// the door — the entry is in NVS immediately and reaches the server with the
+// next ordinary upload, which is at most WIFI_HEARTBEAT_MS away. Compare the
+// stall path, which does force one, because that is minutes-matter.
+void reportBeaconBattery(uint32_t nowMs) {
 #if BEACON_LOW_BATTERY_MV > 0
   EddystoneTlm tlm;
   uint32_t age = 0;
-  if (!BleScanner::targetTelemetry(tlm, age, nowMs)) return false;
-  if (tlm.batteryMv == 0) return false;  // mains powered, not a fault
-  return tlm.batteryMv <= BEACON_LOW_BATTERY_MV;
+  if (!BleScanner::targetTelemetry(tlm, age, nowMs)) return;  // never reported one
+  // 0 mV is a mains-powered beacon saying so, not a flat one. beacon.h says so.
+  if (tlm.batteryMv == 0) return;
+
+  g_beaconBatteryMv = tlm.batteryMv;
+
+  if (!g_beaconLowLatched && tlm.batteryMv <= BEACON_LOW_BATTERY_MV) {
+    g_beaconLowLatched = true;
+    Con.printf("[batt] !! beacon battery LOW: %u mV (warn at %d mV)\r\n",
+                  tlm.batteryMv, BEACON_LOW_BATTERY_MV);
+    Con.println(F("[batt] !! Replace it soon. A beacon that dies does NOT shut"));
+    Con.println(F("[batt] !! the door — the door refuses to act until it has"));
+    Con.println(F("[batt] !! heard the collar once since boot — but it stops"));
+    Con.println(F("[batt] !! working, and the animal is on the wrong side of it."));
+    EventLog::record(LOG_BEACON_LOW, 1, g_tracker.filteredRssi(),
+                     static_cast<int16_t>(tlm.batteryMv));
+  } else if (g_beaconLowLatched &&
+             tlm.batteryMv >= BEACON_LOW_BATTERY_MV + BEACON_LOW_BATTERY_CLEAR_MV) {
+    // A fresh cell, or the old one warming up. The margin is what stops this
+    // pair of entries repeating all day.
+    g_beaconLowLatched = false;
+    Con.printf("[batt] beacon battery back up: %u mV\r\n", tlm.batteryMv);
+    EventLog::record(LOG_BEACON_LOW, 0, g_tracker.filteredRssi(),
+                     static_cast<int16_t>(tlm.batteryMv));
+  }
 #else
   (void)nowMs;
-  return false;
 #endif
 }
 
@@ -1723,6 +2119,376 @@ bool beaconBatteryLow(uint32_t nowMs) {
 // door is, which matters because "already in that state" is how an actuation
 // request decides to do nothing: a stale belief leaves the door refusing to
 // correct itself after a swallowed press or a shove by hand.
+// Latch a sensor fault, once.
+//
+// Uploaded immediately, unlike the beacon battery. A dead sensor is not a
+// "sometime this week" problem: with the reeds fitted the firmware TRUSTS them,
+// so a reed that stopped making turns every close into a stall and parks the
+// door open — and a vibration sensor firing at idle suppresses the actuating
+// press outright. Both change what the door does tonight.
+void raiseSensorFault(uint8_t code, int16_t evidence) {
+  if (g_sensorFault == code) return;   // already latched on this one
+  g_sensorFault = code;
+  EventLog::record(LOG_SENSOR_FAULT, code, g_tracker.filteredRssi(), evidence);
+#if PETDOOR_ENABLE_WIFI
+  publishStatusLines();
+  WifiLogger::requestFlushNow();
+#endif
+}
+
+void clearSensorFault(uint8_t code) {
+  if (g_sensorFault != code) return;   // fires exactly once per recovery
+  g_sensorFault = 0;
+  // A recovery is history too. Without this the log shows faults arriving and
+  // never leaving, so a fault the door shrugged off is indistinguishable from
+  // one still live — and the only place the difference existed was the current
+  // status line, which says nothing about last Tuesday.
+  EventLog::record(LOG_SENSOR_CLEARED, code, g_tracker.filteredRssi());
+}
+
+// Vibration that accumulates while the door is standing still.
+//
+// Watched over a window rather than instantaneously, because a single knock —
+// a bird landing, someone closing a gate — is not a fault. Only the door being
+// idle counts: during a travel the sensor is SUPPOSED to be firing.
+// Is the switch at the end we believe the door is sitting at actually made?
+//
+// Every other cross-check needs something to HAPPEN. SF_REEDS_CONTRADICT needs
+// both switches made at once. SF_REED_MISSED needs a commanded travel to run its
+// full duration and not arrive. A connector shaken loose, or a magnet drifted a
+// few millimetres, produces neither: the door sits at its end, the switch says
+// nothing, and the firmware goes on deciding as though it were still there —
+// until the next actuation, which might be tomorrow night.
+//
+// That state was watched for ten minutes on the reference door with a reed
+// unplugged, and nothing complained. This is the check that would have.
+//
+// Three gates, each excluding something real:
+//
+//   a switch is FITTED at that end — a single-switch build is legal, and
+//     nagging about the end it cannot see would punish a supported wiring.
+//   nothing is moving, and has not been for REED_LOST_MS — a reed opens for a
+//     moment as the door settles onto its stop.
+//   the belief is a known END — mid-travel, or after a stall, the believed
+//     state is UNKNOWN and there is no claim here to contradict.
+void updateReedAgreement(uint32_t nowMs) {
+  if (!Position::enabled() || Position::fault() || Actuator::busy()) {
+    g_reedLostSinceMs = 0;
+    return;
+  }
+  // A travel that just resolved may still be settling onto its stop.
+  if (g_lastTravelEndedMs != 0 &&
+      (nowMs - g_lastTravelEndedMs) < UNCOMMANDED_SETTLE_MS) {
+    g_reedLostSinceMs = 0;
+    return;
+  }
+
+  const DoorState believed = g_door.state();
+  if (believed == DOOR_UNKNOWN) {
+    // Nothing is being claimed, so nothing can be contradicted. Also the state
+    // an inferred OPEN deliberately leaves behind — see invariant 19.
+    g_reedLostSinceMs = 0;
+    clearSensorFault(SF_REED_LOST);
+    return;
+  }
+
+  const bool made = Position::madeAt(believed);
+  if (!made && g_reedLostSinceMs == 0) {
+    g_reedLostSinceMs = nowMs;
+    if (g_reedLostSinceMs == 0) g_reedLostSinceMs = 1;   // 0 means "agreeing"
+  }
+
+  const uint32_t forMs = (!made && g_reedLostSinceMs != 0)
+                             ? (nowMs - g_reedLostSinceMs) : 0;
+  const SensorVerdict verdict =
+      judgeReedAtRest(Position::fittedAt(believed), made, forMs, REED_LOST_MS,
+                      g_sensorFault == SF_REED_LOST);
+
+  if (verdict == SV_RAISE) {
+    Con.printf("[pos] !! the door is believed %s and has not moved for %lu s, "
+               "but the %s limit switch on GPIO %d is NOT MADE.\r\n",
+               DoorController::stateName(believed),
+               static_cast<unsigned long>(forMs / 1000UL),
+               believed == DOOR_OPEN ? "open" : "closed",
+               believed == DOOR_OPEN ? Position::openPin() : Position::closedPin());
+    Con.println(F("[pos] !! A switch that reports nothing is worse than none:"));
+    Con.println(F("[pos] !! the door keeps deciding, on evidence that stopped"));
+    Con.println(F("[pos] !! arriving. Check the connector first, then the gap"));
+    Con.println(F("[pos] !! between magnet and reed with the door at its stop."));
+    raiseSensorFault(SF_REED_LOST,
+                     static_cast<int16_t>(believed == DOOR_OPEN ? 1 : 2));
+  } else if (verdict == SV_CLEAR) {
+    Con.printf("[pos] the %s limit switch is making again\r\n",
+               believed == DOOR_OPEN ? "open" : "closed");
+    clearSensorFault(SF_REED_LOST);
+  }
+
+  if (made) g_reedLostSinceMs = 0;
+}
+
+void updateVibrationNoise(uint32_t nowMs) {
+  if (!Vibration::enabled() || Actuator::busy()) {
+    g_vibIdleValid = false;           // a travel invalidates the window
+    return;
+  }
+  if (!g_vibIdleValid) {
+    g_vibIdleBaseline = Vibration::pulses();
+    g_vibIdleSinceMs = nowMs;
+    g_vibIdleEndAtStart = g_lastKnownEnd;
+    g_vibRunsThisWindow = 0;
+    g_vibRunRanAway = false;
+    g_vibIdleValid = true;
+    return;
+  }
+  if ((nowMs - g_vibIdleSinceMs) < VIBRATION_IDLE_WINDOW_MS) return;
+
+  const uint32_t seen = Vibration::pulses() - g_vibIdleBaseline;
+
+  // The whole decision — "is this a broken sensor or a moving door?" — is
+  // judgeIdleNoise(), in sensor_verdict.h, so that the three stand-downs it
+  // weighs can be walked exhaustively by a host test instead of being believed.
+  // Both of its mistakes are silent, which is why it is not written out here.
+  const SensorVerdict verdict =
+      judgeIdleNoise(seen, VIBRATION_IDLE_NOISE_PULSES,
+                     g_lastKnownEnd != g_vibIdleEndAtStart, g_vibRunsThisWindow,
+                     g_vibRunRanAway, g_sensorFault == SF_VIBRATION_NOISY);
+
+  if (verdict == SV_RAISE) {
+    Con.printf("[sensor] !! vibration sensor felt %lu edges in %lu s with the "
+                  "door STANDING STILL.\r\n",
+                  static_cast<unsigned long>(seen),
+                  static_cast<unsigned long>(VIBRATION_IDLE_WINDOW_MS / 1000UL));
+    Con.println(F("[sensor] !! At rest it should read nothing. This is not just"));
+    Con.println(F("[sensor] !! noise: the wake probe reads it as 'the door is"));
+    Con.println(F("[sensor] !! already moving' and SUPPRESSES the real press, so"));
+    Con.println(F("[sensor] !! the door stops responding."));
+    Con.println(F("[sensor] !! Back off the sensitivity screw, or move it — a"));
+    Con.println(F("[sensor] !! sensor on the frame feels the world, not the door."));
+    raiseSensorFault(SF_VIBRATION_NOISY,
+                     static_cast<int16_t>(seen > 32767 ? 32767 : seen));
+  } else if (verdict == SV_CLEAR) {
+    // A WHOLE QUIET WINDOW. Let the fault go.
+    //
+    // This was the only sensor fault with no way back, and it is the one most
+    // likely to have been raised in error: a hand working the door produces
+    // tens of thousands of edges, and if the idle window happens to expire
+    // before a switch confirms the door changed ends, the sensor gets the
+    // blame. That happened on the reference door — 9,655 edges at 15:50, the
+    // fault raised, and the reeds reported the new end 41 s later.
+    //
+    // Latched forever, the consequence is not just a wrong line in the status:
+    // it is a buzzer sounding every SENSOR_FAULT_BEEP_MS until someone power
+    // cycles the door, for a sensor that is working. An alarm nobody can stand
+    // gets unplugged, and that loses every future message with it — which is
+    // the argument chime.cpp makes, and it applies here.
+    //
+    // A full window at rest below the threshold is the same standard the fault
+    // was raised on, so it is the right standard to drop it on.
+    Con.println(F("[sensor] vibration quiet for a full window again — "
+                  "clearing the noise fault."));
+    clearSensorFault(SF_VIBRATION_NOISY);
+#if PETDOOR_ENABLE_WIFI
+    publishStatusLines();
+    WifiLogger::requestFlushNow();
+#endif
+  }
+
+  // Re-arm on every path, so a latched fault keeps being measured and a healthy
+  // door keeps being checked. The end comes along too: the window that just
+  // closed is finished with, and the next one asks "did it move SINCE NOW".
+  g_vibIdleBaseline = Vibration::pulses();
+  g_vibIdleSinceMs = nowMs;
+  g_vibIdleEndAtStart = g_lastKnownEnd;
+  g_vibRunsThisWindow = 0;
+  g_vibRunRanAway = false;
+}
+
+// What a run of vibration, with no travel commanded, says about where the door
+// now is.
+//
+// The sensor cannot report direction — it counts edges, and a spring rattling
+// one way rattles the same the other. It does not have to. A door standing at a
+// limit has exactly one direction available to it, so the direction follows
+// from where the door was; all that has to be established is that the movement
+// was a FULL TRAVEL and not somebody leaning on the panel. The travel time is
+// already measured per direction, so duration answers that.
+//
+// WHY THE TWO DIRECTIONS ARE NOT TREATED ALIKE
+//
+// This is an inference, not a measurement, and it will occasionally be wrong.
+// What it costs when it is wrong is not symmetric:
+//
+//   believing CLOSED when the door is really OPEN — the next close is refused
+//   as "already there" and the door stays open. Visible, and fail-open.
+//
+//   believing OPEN when the door is really CLOSED — the next OPEN is refused as
+//   "already there", and the animal stands at a shut door. That is the one
+//   request invariant 13 says must never be refused.
+//
+// So an inferred CLOSE commits the belief and an inferred OPEN only logs,
+// dropping the belief to UNKNOWN. UNKNOWN refuses nothing: the next request in
+// either direction actuates, which is exactly the behaviour wanted from a
+// conclusion this firmware is not certain of. Only a limit switch commits an
+// open.
+static void concludeVibrationRun(uint32_t durationMs, uint32_t nowMs) {
+  // A limit switch that can see the door outranks anything inferred from how
+  // long it rattled. This path exists for doors that have no switches, and for
+  // the night one comes adrift; it must not second-guess a working one or
+  // double-log what updatePosition() already reported.
+  if (Position::enabled() && !Position::fault() &&
+      Position::state() != DOOR_UNKNOWN) {
+    return;
+  }
+
+  const DoorState from = g_door.state();
+  if (from == DOOR_UNKNOWN) {
+    Con.printf("[vib] %lu.%lu s of movement, but the door's position was already "
+               "unknown — nothing to infer from.\r\n",
+               static_cast<unsigned long>(durationMs / 1000UL),
+               static_cast<unsigned long>((durationMs % 1000UL) / 100UL));
+    return;
+  }
+
+  const DoorState to = (from == DOOR_OPEN) ? DOOR_CLOSED : DOOR_OPEN;
+  const uint32_t expected = Actuator::travelMs(to);
+  if (expected == 0) {
+    // No travel time for that direction, so there is no yardstick. Say so
+    // rather than guessing: 'c' calibrates it, and this is the one message
+    // that tells a user why the door felt movement and drew no conclusion.
+    Con.printf("[vib] felt %lu.%lu s of movement with nothing commanded, but no "
+               "travel time is set for %s — 'c' to calibrate.\r\n",
+               static_cast<unsigned long>(durationMs / 1000UL),
+               static_cast<unsigned long>((durationMs % 1000UL) / 100UL),
+               DoorController::stateName(to));
+    return;
+  }
+
+  const uint32_t lo = expected / 100UL * VIBRATION_TRAVEL_MIN_PCT;
+  const uint32_t hi = expected / 100UL * VIBRATION_TRAVEL_MAX_PCT;
+  if (durationMs < lo || durationMs > hi) {
+    // Worth printing, because "the door was shoved and did not travel" is a
+    // real thing to know, but not worth an event: it happens whenever an animal
+    // leans on the panel.
+    Con.printf("[vib] %lu.%lu s of movement — not a travel (a %s takes about "
+               "%lu.%lu s). Nothing concluded.\r\n",
+               static_cast<unsigned long>(durationMs / 1000UL),
+               static_cast<unsigned long>((durationMs % 1000UL) / 100UL),
+               DoorController::stateName(to),
+               static_cast<unsigned long>(expected / 1000UL),
+               static_cast<unsigned long>((expected % 1000UL) / 100UL));
+    return;
+  }
+
+  // Long enough to be the real thing.
+  Con.printf("[vib] !! %lu.%lu s of movement with NOTHING COMMANDED, and a %s "
+             "takes %lu.%lu s.\r\n",
+             static_cast<unsigned long>(durationMs / 1000UL),
+             static_cast<unsigned long>((durationMs % 1000UL) / 100UL),
+             DoorController::stateName(to),
+             static_cast<unsigned long>(expected / 1000UL),
+             static_cast<unsigned long>((expected % 1000UL) / 100UL));
+  Con.printf("[vib] !! The door was %s and a door at a limit can only go one "
+             "way, so it is now %s.\r\n",
+             DoorController::stateName(from), DoorController::stateName(to));
+
+  // Keep the reed path's idea of the last end in step even though no reed is
+  // reporting. If a disconnected switch is plugged back in later it will read
+  // the end the door is actually at, and without this that would compare
+  // against a pre-inference end and log the same movement a second time.
+  g_lastKnownEnd = to;
+
+  if (to == DOOR_CLOSED) {
+    g_door.observePosition(DOOR_CLOSED);
+  } else {
+    // Deliberately NOT observePosition(DOOR_OPEN) — see the comment above.
+    g_door.setBeliefUnknown();
+    Con.println(F("[vib] !! Recording the position as UNKNOWN rather than open:"));
+    Con.println(F("[vib] !! this was inferred, not measured, and a wrong 'open'"));
+    Con.println(F("[vib] !! is what refuses the next open and shuts an animal"));
+    Con.println(F("[vib] !! out. UNKNOWN refuses nothing."));
+  }
+
+  EventLog::record(LOG_UNCOMMANDED,
+                   static_cast<uint8_t>(kUncommandedInferred + static_cast<uint8_t>(to)),
+                   g_tracker.filteredRssi(),
+                   static_cast<int16_t>(durationMs > 32767UL ? 32767 : durationMs));
+  Chime::play(CHIME_UNCOMMANDED);
+#if PETDOOR_ENABLE_WIFI
+  publishStatusLines();
+  WifiLogger::requestFlushNow();
+#endif
+  (void)nowMs;
+}
+
+// Watches the vibration sensor for a run of movement while nothing is being
+// commanded, and hands the duration to concludeVibrationRun().
+//
+// Runs are measured rather than sampled instantaneously because the question is
+// "how long did it move for", and because these modules fall quiet for a moment
+// mid-travel: a run survives a gap of VIBRATION_RUN_GAP_MS so one travel is not
+// chopped into several that each match nothing.
+void updateVibrationTravel(uint32_t nowMs) {
+  if (!Vibration::enabled()) {
+    g_vibRunActive = false;
+    g_vibSampleAtMs = 0;
+    return;
+  }
+
+  // A commanded travel is the actuator's business — it is already watching this
+  // sensor for exactly this, and it owns the outcome. The settle window after
+  // one ends covers the door rocking onto its stop.
+  if (Actuator::busy() ||
+      (g_lastTravelEndedMs != 0 &&
+       (nowMs - g_lastTravelEndedMs) < UNCOMMANDED_SETTLE_MS)) {
+    g_vibRunActive = false;
+    g_vibSampleAtMs = 0;
+    return;
+  }
+
+  if (g_vibSampleAtMs == 0) {           // seed, including after any of the above
+    g_vibSampleBase = Vibration::pulses();
+    g_vibSampleAtMs = nowMs;
+    if (g_vibSampleAtMs == 0) g_vibSampleAtMs = 1;   // 0 means "not seeded"
+    return;
+  }
+  const uint32_t elapsed = nowMs - g_vibSampleAtMs;
+  if (elapsed < VIBRATION_SAMPLE_MS) return;
+
+  const uint32_t now = Vibration::pulses();
+  const uint32_t edges = now - g_vibSampleBase;
+  g_vibSampleBase = now;
+  g_vibSampleAtMs = nowMs;
+
+  const bool moving = (edges * 1000UL / elapsed) >= VIBRATION_MOVING_PPS;
+
+  if (moving) {
+    if (!g_vibRunActive) {
+      g_vibRunActive = true;
+      // The movement began somewhere inside the sample that noticed it, so
+      // charge the run from the start of that sample rather than its end. Over
+      // a ten-second travel this is the difference between measuring 10.2 s and
+      // 9.7 s, which matters at the bottom of the tolerance band.
+      g_vibRunStartMs = nowMs - elapsed;
+    }
+    g_vibRunLastMoveMs = nowMs;
+    if ((nowMs - g_vibRunStartMs) > VIBRATION_RUN_MAX_MS) {
+      // Not a door. Abandon the run and remember why, so the idle-noise check
+      // below counts this as the noise it is rather than standing down for it.
+      g_vibRunActive = false;
+      g_vibRunRanAway = true;
+    }
+    return;
+  }
+
+  if (!g_vibRunActive) return;
+  if ((nowMs - g_vibRunLastMoveMs) < VIBRATION_RUN_GAP_MS) return;  // a lull
+
+  const uint32_t durationMs = g_vibRunLastMoveMs - g_vibRunStartMs;
+  g_vibRunActive = false;
+  if (g_vibRunsThisWindow < 255) g_vibRunsThisWindow++;
+  concludeVibrationRun(durationMs, nowMs);
+}
+
 void updatePosition(uint32_t nowMs) {
   if (!Position::enabled()) return;
   Position::tick(nowMs);
@@ -1734,22 +2500,87 @@ void updatePosition(uint32_t nowMs) {
       Con.println(F("[pos] !! That cannot happen on a working door — suspect a"));
       Con.println(F("[pos] !! shorted wire, a stuck switch, or a stray magnet."));
       Con.println(F("[pos] !! Position is being ignored until it clears."));
+      raiseSensorFault(SF_REEDS_CONTRADICT, 0);
     }
     return;
+  }
+  if (g_sensorFaultAnnounced) {
+    Con.println(F("[pos] limit switches agree again"));
+    clearSensorFault(SF_REEDS_CONTRADICT);
   }
   g_sensorFaultAnnounced = false;
 
   const DoorState seen = Position::state();
-  if (seen != g_lastObserved) {
-    g_lastObserved = seen;
-    if (seen != DOOR_UNKNOWN) {
-      // Arriving at an end is what confirms a travel actually completed.
-      if (doorTravelling(nowMs)) g_travelVerified = true;
-      if (g_door.observePosition(seen)) {
-        Con.printf("[pos] switch says %s — correcting what the door believed\r\n",
-                      DoorController::stateName(seen));
-      }
+  if (seen == g_lastObserved) return;
+  g_lastObserved = seen;
+  if (seen == DOOR_UNKNOWN) return;   // the normal reading between the switches
+
+  // Which END the door was last seen at, which is the comparison that matters.
+  //
+  // THIS USED TO COMPARE AGAINST THE PREVIOUS OBSERVATION, AND SO NEVER FIRED.
+  // A door being pushed shut by hand reads OPEN, then UNKNOWN for the ten
+  // seconds it is in transit, then CLOSED — so the previous observation is
+  // always UNKNOWN by the time it arrives, and "did it change ends?" was always
+  // answered no. Uncommanded movement was undetectable for every door that
+  // physically travels, which is all of them. Remembering the last END instead
+  // of the last READING is the whole fix.
+  const DoorState from = g_lastKnownEnd;
+  g_lastKnownEnd = seen;
+
+  // Arrival during a travel is the actuator's business — it is watching for
+  // exactly this and will resolve the attempt itself. Nothing to do here, but
+  // the end above is still recorded, or the next observation would compare
+  // against a stale one.
+  if (Actuator::busy()) return;
+
+  // THE DOOR MOVED AND NOTHING COMMANDED IT.
+  //
+  // This is not a hypothetical. The vendor controller has modes of its own and
+  // was watched leaving the open limit about fifteen seconds after arriving,
+  // twice, with nothing driving it. A hand on the door and a gust of wind do
+  // it too. None of it was visible to this firmware before the switches were
+  // fitted, which is why a door that "randomly" changed state was unfalsifiable.
+  //
+  // Three things have to hold. It must have been at a KNOWN end before, which
+  // excludes the first reading after boot — the door was not moving then, we
+  // simply had not looked. It must be at a DIFFERENT end now. And no travel may
+  // have resolved in the last few seconds, because a reed that makes just after
+  // a travel was given up on is that travel arriving late, not a mystery.
+  const bool uncommanded =
+      from != DOOR_UNKNOWN && from != seen &&
+      (g_lastTravelEndedMs == 0 ||
+       (nowMs - g_lastTravelEndedMs) > UNCOMMANDED_SETTLE_MS);
+
+  if (g_door.observePosition(seen)) {
+    if (uncommanded) {
+      Con.printf("[pos] !! the door moved to %s and NOTHING commanded it.\r\n",
+                    DoorController::stateName(seen));
+      Con.println(F("[pos] !! A hand, the wind, or a mode on the door's own"));
+      Con.println(F("[pos] !! controller. If this repeats, that controller still"));
+      Con.println(F("[pos] !! has an automatic mode enabled — see docs/COOP-CONVERSION.md."));
+      EventLog::record(LOG_UNCOMMANDED, static_cast<uint8_t>(seen),
+                       g_tracker.filteredRssi());
+      Chime::play(CHIME_UNCOMMANDED);
+#if PETDOOR_ENABLE_WIFI
+      // Worth a radio burst of its own. A door moving by itself is the kind of
+      // thing you want to find in the dashboard the same evening, not at the
+      // next heartbeat half an hour later.
+      publishStatusLines();
+      WifiLogger::requestFlushNow();
+#endif
+    } else {
+      Con.printf("[pos] switch says %s — correcting what the door believed\r\n",
+                    DoorController::stateName(seen));
     }
+  }
+
+  // Reality says the door is shut, so whatever made the firmware give up on
+  // closing it is no longer true. Clearing this from an OBSERVATION rather than
+  // from a command is the one case where a switch is allowed to change policy
+  // — and it only ever relaxes a refusal, never causes a movement.
+  if (seen == DOOR_CLOSED && Actuator::gaveUp()) {
+    Actuator::clearGaveUp();
+    Con.println(F("[pos] the door is closed after all — resuming normal control"));
   }
 }
 
@@ -1762,10 +2593,13 @@ void updatePosition(uint32_t nowMs) {
 // dashboard shows the old value while insisting the command succeeded.
 void publishStatusLines() {
 #if PETDOOR_ENABLE_WIFI
-  char line[256];
+  char line[512];   // grown when the memory fields were added below
   snprintf(line, sizeof(line),
            "rssi=%d raw=%d dist=%s present=%d door=%s locked=%d presses=%u "
-           "gap=%lu samples=%lu adv=%lu weak=%lu heap=%lu up=%lu maint=%lu ip=%s real=%s",
+           "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu maxalloc=%lu "
+           "heaplow=%lu cstack=%lu ustack=%lu up=%lu maint=%lu ip=%s real=%s "
+           "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
+           "batt=%ld battlow=%d sfault=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -1774,8 +2608,38 @@ void publishStatusLines() {
            static_cast<unsigned long>(g_tracker.maxGapMs()),
            static_cast<unsigned long>(g_tracker.totalSamples()),
            static_cast<unsigned long>(BleScanner::advCount()),
+           // Samples the BLE host task could not hand over because the control
+           // task was behind. The queue is 32 deep against a beacon advertising
+           // at ~2 Hz, so this is ~16 s of slack and should read 0 forever —
+           // which is exactly why it is worth uploading. It is the one number
+           // that answers "is the door missing the collar because the firmware
+           // is too busy", and until now it could only be read over a cable,
+           // which is the thing a mounted door does not have.
+           static_cast<unsigned long>(BleScanner::droppedSamples()),
            static_cast<unsigned long>(g_tracker.weakSamples()),
            static_cast<unsigned long>(ESP.getFreeHeap()),
+           // THE THREE NUMBERS A PANIC NEEDS, WHICH USED TO STAY ON THE CABLE.
+           //
+           // A door panicked opening an OTA window 3.5 hours into a boot, and
+           // nothing uploaded could say why. Free heap was a comfortable 124 KB
+           // — but free heap is not what an allocation needs. It needs a
+           // CONTIGUOUS block, and that was measured nowhere at all. Heap
+           // low-water and the task stack high-waters existed, on the console
+           // only, which is the one place a mounted door cannot be read.
+           //
+           // maxalloc is the largest single block available: when it falls far
+           // below heap, the heap is fragmented, and that is the shape of
+           // failure that takes a door out while every other number looks fine.
+           // cstack/ustack are minimum-ever-free, not current — the uploader is
+           // the one that brings up WiFi and ArduinoOTA, so it is the one whose
+           // margin matters when a window will not open.
+           static_cast<unsigned long>(ESP.getMaxAllocHeap()),
+           static_cast<unsigned long>(ESP.getMinFreeHeap()),
+           static_cast<unsigned long>(
+               g_controlTaskHandle != nullptr
+                   ? uxTaskGetStackHighWaterMark(g_controlTaskHandle) * sizeof(StackType_t)
+                   : 0),
+           static_cast<unsigned long>(WifiLogger::stackFreeBytes()),
            static_cast<unsigned long>(millis() / 1000),
            // Seconds left in the maintenance window, 0 when there is none. The
            // dashboard needs this to say the door is deliberately not moving —
@@ -1791,7 +2655,33 @@ void publishStatusLines() {
            !Position::enabled() ? "none"
                : Position::fault() ? "FAULT"
                : Position::state() == DOOR_OPEN ? "OPEN"
-               : Position::state() == DOOR_CLOSED ? "CLOSED" : "?");
+               : Position::state() == DOOR_CLOSED ? "CLOSED" : "?",
+           // What the actuation path is doing, and what it has concluded.
+           // Without these the dashboard cannot tell a door that is staying
+           // open on purpose from one that has died — which are the two
+           // states it most needs to distinguish.
+           Actuator::busy() ? Actuator::phaseName(Actuator::phase()) : "idle",
+           Actuator::gaveUp() ? 1 : 0,
+           static_cast<unsigned>(Actuator::closeAttempts()),
+           static_cast<unsigned long>(Actuator::retryWaitRemainingMs(millis()) / 1000UL),
+           // Measured travel times, which is how travel time gets tuned from a
+           // browser: compare them against the configured pair below.
+           static_cast<unsigned long>(Actuator::measuredMs(DOOR_OPEN)),
+           static_cast<unsigned long>(Actuator::measuredMs(DOOR_CLOSED)),
+           Actuator::calState() == Actuator::CAL_OFF ? "-"
+               : Actuator::calibrating() ? "running"
+               : Actuator::calState() == Actuator::CAL_DONE ? "done" : "failed",
+           // The beacon's own battery. -1 means it has never sent telemetry,
+           // which is the normal state for an iBeacon-only beacon rather than a
+           // fault — so the dashboard must render it as "not reported" and not
+           // as a flat cell. 0 would be a beacon saying it is mains powered.
+           static_cast<long>(g_beaconBatteryMv),
+           g_beaconLowLatched ? 1 : 0,
+           // 0 is healthy; otherwise a SensorFault code. The dashboard needs
+           // this to tell "the door is open because it gave up" from "the door
+           // is open because the switch that would have confirmed a close has
+           // stopped working".
+           static_cast<unsigned>(g_sensorFault));
   WifiLogger::setStatusLine(line);
 
   // Every tunable the remote channel can change, so the dashboard's
@@ -1811,14 +2701,15 @@ void publishStatusLines() {
     strncat(sched, one, sizeof(sched) - strlen(sched) - 1);
   }
 
-  char cfg[448];
+  char cfg[576];
   snprintf(cfg, sizeof(cfg),
            "enter=%d exit=%d dopen=%lu dclose=%lu dmin=%lu pulse=%lu "
            "pcount=%u pgap=%lu igap=%lu travel=%lu fwin=%u falpha=%s "
            "owin=%u oalpha=%s bpin=%d bpassive=%d blow=%d "
            "sopen=%d sshut=%d slow=%d "
            "upsettle=%lu upmin=%lu upbeat=%lu "
-           "vib=%d tz=%d sched=%s",
+           "vib=%d tz=%d topen=%lu tclose=%lu wake=%lu retrymin=%lu retrymax=%u "
+           "sched=%s",
            g_tracker.enterDbm(), g_tracker.exitDbm(),
            static_cast<unsigned long>(g_tracker.enterConfirmMs()),
            static_cast<unsigned long>(g_tracker.exitConfirmMs()),
@@ -1827,7 +2718,10 @@ void publishStatusLines() {
            g_door.pulseCount(),
            static_cast<unsigned long>(g_door.pulseGapMs()),
            static_cast<unsigned long>(g_door.directionGapMs()),
-           static_cast<unsigned long>(g_travelMs),
+           // Kept as the open-direction value so a dashboard that only knows
+           // about one travel time still shows a real number rather than a
+           // blank. topen/tclose below are the pair it should prefer.
+           static_cast<unsigned long>(Actuator::travelMs(DOOR_OPEN)),
            g_tracker.windowSize(), String(g_tracker.alpha(), 2).c_str(),
            g_tracker.fastWindowSize(), String(g_tracker.fastAlpha(), 2).c_str(),
            Chime::pin(), Chime::passive() ? 1 : 0, Chime::activeLow() ? 1 : 0,
@@ -1837,85 +2731,406 @@ void publishStatusLines() {
            static_cast<unsigned long>(WifiLogger::minIntervalMs()),
            static_cast<unsigned long>(WifiLogger::heartbeatMs()),
            Vibration::pin(), Schedule::utcOffsetMinutes(),
+           static_cast<unsigned long>(Actuator::travelMs(DOOR_OPEN)),
+           static_cast<unsigned long>(Actuator::travelMs(DOOR_CLOSED)),
+           static_cast<unsigned long>(Actuator::wakeIdleMs()),
+           static_cast<unsigned long>(Actuator::retryDelayMs() / 60000UL),
+           static_cast<unsigned>(Actuator::retryLimit()),
            sched[0] ? sched : "-");
   WifiLogger::setConfigLine(cfg);
 #endif
 }
 
-void updateChime(uint32_t nowMs) {
-  const bool moving = doorTravelling(nowMs);
-  if (moving != g_travelling) {
-    const bool wasMoving = g_travelling;
-    g_travelling = moving;
-    if (moving) {
-      g_travelVerified = false;   // a fresh travel has to earn its confirmation
-      Vibration::travelStarted(nowMs);
-      // Do not start the travel pattern on top of an acknowledgement. The ack
-      // is the half-second that tells you the door HEARD you, and a `door
-      // open` produces both in the same tick — starting the loop immediately
-      // would swallow the one that carries the information.
-      g_workingPending = true;
-    } else if (wasMoving && g_travelMs != 0) {
-      // With switches fitted, "arrived" is a measurement rather than a timer
-      // running out — and a travel that ends with neither switch made is a
-      // door that did NOT get there. Say so differently.
-      // Vibration answers a DIFFERENT question from the limit switches, and a
-      // more damning one: not "did it arrive" but "did it ever start". Checked
-      // first, because a door that never moved makes the arrival question moot.
-      if (Vibration::enabled() && !Vibration::movedThisTravel()) {
-        Con.println(F("[vib] !! the relay fired and the door never moved."));
-        Con.println(F("[vib] !! Nothing was felt for the whole travel time: the"));
-        Con.println(F("[vib] !! controller swallowed the press, or the door is"));
-        Con.println(F("[vib] !! jammed solid. NOT the same as failing to arrive."));
-        EventLog::record(LOG_NO_MOVEMENT, static_cast<uint8_t>(g_door.state()),
-                         g_tracker.filteredRssi());
-        Chime::play(CHIME_REFUSED);
-        return;
+// Announce a movement the moment it is commanded, naming who asked for it.
+//
+// Played here rather than when the travel ENDS because this is the half-second
+// that answers the question the door is otherwise silent about for twelve
+// seconds: "did it hear me?". The outcome gets its own sound later.
+void announceMovement(ActuationSource src, DoorState target) {
+  const ChimeTune tune = Actuator::moveTune(src, target);
+  if (tune != CHIME_NONE) Chime::play(tune);
+  // updateChime() starts the travel tick once this has finished saying itself.
+  // It does not need telling: "a travel is in flight and the buzzer is idle" is
+  // the whole condition, which also covers the travels nothing announces —
+  // a calibration run, and the reversal after a stalled close.
+}
+
+// Announce and record how an attempt ended.
+//
+// One place, for both halves. These used to be spread between the chime logic
+// (which said "arrived" on a timer) and the position module (which said
+// "stalled" separately), and the result was a door that could announce both
+// for the same travel.
+void reportOutcome(const Actuator::Result &r) {
+  const char *where = DoorController::stateName(r.target);
+
+  switch (r.outcome) {
+    case Actuator::OUT_ARRIVED:
+      Con.printf("[door] %s — ARRIVED, verified by the limit switch in %lu ms\r\n",
+                    where, static_cast<unsigned long>(r.measuredMs));
+      {
+        // A travel landing within a second of its deadline is a door about to
+        // start reporting stalls for no reason — in January, or with a bird
+        // leaning on it. Worth saying before it happens.
+        const uint32_t configured = Actuator::travelMs(r.target);
+        if (configured != 0 && r.measuredMs + 1000 > configured + TRAVEL_GRACE_MS) {
+          Con.printf("[door] !! that is within a second of the %lu ms deadline — "
+                        "raise it with 'w' then 'travel', or run 'calibrate'\r\n",
+                        static_cast<unsigned long>(configured + TRAVEL_GRACE_MS));
+        }
       }
-      if (Position::enabled() && !g_travelVerified) {
-        Con.println(F("[pos] !! travel time elapsed and NO limit switch was reached."));
-        Con.println(F("[pos] !! The door did not complete its travel: a swallowed"));
-        Con.println(F("[pos] !! button press, an obstruction, or a jam."));
-        EventLog::record(LOG_STALLED, static_cast<uint8_t>(g_door.state()),
-                         g_tracker.filteredRssi());
-        Chime::play(CHIME_REFUSED);
-        return;
-      }
-      // Only a stopwatch that actually ran out gets the done chime. Turning
-      // announcements off mid-travel (`travel 0`) also clears g_travelling,
-      // and announcing "arrived" because someone disabled announcements would
-      // be a lie in the one direction that matters.
-      g_workingPending = false;
       Chime::play(CHIME_DONE);
+      break;
+
+    case Actuator::OUT_ASSUMED:
+      // The honest wording. Nothing measured this; the stopwatch ran out.
+      Con.printf("[door] %s — travel time elapsed (assumed; no limit switch at that end)\r\n",
+                    where);
+      Chime::play(CHIME_DONE);
+      break;
+
+    case Actuator::OUT_UNTIMED:
+      // No travel time and nothing to verify with, so there is nothing to
+      // announce. Silence here is correct: a chime would be a claim.
+      break;
+
+    case Actuator::OUT_NO_MOVE:
+      Con.printf("[door] !! %u presses and the door NEVER MOVED.\r\n", r.presses);
+      Con.println(F("[door] !! Nothing was felt for the whole wait: the controller"));
+      Con.println(F("[door] !! swallowed every press, or the door is jammed solid."));
+      Con.println(F("[door] !! NOT the same as failing to arrive — nothing moved, so"));
+      Con.println(F("[door] !! nothing is trapped, and the door is still where it was."));
+      Con.println(F("[door] !! Try a longer 'pulse' first: 500 ms is swallowed by some"));
+      Con.println(F("[door] !! controllers and 1000 ms is not."));
+      EventLog::record(LOG_NO_MOVEMENT, static_cast<uint8_t>(r.target),
+                       g_tracker.filteredRssi());
+      Chime::play(CHIME_NO_MOVE);
+      break;
+
+    case Actuator::OUT_STALLED:
+      Con.printf("[door] !! travelling %s STALLED — it started and never arrived.\r\n",
+                    where);
+      Con.println(F("[door] !! An obstruction, a jam, or a controller that stopped"));
+      Con.println(F("[door] !! partway. The door's position is now UNKNOWN."));
+      EventLog::record(LOG_STALLED, static_cast<uint8_t>(r.target),
+                       g_tracker.filteredRssi(), static_cast<int16_t>(r.flags));
+      if (r.target == DOOR_CLOSED) {
+        // The one place the firmware reverses a command of its own. Said out
+        // loud because it is the most important thing this door ever does.
+        Con.println(F("[door] !! It was CLOSING, so it is being reopened. A door"));
+        Con.println(F("[door] !! stopped partway shut is exactly when something"));
+        Con.println(F("[door] !! may be under it."));
+        if (r.gaveUp) {
+          Con.printf("[door] !! %u close attempts have now stalled. GIVING UP: the door\r\n",
+                        r.attempt);
+          Con.println(F("[door] !! will stay OPEN until somebody clears the way and"));
+          Con.println(F("[door] !! presses 'x', or sends `door close`."));
+          EventLog::record(LOG_GAVE_UP, r.attempt, g_tracker.filteredRssi());
+        } else {
+          Con.printf("[door] !! next attempt in %lu min (attempt %u of %u).\r\n",
+                        static_cast<unsigned long>(Actuator::retryDelayMs() / 60000UL),
+                        static_cast<unsigned>(r.attempt + 1),
+                        static_cast<unsigned>(Actuator::retryLimit()));
+        }
+      }
+      Chime::play(r.gaveUp ? CHIME_GAVE_UP : CHIME_STALLED);
+      break;
+
+    default:
+      break;
+  }
+
+  // ---- is the vibration sensor even connected? ----------------------------
+  //
+  // Checked FIRST, and without reference to the limit switches, because it is
+  // the one sensor fault that needs no second opinion. Not a single edge across
+  // a whole attempt — two to four relay pulses included — is a broken signal
+  // path: a sensor that is merely deaf, or mounted somewhere useless, still
+  // registers the relay's own click through the structure.
+  //
+  // This matters because an unplugged vibration sensor is otherwise INVISIBLE.
+  // It reads exactly like a door that did not move, so the door reports
+  // NO_MOVE, which is true of the evidence and says nothing about the sensor.
+  // One was unplugged during testing and went unnoticed through a whole
+  // actuation, three retries and a NO_MOVE verdict.
+  if (Vibration::enabled()) {
+    if (r.vibrationRaw == 0) {
+      if (++g_vibDeadStrikes >= SENSOR_FAULT_STRIKES) {
+        Con.printf("[sensor] !! %u actuations produced NOT ONE edge from the "
+                      "vibration sensor on GPIO %d.\r\n",
+                      g_vibDeadStrikes, Vibration::pin());
+        Con.println(F("[sensor] !! Even a badly mounted sensor hears the relay"));
+        Con.println(F("[sensor] !! click. Zero means no signal path at all —"));
+        Con.println(F("[sensor] !! unplugged, a broken wire, or no power to the"));
+        Con.println(F("[sensor] !! module. Until it is fixed the door cannot tell"));
+        Con.println(F("[sensor] !! a swallowed press from a door that moved."));
+        raiseSensorFault(SF_VIBRATION_DEAD, 0);
+      }
     } else {
-      g_workingPending = false;
-      Chime::stop();
+      g_vibDeadStrikes = 0;
+      clearSensorFault(SF_VIBRATION_DEAD);
     }
   }
-  // Start the travel pattern once whatever was playing has had its say.
-  if (g_workingPending && Chime::playing() == CHIME_NONE) {
-    g_workingPending = false;
-    if (g_travelling) Chime::play(CHIME_WORKING);
+
+  // ---- the two sensors judging each other --------------------------------
+  //
+  // Only meaningful with both fitted, because each diagnosis uses the other as
+  // ground truth. With one sensor there is nothing to disagree with.
+  if (Vibration::enabled() && Position::enabled()) {
+    const uint32_t felt = Vibration::pulsesThisTravel();
+
+    if (r.outcome == Actuator::OUT_ARRIVED) {
+      // A limit switch confirmed arrival, so the door DEFINITELY moved. If the
+      // vibration sensor felt nothing through all of that, the sensor is the
+      // thing that is broken — there is no reading of this where the door is
+      // at fault.
+      if (felt < VIBRATION_MIN_PULSES) {
+        if (++g_vibSilentStrikes >= SENSOR_FAULT_STRIKES) {
+          Con.printf("[sensor] !! %u switch-VERIFIED travels felt like nothing "
+                        "(%lu edges).\r\n",
+                        g_vibSilentStrikes, static_cast<unsigned long>(felt));
+          Con.println(F("[sensor] !! The door moved — a limit switch says so — and"));
+          Con.println(F("[sensor] !! the vibration sensor did not notice. It is"));
+          Con.println(F("[sensor] !! deaf, unplugged, or has come off the door."));
+          Con.println(F("[sensor] !! Until it is fixed, a swallowed press can no"));
+          Con.println(F("[sensor] !! longer be told from a successful one."));
+          raiseSensorFault(SF_VIBRATION_SILENT, static_cast<int16_t>(felt));
+        }
+      } else {
+        g_vibSilentStrikes = 0;
+        g_reedMissedStrikes = 0;        // it arrived, so the reeds are fine too
+        clearSensorFault(SF_VIBRATION_SILENT);
+        clearSensorFault(SF_REED_MISSED);
+      }
+    } else if (r.outcome == Actuator::OUT_STALLED) {
+      // It stalled. Vibration says which kind of stall this was, and the two
+      // need completely different responses:
+      //
+      //   lots of movement  the door ran its travel and the switch never saw
+      //                     it. A lost magnet or a broken wire.
+      //   little movement   the door stopped. An obstruction or a jam, which
+      //                     is what STALLED already reports — not a sensor
+      //                     fault, so it is left alone here.
+      if (felt >= VIBRATION_MOVING_PULSES) {
+        if (++g_reedMissedStrikes >= SENSOR_FAULT_STRIKES) {
+          Con.printf("[sensor] !! %u travels RAN (%lu edges) and never arrived.\r\n",
+                        g_reedMissedStrikes, static_cast<unsigned long>(felt));
+          Con.printf("[sensor] !! The door is moving, so the %s limit switch is\r\n",
+                        r.target == DOOR_OPEN ? "OPEN" : "CLOSED");
+          Con.println(F("[sensor] !! not making. Check the magnet has not come off"));
+          Con.println(F("[sensor] !! and that its gap has not opened up — the"));
+          Con.println(F("[sensor] !! capture range is narrow."));
+          Con.println(F("[sensor] !! This matters tonight: every close now STALLS,"));
+          Con.println(F("[sensor] !! which fails the door OPEN by design."));
+          raiseSensorFault(SF_REED_MISSED, static_cast<int16_t>(felt));
+        }
+      }
+    }
   }
+
+  // The door's own record of having gone somewhere. Only for outcomes where it
+  // actually believes it got there — OUT_NO_MOVE and OUT_STALLED have their own
+  // entries above, and recording an OPEN for a travel that failed is exactly
+  // the lie this rebuild exists to stop telling.
+  g_lastTravelEndedMs = millis();
+  if (g_lastTravelEndedMs == 0) g_lastTravelEndedMs = 1;   // 0 means "never"
+
+  const bool committed = (r.outcome == Actuator::OUT_ARRIVED ||
+                          r.outcome == Actuator::OUT_ASSUMED ||
+                          r.outcome == Actuator::OUT_UNTIMED);
+  if (committed) {
+    EventLog::record(r.target == DOOR_OPEN ? LOG_OPEN : LOG_CLOSE,
+                     static_cast<uint8_t>(r.source), g_tracker.filteredRssi(),
+                     static_cast<int16_t>(r.flags));
+  }
+
+#if PETDOOR_ENABLE_WIFI
+  if (r.outcome == Actuator::OUT_NO_MOVE || r.outcome == Actuator::OUT_STALLED) {
+    // A failure goes out unconditionally. These are rare, and they are the
+    // entries somebody will be reading in a hurry.
+    publishStatusLines();
+    WifiLogger::requestFlushNow();
+  } else if (committed) {
+    // A COMPLETED TRAVEL also goes out at once, because "is the door open?" is
+    // the one question a dashboard exists to answer, and the old behaviour
+    // answered it worst exactly when it mattered: an open door is not idle, so
+    // the status could sit unreported until the half-hour heartbeat while the
+    // page showed the door as it had been before it moved.
+    //
+    // This overrides the idle gate on purpose. wifi_logger.h argues against
+    // uploading per event, and that argument is sound — the radio is shared and
+    // events happen when the animal is AT THE DOOR. Two things make this one
+    // exception affordable:
+    //
+    //   * it lands at the END of a travel. Presence was settled long before;
+    //     for an open the animal is already through the doorway, and for a
+    //     close it has been gone for the whole exit dwell. A lost sample here
+    //     can at worst delay noticing a DEPARTURE, which has the exit dwell to
+    //     absorb it, and `!near` cancels a pending close regardless.
+    //   * it is floored at DOOR_REPORT_MIN_MS. A forced flush ignores the
+    //     upload interval completely, so without that floor a door flapping at
+    //     the threshold would hold the radio up indefinitely.
+    static uint32_t lastReportMs = 0;
+    static bool reportedOnce = false;
+    const uint32_t nowMs = millis();
+    if (!reportedOnce || (nowMs - lastReportMs) >= DOOR_REPORT_MIN_MS) {
+      reportedOnce = true;
+      lastReportMs = nowMs;
+      publishStatusLines();
+      WifiLogger::requestFlushNow();
+    }
+  }
+#endif
+}
+
+// Writes down the things the actuator noticed along the way: a wake press, and
+// a press it had to repeat. Separate from the outcome because several can
+// happen within one attempt.
+void drainActuatorNotes() {
+  Actuator::Note n;
+  while (Actuator::popNote(n)) {
+    switch (n.type) {
+      case LOG_WAKE:
+        if (n.detail == 1) {
+          Con.println(F("[door] the wake press moved the door by itself — not pressing again"));
+        } else {
+          Con.println(F("[door] wake press sent (the controller had been idle)"));
+        }
+        break;
+      case LOG_RETRY:
+        Con.printf("[door] nothing moved; pressing again (retry %u)\r\n", n.detail);
+        break;
+      default:
+        break;
+    }
+    if (n.record) EventLog::record(n.type, n.detail, g_tracker.filteredRssi());
+  }
+}
+
+// Says how a calibration run ended.
+//
+// Without this the verdict was only reachable by pressing `s`: you asked for
+// it, the door moved twice, and then nothing told you the answer. Edge
+// triggered on the state, so it is said once.
+//
+// No chime: the travels have already sounded their own outcomes, and an
+// acknowledgement played on top would cut off the arrival or the stall that
+// actually carries the information.
+void reportCalibration() {
+  const Actuator::CalState cs = Actuator::calState();
+  if (cs == g_lastCalState) return;
+  g_lastCalState = cs;
+
+  if (cs == Actuator::CAL_DONE) {
+    Con.printf("[cal] %s\r\n", Actuator::calMessage());
+    Con.println(F("[cal] a travel now has these plus TRAVEL_GRACE_MS to arrive"));
+    Con.println(F("[cal] before it counts as a stall. These are reed-to-reed"));
+    Con.println(F("[cal] times, so they are shorter than a stopwatch at the"));
+    Con.println(F("[cal] physical limits — which is the number the deadline wants."));
+#if PETDOOR_ENABLE_WIFI
+    // The configuration changed, so the dashboard's settings form is stale
+    // until this goes out.
+    publishStatusLines();
+    WifiLogger::requestFlushNow();
+#endif
+  } else if (cs == Actuator::CAL_FAILED) {
+    Con.printf("[cal] FAILED: %s\r\n", Actuator::calMessage());
+    Con.println(F("[cal] nothing was adopted; the previous travel times stand."));
+  }
+}
+
+// Re-sound a latched sensor fault, sparsely.
+//
+// The only repeating tune in the firmware, and the reasoning is in config.h: a
+// door that gave up is standing open where you can see it, but a reed that
+// stopped making looks like a perfectly ordinary door until the night it
+// matters. Silence is the wrong default for a fault with no outward sign.
+//
+// Never interrupts. If anything else is playing — a travel, an arrival, a
+// refusal — this waits for the next interval rather than talking over the thing
+// that is happening right now.
+void updateSensorFaultBeep(uint32_t nowMs) {
+  if (SENSOR_FAULT_BEEP_MS == 0 || !Chime::enabled()) return;
+  if (g_sensorFault == 0) {
+    g_sensorFaultBeepMs = 0;          // re-arm, so a new fault sounds at once
+    return;
+  }
+  if (g_sensorFaultBeepMs != 0 &&
+      (nowMs - g_sensorFaultBeepMs) < SENSOR_FAULT_BEEP_MS) {
+    return;
+  }
+  if (Chime::playing() != CHIME_NONE || Actuator::busy()) return;
+  g_sensorFaultBeepMs = nowMs;
+  if (g_sensorFaultBeepMs == 0) g_sensorFaultBeepMs = 1;   // 0 means "never yet"
+  Chime::play(CHIME_SENSOR_FAULT);
+}
+
+void updateChime(uint32_t nowMs) {
+  // Two rules, and nothing else: starting and ending a travel is the actuator's
+  // business, and the outcome tune is reportOutcome()'s.
+  //
+  // Gated on the buzzer being idle rather than on a flag, which is what keeps
+  // the travel tick from cutting off the half-second that said who asked for
+  // the movement — and what makes it cover the travels nothing announces.
+  if (Chime::enabled() && Actuator::busy() && Chime::playing() == CHIME_NONE) {
+    Chime::play(CHIME_WORKING);
+  }
+  // A travel that has ended must not leave the tick looping. The outcome tune
+  // normally replaces it, but OUT_UNTIMED deliberately plays nothing.
+  if (!Actuator::busy() && Chime::playing() == CHIME_WORKING) Chime::stop();
   Chime::tick(nowMs);
 }
 
 void updateLed(uint32_t nowMs, bool scanHealthy) {
+  // The test overrides every pattern below, faults included: you asked to see
+  // the LED, so you see the LED. Unsigned arithmetic keeps the elapsed
+  // comparison correct across the millis() rollover.
+  if (g_ledTestActive) {
+    const uint32_t elapsed = nowMs - g_ledTestStartMs;
+    if (elapsed < kLedTestMs) {
+      digitalWrite(PIN_STATUS_LED,
+                   (elapsed % kLedTestPeriodMs) < kLedTestOnMs ? HIGH : LOW);
+      return;
+    }
+    g_ledTestActive = false;
+  }
+
   bool on;
   if (!scanHealthy) {
     on = (nowMs / 100) % 2 == 0;  // 5 Hz: radio unhealthy
+  } else if (Actuator::gaveUp()) {
+    // Three quick blips, repeating. Deliberately not another even blink —
+    // 5 Hz, 2 Hz and 1 Hz are spoken for by the faults around it — and
+    // deliberately above the beacon-battery flash in priority: a flat battery
+    // is a job for the weekend, a door that has stopped closing is tonight's.
+    const uint32_t t = nowMs % 2000;
+    on = (t < 120) || (t > 240 && t < 360) || (t > 480 && t < 600);
+  } else if (g_sensorFault != 0) {
+    // TWO quick blips every 2 s. Deliberately one fewer than the three of
+    // "gave up" above, because the two conditions look identical from a
+    // distance otherwise — and they mean opposite things: gave-up is a door
+    // that knows it has a problem, this is a door that has stopped being able
+    // to tell. Sits above the battery flash: a flat collar is next week's job.
+    on = (nowMs % 2000) < 120 || ((nowMs % 2000) > 260 && (nowMs % 2000) < 380);
   } else if (beaconBatteryLow(nowMs)) {
     on = (nowMs / 250) % 2 == 0;  // 2 Hz: replace the beacon battery
   } else if (!BleScanner::isConfigured() || !BleScanner::targetEverSeen()) {
     on = (nowMs / 500) % 2 == 0;  // 1 Hz: nothing to track yet
-  } else if (doorTravelling(nowMs)) {
-    // Lit, with a heartbeat gap: the door is moving. Deliberately NOT another
-    // even blink — 5 Hz, 2 Hz and 1 Hz are already spoken for by the three
-    // faults above, and a fourth would be unreadable. "Nearly solid" is
+  } else if (Actuator::busy()) {
+    // Lit, with a heartbeat gap: the door is moving. "Nearly solid" is
     // recognisable across a yard and cannot be mistaken for a fault.
     on = (nowMs % 600) > 120;
   } else {
-    switch (g_door.state()) {
+    // MEASURED position where there is one, commanded position otherwise.
+    //
+    // This is the difference the switches buy, shown on the one indicator
+    // somebody can see from the coop: with them fitted the LED stops reporting
+    // what the door was told and starts reporting where it is. A door sitting
+    // between the two switches — shoved by hand, or stopped partway — reads as
+    // neither open nor shut rather than as whichever was last commanded.
+    const bool measured = Position::enabled() && !Position::fault();
+    const DoorState shown = measured ? Position::state() : g_door.state();
+    switch (shown) {
       case DOOR_OPEN:
         on = true;                      // solid
         break;
@@ -1928,6 +3143,8 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
                  : (nowMs % 2000) < 200;
         break;
       default:
+        // Off means "I do not know", which with switches fitted is a real and
+        // useful answer: the door is somewhere in between.
         on = false;
         break;
     }
@@ -1985,6 +3202,9 @@ void printScheduleMenu() {
   Con.println(F("    add 22:00-06:00 Mon-Fri       weeknights only"));
   Con.println(F("    add 13:00-14:00 Sat,Sun       any window, any days"));
   Con.println(F("    del <n>                       remove one, by its number"));
+  Con.println(F("    del 22:00-06:00               remove one, by its times"));
+  Con.println(F("      numbers RENUMBER as you delete, so deleting several by"));
+  Con.println(F("      number only works highest first. Deleting by times does not"));
   Con.println(F("    clear                         remove all"));
   Con.println(F("    tz -420                       minutes east of UTC"));
   Con.println(F("    q                             done"));
@@ -2021,14 +3241,64 @@ bool applyScheduleLine(const char *line, String &result) {
     return true;
   }
   if (strcasecmp(verb, "del") == 0 || strcasecmp(verb, "rm") == 0) {
-    const char *a = strtok(nullptr, " \t");
-    if (a == nullptr) { result = "del takes a window number from `list`"; return false; }
-    if (!Schedule::removeAt(static_cast<uint8_t>(strtol(a, nullptr, 10)))) {
-      result = "no window with that number";
+    // Rest of the line, not one token, so a window can be named in full.
+    char *rest = strtok(nullptr, "");
+    if (rest == nullptr) {
+      result = "del takes a window number from `list`, or the window itself "
+               "(e.g. `del 22:00-06:00`)";
       return false;
     }
-    result = "window removed";
-    return true;
+    while (*rest == ' ') rest++;
+
+    bool numeric = (*rest != '\0');
+    for (const char *c = rest; *c != '\0'; c++) {
+      if (*c < '0' || *c > '9') { numeric = false; break; }
+    }
+
+    if (numeric) {
+      const long n = strtol(rest, nullptr, 10);
+      if (!Schedule::removeAt(static_cast<uint8_t>(n))) {
+        // Spell out the renumbering, because this is the failure people
+        // actually hit: deleting TWO windows by number in one go. Removing a
+        // window shifts the rest down, so `del 0` then `del 1` deletes one and
+        // then fails — and in a remote batch the failure tone is all you hear.
+        char msg[224];
+        snprintf(msg, sizeof(msg),
+                 "no window [%ld] — there %s %u. Removing a window RENUMBERS "
+                 "the rest, so deleting several by number only works highest "
+                 "first. `del 22:00-06:00` deletes by the window itself and "
+                 "does not care about order; `clear` removes all of them.",
+                 n, Schedule::count() == 1 ? "is" : "are",
+                 static_cast<unsigned>(Schedule::count()));
+        result = msg;
+        return false;
+      }
+      result = "window removed";
+      return true;
+    }
+
+    // By specification instead of by position. Order-independent, which is the
+    // whole point: several of these in one batch all mean what they say.
+    Schedule::Window want;
+    const char *problem = nullptr;
+    if (!Schedule::parseSpec(rest, want, problem)) {
+      result = problem != nullptr ? problem : "could not read that window";
+      return false;
+    }
+    for (uint8_t i = 0; i < Schedule::count(); i++) {
+      Schedule::Window w;
+      if (!Schedule::get(i, w)) break;
+      // Matched on the TIMES only. Days are deliberately not compared: `list`
+      // shows them, and someone deleting "22:00-06:00" means that window
+      // whether or not they retyped its day mask correctly.
+      if (w.startMin == want.startMin && w.endMin == want.endMin) {
+        Schedule::removeAt(i);
+        result = "window removed";
+        return true;
+      }
+    }
+    result = "no window with those times — `list` shows what is stored";
+    return false;
   }
   if (strcasecmp(verb, "add") == 0) {
     char *rest = strtok(nullptr, "");
@@ -2062,6 +3332,14 @@ void serviceMaintenance(uint32_t nowMs) {
   // know that before it moves rather than by watching it move.
   if (Maintenance::consumeExpired(nowMs)) {
     Con.println(F("[maint] window expired — the beacon controls the door again"));
+    // Calibration depends on the window: it is what stops the beacon moving
+    // the door mid-measurement. The window expires by itself, by design, so a
+    // long run can outlive it — and a travel timed with the collar free to
+    // interrupt it is not a measurement of anything.
+    if (Actuator::calibrating()) {
+      Actuator::abortCalibration("the maintenance window expired mid-run");
+      Con.println(F("[cal] abandoned: the window it needed has expired"));
+    }
     EventLog::record(LOG_MAINT, 0, g_tracker.filteredRssi());
     Chime::play(CHIME_DONE);
     NetConsole::stop();
@@ -2139,14 +3417,25 @@ void driveDoor(uint32_t nowMs) {
     // that repeated it would be an alarm.
     if (!g_lockRefusedAnnounced) {
       g_lockRefusedAnnounced = true;
-      Chime::play(CHIME_REFUSED);
+      // A manual lock takes precedence in the ANNOUNCEMENT as well as in the
+      // logic: it is the stronger statement about what this door may do, and
+      // if somebody locked it by hand that is the fact they need back. The
+      // schedule tone is therefore only for a window refusing on its own.
+      Chime::play((schedLocked && !g_locked) ? CHIME_REFUSED_SCHEDULE
+                                            : CHIME_REFUSED);
       if (schedLocked && !g_locked) {
         // Logged, unlike a manual lock, because nobody was there to decide it.
         // "The door refused at 3 a.m." is only explicable if the log says a
         // window did it. Edge-triggered: the condition holds for as long as the
         // animal stands there, and an entry per tick would fill the ring.
         Con.printf("[sched] refused: window [%u] is in force\r\n", schedWindow);
-        EventLog::record(LOG_REFUSED, 5, g_tracker.filteredRssi());
+        // LOG_REFUSED's detail is normally an ActuationResult, and this is
+        // deliberately outside that range: a schedule is not one of the
+        // actuator's refusals. It used to be a bare 5, which this rebuild
+        // turned into a collision — ACT_RETRY_WAIT is now 5, and a door
+        // waiting out a stalled close would have been reported as having been
+        // refused by a schedule window that does not exist.
+        EventLog::record(LOG_REFUSED, kRefusedBySchedule, g_tracker.filteredRssi());
       }
     }
     return;
@@ -2159,17 +3448,46 @@ void driveDoor(uint32_t nowMs) {
   // it. Holding open is the safe failure; holding closed is not.
   if (!g_tracker.isPresent() && manualHoldActive(nowMs)) return;
 
-  const ActuationResult r = g_tracker.isPresent() ? g_door.requestOpen(nowMs)
-                                                 : g_door.requestClose(nowMs);
-  // ACT_ALREADY is the normal steady state and would swamp the log; the other
-  // refusals are the ones that explain a door that did not move.
-  if (r == ACT_LOCKED_OUT || r == ACT_BOOT_GRACE) {
-    static ActuationResult lastLogged = ACT_DONE;
+  // Remembers the last refusal that was logged, so a condition holding for
+  // minutes produces one entry rather than ten a second. Reset on success, or
+  // the next genuine instance of the same refusal would be swallowed.
+  static ActuationResult lastLogged = ACT_DONE;
+
+  const DoorState want = g_tracker.isPresent() ? DOOR_OPEN : DOOR_CLOSED;
+  const ActuationResult r = Actuator::request(want, SRC_BEACON, nowMs, /*force=*/false);
+  if (r == ACT_DONE) {
+    lastLogged = ACT_DONE;
+    g_gaveUpAnnounced = false;
+    Con.printf("[door] %s — the collar is %s (rssi %d dBm, ~%s m)\r\n",
+                  want == DOOR_OPEN ? "opening" : "closing",
+                  want == DOOR_OPEN ? "here" : "gone", g_tracker.filteredRssi(),
+                  fmt1(g_tracker.distanceM()).c_str());
+    announceMovement(SRC_BEACON, want);
+    return;
+  }
+
+  // ACT_ALREADY and ACT_BUSY are the normal steady states and would swamp the
+  // log; the rest are the refusals that explain a door that did not move.
+  if (r == ACT_LOCKED_OUT || r == ACT_BOOT_GRACE || r == ACT_GAVE_UP ||
+      r == ACT_RETRY_WAIT) {
     if (r != lastLogged) {
       lastLogged = r;
       EventLog::record(LOG_REFUSED, static_cast<uint8_t>(r), g_tracker.filteredRssi());
+      // GAVE_UP and RETRY_WAIT are said out loud once as well. Both mean the
+      // door is deliberately not closing, and somebody looking at an open door
+      // at dusk deserves to be told that rather than left to guess.
+      if (r == ACT_GAVE_UP && !g_gaveUpAnnounced) {
+        g_gaveUpAnnounced = true;
+        Con.println(F("[door] the beacon has gone and the door is NOT closing:"));
+        Con.println(F("[door] close attempts are exhausted. 'x' tries again."));
+      } else if (r == ACT_RETRY_WAIT) {
+        Con.printf("[door] not closing yet — %lu s left of the retry delay\r\n",
+                      static_cast<unsigned long>(
+                          Actuator::retryWaitRemainingMs(nowMs) / 1000UL));
+      }
     }
   }
+  if (r != ACT_GAVE_UP) g_gaveUpAnnounced = false;
 }
 
 // Announces every change of state, so the console tells the story on its own
@@ -2199,17 +3517,12 @@ void reportTransitions(uint32_t nowMs, bool scanHealthy) {
                   static_cast<unsigned long>(g_tracker.totalSamples()));
   }
 
-  if (g_door.state() != g_lastReportedDoorState) {
-    g_lastReportedDoorState = g_door.state();
-    const bool manual = g_door.lastSource() == SRC_MANUAL;
-    Con.printf("[door] %s  (%s, rssi %d dBm, ~%s m)\r\n",
-                  DoorController::stateName(g_door.state()),
-                  manual ? "manual" : "beacon", g_tracker.filteredRssi(),
-                  fmt1(g_tracker.distanceM()).c_str());
-    EventLog::record(g_door.state() == DOOR_OPEN ? LOG_OPEN : LOG_CLOSE,
-                     static_cast<uint8_t>(g_door.lastSource()),
-                     g_tracker.filteredRssi());
-  }
+  // Door state is NOT reported here any more. It is announced by
+  // reportOutcome(), which knows how the travel actually ended — verified,
+  // assumed, stalled or never started — and can therefore say something true.
+  // Watching g_door.state() change could only ever report the commanded
+  // state, and it reported it twice for a travel that failed: once as a
+  // success here, once as a failure elsewhere.
 
   if (scanHealthy != g_lastReportedScanHealthy) {
     g_lastReportedScanHealthy = scanHealthy;
@@ -2302,9 +3615,6 @@ bool applyRemoteCommand(const char *line, String &result) {
              g_door.pulseGapMs() + " ms apart";
     return true;
   }
-  if (strcmp(verb, "travel") == 0) {
-    return applyTravelMs(arg(), result);
-  }
   if (strcmp(verb, "upload") == 0) {
     return applyUploadTiming(strtok(nullptr, ""), result);
   }
@@ -2324,6 +3634,14 @@ bool applyRemoteCommand(const char *line, String &result) {
     }
     Chime::play(CHIME_TEST);
     result = String("beeping on GPIO ") + Chime::pin();
+    return true;
+  }
+  if (strcmp(verb, "led") == 0) {
+    // Remote for the same reason as `beep`: the pin you are checking is on a
+    // door at the end of the garden, and the walk out to look at it is the
+    // part worth removing.
+    startLedTest(millis());
+    result = String("flashing the status LED on GPIO ") + PIN_STATUS_LED;
     return true;
   }
   if (strcmp(verb, "pulse") == 0) {
@@ -2393,28 +3711,65 @@ bool applyRemoteCommand(const char *line, String &result) {
   if (strcmp(verb, "door") == 0) {
     const char *a = arg();
     if (!a) { result = "door needs open or close"; return false; }
-    if (strcmp(a, "open") == 0) {
-      g_door.forcePulseOpen();
-      if (MANUAL_HOLD_MS > 0) {
-        g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
-        if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;
-      }
-      result = "door opened (held)";
-      return true;
-    }
-    if (strcmp(a, "close") == 0) {
-      g_manualHoldUntilMs = 0;
-      g_door.forcePulseClose();
-      result = "door closed";
-      return true;
-    }
     if (strcmp(a, "auto") == 0) {
       g_manualHoldUntilMs = 0;
       result = "manual hold cleared";
       return true;
     }
-    result = "door takes open, close or auto";
-    return false;
+    const bool wantOpen = (strcmp(a, "open") == 0);
+    if (!wantOpen && strcmp(a, "close") != 0) {
+      result = "door takes open, close or auto";
+      return false;
+    }
+    const DoorState want = wantOpen ? DOOR_OPEN : DOOR_CLOSED;
+    // SRC_REMOTE, not SRC_MANUAL. Weeks later "I was standing at the door" and
+    // "something on the network asked" are different answers, and only one of
+    // them is worth investigating. It also earns its own sound — four beeps
+    // rather than three.
+    const ActuationResult r =
+        Actuator::request(want, SRC_REMOTE, millis(), /*force=*/true);
+    if (r != ACT_DONE) {
+      result = String("door refused: ") + DoorController::resultName(r);
+      return false;
+    }
+    announceMovement(SRC_REMOTE, want);
+    if (wantOpen) {
+      if (MANUAL_HOLD_MS > 0) {
+        g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
+        if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;
+      }
+      // "opening", not "opened". The travel takes twelve seconds and the
+      // outcome is reported separately when it resolves — claiming success
+      // here is exactly what this rebuild stopped doing.
+      result = "door opening (held); the outcome follows when it arrives";
+    } else {
+      g_manualHoldUntilMs = 0;
+      result = "door closing; the outcome follows when it arrives";
+    }
+    return true;
+  }
+  if (strcmp(verb, "travel") == 0) {
+    return applyTravelMs(strtok(nullptr, ""), result);
+  }
+  if (strcmp(verb, "wake") == 0) {
+    return applyWakeSpec(arg(), result);
+  }
+  if (strcmp(verb, "retry") == 0) {
+    const char *rest = strtok(nullptr, "");
+    if (rest != nullptr && strcmp(rest, "clear") == 0) {
+      // The way back from a door parked open by exhausted attempts, for
+      // somebody who has just cleared the obstruction and is not at the door.
+      Actuator::clearGaveUp();
+      result = "close attempts reset — the door will try to close again";
+      return true;
+    }
+    return applyRetrySpec(rest, result);
+  }
+  if (strcmp(verb, "calibrate") == 0) {
+    String msg;
+    const bool ok = Actuator::startCalibration(millis(), Maintenance::active(millis()), msg);
+    result = msg;
+    return ok;
   }
   if (strcmp(verb, "schedule") == 0) {
     char *rest = strtok(nullptr, "");
@@ -2424,25 +3779,8 @@ bool applyRemoteCommand(const char *line, String &result) {
     return ok;
   }
   if (strcmp(verb, "vibration") == 0) {
-    const char *a = arg();
-    if (a == nullptr) { result = "vibration takes <pin> or off"; return false; }
-    if (strcmp(a, "off") == 0 || strcmp(a, "none") == 0) {
-      Vibration::configure(-1, false);
-      result = "vibration sensor disabled";
-      return true;
-    }
-    const int p = atoi(a);
-    const char *problem = Vibration::pinProblem(p);
-    if (!Vibration::configure(p, VIBRATION_ACTIVE_LOW != 0)) {
-      result = problem != nullptr ? problem : "pin refused";
-      return false;
-    }
-    char msg[120];
-    snprintf(msg, sizeof(msg), "vibration sensor on GPIO %d%s%s", p,
-             problem != nullptr ? " — warning: " : "",
-             problem != nullptr ? problem : "");
-    result = msg;
-    return true;
+    // Rest of the line: "33", or "off".
+    return applyVibrationSpec(strtok(nullptr, ""), result);
   }
   if (strcmp(verb, "maint") == 0) {
     const char *a = arg();
@@ -2519,7 +3857,15 @@ bool applyRemoteCommand(const char *line, String &result) {
     g_door.setDirectionGapMs(DIRECTION_CHANGE_GAP_MS);
     g_door.setPulseMs(RELAY_PULSE_MS);
     g_door.setPulseTrain(RELAY_PULSE_COUNT, RELAY_PULSE_GAP_MS);
-    g_travelMs = DOOR_TRAVEL_MS;
+    Actuator::setTravelMs(DOOR_TRAVEL_OPEN_MS, DOOR_TRAVEL_CLOSE_MS);
+    BleScanner::storeTravelPair(DOOR_TRAVEL_OPEN_MS, DOOR_TRAVEL_CLOSE_MS);
+    Actuator::setWakeIdleMs(WAKE_IDLE_MS);
+    Actuator::setRetryPolicy(CLOSE_RETRY_DELAY_MS, CLOSE_RETRY_LIMIT);
+    BleScanner::storeActuation(WAKE_IDLE_MS, CLOSE_RETRY_DELAY_MS, CLOSE_RETRY_LIMIT);
+    // Cleared too, because a door parked open by exhausted close attempts is
+    // exactly the state somebody reaches for `defaults` from, and leaving it
+    // set would make the command look like it had done nothing.
+    Actuator::clearGaveUp();
     g_thresholdsStored = g_timingStored = g_filterStored = g_fastFilterStored = false;
     // Neither the lock nor the buzzer pin is cleared here. `defaults` is for undoing a
     // bad tuning change; silently unlocking a door as a side effect of that
@@ -2533,18 +3879,17 @@ bool applyRemoteCommand(const char *line, String &result) {
 
 // Which acknowledgement a command earns.
 //
-// The point is to tell them apart by EAR, from the coop, without a screen. So
-// the pairs mirror each other: open and close differ by direction, lock and
-// unlock by register. Everything that merely changes a setting shares one short
-// blip — the distinction that matters out there is "the door is about to move"
-// versus "the door took a note".
+// Only SETTINGS land here. A command that moves the door is announced by
+// announceMovement() at the moment it is commanded, with the tune that says
+// the network asked for it — so `door open` must NOT also get an ack, or the
+// two would cut each other off.
+//
+// The distinction that matters from the coop is "the door is about to move"
+// versus "the door took a note", so everything that takes a note shares one
+// short blip and only the lock gets its own.
 ChimeTune ackTuneFor(const char *command) {
   if (command == nullptr) return CHIME_ACK_SET;
-  if (strncmp(command, "door ", 5) == 0) {
-    if (strstr(command, "open") != nullptr) return CHIME_ACK_OPEN;
-    if (strstr(command, "close") != nullptr) return CHIME_ACK_CLOSE;
-    return CHIME_ACK_SET;                       // `door auto` moves nothing
-  }
+  if (strncmp(command, "door ", 5) == 0) return CHIME_NONE;  // already announced
   if (strcmp(command, "lock") == 0) return CHIME_ACK_LOCK;
   if (strcmp(command, "unlock") == 0) return CHIME_ACK_UNLOCK;
   return CHIME_ACK_SET;
@@ -2566,7 +3911,14 @@ void serviceRemoteCommands() {
       applied++;
       // `beep` already sounds; a second tune on top would cut it off.
       if (strcmp(line, "beep") == 0) sounded = true;
-      else ack = ackTuneFor(line);
+      else {
+        const ChimeTune t = ackTuneFor(line);
+        // CHIME_NONE means the command has already announced itself — a door
+        // movement. Leaving `ack` alone keeps the batch's ack from replacing
+        // the movement tune that is still playing.
+        if (t != CHIME_NONE) ack = t;
+        else sounded = true;
+      }
     } else {
       failed++;
     }
@@ -2667,8 +4019,30 @@ void controlTask(void *) {
 
     // 4. Act, then report. Reporting last means a state change is announced on
     //    the same tick it happens rather than one tick later.
-    updatePosition(now);
+    //
+    //    The order within this block matters. Vibration and the limit switches
+    //    are sampled BEFORE the actuator ticks, because they are the evidence
+    //    it decides on; the actuator's conclusions are drained immediately
+    //    AFTER it, because resolve() keeps exactly one result and a second
+    //    attempt starting in the next tick would overwrite an unread one.
     Vibration::tick(now);
+    updatePosition(now);
+    Actuator::tick(now);
+    drainActuatorNotes();
+    {
+      Actuator::Result res;
+      while (Actuator::consumeResult(res)) reportOutcome(res);
+    }
+    reportCalibration();
+    // Before updateLed(), which reads the latch this sets.
+    reportBeaconBattery(now);
+    // After updatePosition(), which is what a fitted limit switch reports
+    // through, and before updateVibrationNoise(), which stands down for the
+    // runs this counts.
+    updateVibrationTravel(now);
+    updateVibrationNoise(now);
+    updateReedAgreement(now);
+    updateSensorFaultBeep(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);
@@ -2682,9 +4056,15 @@ void controlTask(void *) {
     // radio up for the whole window. Without this the ordinary rule would hand
     // BLE the antenna precisely when the collar is held at the door, which is
     // the one time calibration needs the link.
-    const bool idle = Maintenance::active(now) ||
-                      (!g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
-                       g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen());
+    // `!Actuator::busy()` keeps the radio off the air while a travel is being
+    // verified. Association takes seconds of radio-intensive work, and a
+    // vibration count or a limit-switch arrival missed because the WiFi task
+    // had the antenna would turn a good travel into a reported stall — which
+    // for a close means reversing a door that was closing perfectly well.
+    const bool idle = (Maintenance::active(now) ||
+                       (!g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
+                        g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen())) &&
+                      !Actuator::busy();
 #if PETDOOR_ENABLE_WIFI
     static uint32_t lastStatusMs = 0;
     if (now - lastStatusMs >= 5000) {
@@ -2732,10 +4112,21 @@ void setup() {
   // can take time or fail.
   g_door.begin();
   g_tracker.begin();
+  // After g_door.begin(), which puts the relays in a known-safe state, and
+  // before anything can ask for a travel.
+  Actuator::begin(&g_door);
   recordBoot();
   EventLog::begin(static_cast<uint16_t>(g_bootCount));
   Schedule::begin();
-  Vibration::begin(PIN_VIBRATION, VIBRATION_ACTIVE_LOW != 0);
+  {
+    // NVS wins over the compiled-in pin, like the buzzer and the switches: the
+    // pin is a property of this board's wiring, and somebody who found it once
+    // by trying should not have to find it again after a power cut.
+    int vibPin = PIN_VIBRATION;
+    bool vibLow = VIBRATION_ACTIVE_LOW != 0;
+    BleScanner::loadStoredVibration(vibPin, vibLow);
+    Vibration::begin(vibPin, vibLow);
+  }
   EventLog::record(LOG_BOOT, static_cast<uint8_t>(esp_reset_reason()), 0);
 
   {
@@ -2779,10 +4170,17 @@ void setup() {
     const uint32_t gap = BleScanner::loadStoredDirectionGap();
     if (gap) g_door.setDirectionGapMs(gap);   // floor enforced inside
 
-    uint32_t travel = DOOR_TRAVEL_MS;
-    if (BleScanner::loadStoredTravelMs(travel)) {
-      g_travelMs = travel;
-      g_timingStored = true;
+    // Travel time, the wake threshold and the retry policy are all loaded by
+    // Actuator::begin(), which is the only thing that uses them.
+    {
+      uint32_t t = 0;
+      if (BleScanner::loadStoredTravelPair(t, t) ||
+          BleScanner::loadStoredTravelMs(t)) {
+        g_timingStored = true;
+      }
+      uint32_t w = 0, r = 0;
+      uint8_t n = 0;
+      if (BleScanner::loadStoredActuation(w, r, n)) g_timingStored = true;
     }
 
     uint32_t upSt = WIFI_IDLE_SETTLE_MS, upMi = WIFI_MIN_UPLOAD_INTERVAL_MS,

@@ -34,27 +34,97 @@
 enum ChimeTune : uint8_t {
   CHIME_NONE = 0,
   CHIME_WORKING,  // repeats until something else plays: the door is moving
-  CHIME_DONE,     // once, rising: the travel time has elapsed
-  CHIME_REFUSED,  // once, low: the door declined to move
+
+  // ---- who asked for this movement ---------------------------------------
+  //
+  // Three sources, three sounds, and the distinction is carried by HOW MANY
+  // beeps rather than by pitch — because an active buzzer has one pitch it
+  // chose at the factory, and a set of tunes separated only by pitch collapses
+  // into one sound on half the hardware this supports.
+  //
+  // The mnemonic is distance: the beep count is how far away the thing that
+  // asked for it was.
+  //
+  //   2 beeps   the collar, which was standing at the door
+  //   3 beeps   a hand on the console, a cable away
+  //   4 beeps   the network, which could have been anywhere
+  //
+  // Within each, the LONG beep says which way the door is going: last for
+  // opening (rising), first for closing (falling). That is the shape every
+  // appliance anyone owns already uses, and it survives on one pitch.
+  //
+  //   beacon open      .-        console open      ..-       remote open   ...-
+  //   beacon close     -.        console close     -..       remote close  -...
+  //
+  // Worth being able to tell apart from the coop without a screen: a door that
+  // opened because the collar arrived is the system working, and a door that
+  // opened because something on the network asked is a thing to go and read
+  // about.
+  CHIME_MOVE_BEACON_OPEN,
+  CHIME_MOVE_BEACON_CLOSE,
+  CHIME_MOVE_CONSOLE_OPEN,
+  CHIME_MOVE_CONSOLE_CLOSE,
+  CHIME_MOVE_REMOTE_OPEN,
+  CHIME_MOVE_REMOTE_CLOSE,
+
+  // ---- how it turned out --------------------------------------------------
+  //
+  // These are the point of having a buzzer at all. The door takes twelve
+  // seconds and gives no sign of itself, so the useful thing a sound can do is
+  // report the END of a travel — and there are four quite different endings,
+  // which used to share one "refused" tone between them.
+  CHIME_DONE,     // arrived: verified by a limit switch, or the timer expired
+  CHIME_REFUSED,  // the door declined to move at all
+  // Refused because a SCHEDULED WINDOW is in force, as opposed to any other
+  // refusal. Worth its own sound because the remedy is different: a manual
+  // lock needs unlocking, and a window needs either waiting or editing.
+  //
+  // Somebody standing at the door at midnight with the collar in their hand
+  // cannot tell "I locked this" from "a window I set weeks ago is refusing
+  // it" — and that is exactly the moment they start taking the door apart.
+  //
+  // Two long low beeps with a WIDE gap: "not... now". The gap is the
+  // distinction, not the pitch, so it survives on an active buzzer where
+  // every beep is the same note. Nothing else in the set is two long beeps
+  // separated like this.
+  CHIME_REFUSED_SCHEDULE,
+  // The relay fired and the vibration sensor felt nothing for the whole travel:
+  // the controller swallowed the press, or the door is jammed solid. Nothing
+  // moved, so nothing is trapped — said twice, flatly, because it means "try
+  // again" rather than "go and look".
+  CHIME_NO_MOVE,
+  // It started and never arrived. Five fast beeps, the most urgent thing in
+  // the set, because this is the one that means something may be under the
+  // door. A stalled close is also reversed; see actuator.h.
+  CHIME_STALLED,
+  // Close attempts exhausted: the door is staying open, deliberately, until
+  // somebody deals with whatever is in the way. Long-short-short, which
+  // nothing else in the set resembles.
+  CHIME_GAVE_UP,
+  // A limit switch reported the door at an end that nothing commanded it to go
+  // to. Two isolated blips — the sound of the door asking a question.
+  CHIME_UNCOMMANDED,
+  // A sensor has been caught lying, and this is the only tune that REPEATS —
+  // sparsely, every SENSOR_FAULT_BEEP_MS. Three short low blips, well spaced:
+  // the door clearing its throat, not an alarm. See SENSOR_FAULT_BEEP_MS in
+  // config.h for why this one earns an exception to the play-once rule.
+  CHIME_SENSOR_FAULT,
+
   CHIME_TEST,     // once: prove the wiring, from the console or the server
 
-  // Acknowledgements — "the door heard you", played the moment a remote
-  // command is applied. Valuable precisely because the channel is slow: a
-  // command sits for up to five minutes, so the beep is how you learn it
-  // landed without walking to a screen.
+  // Acknowledgements for commands that merely change a SETTING, played the
+  // moment one is applied. Valuable precisely because the remote channel is
+  // slow: a command sits for up to five minutes, so the beep is how you learn
+  // it landed without walking to a screen.
   //
-  // Each differs in RHYTHM as well as pitch. An active buzzer has one pitch it
-  // chose at the factory, so a set of tunes distinguished only by pitch would
-  // collapse into one sound on half the hardware this supports. Rhythm
-  // survives that; pitch then makes them nicer on a passive one.
+  // Deliberately only three of them. The distinction that matters out there is
+  // "the door is about to move" versus "the door took a note", so everything
+  // that takes a note shares one short blip, and only the lock — which
+  // changes what the door will DO — gets its own.
   //
-  //   open    short-long, rising     .-
-  //   close   long-short, falling    -.
-  //   lock    three short, low       ...
-  //   unlock  one long, high         -
-  //   set     one short              .
-  CHIME_ACK_OPEN,
-  CHIME_ACK_CLOSE,
+  //   lock    two short, low     ..
+  //   unlock  one medium, high   -
+  //   set     one short          .
   CHIME_ACK_LOCK,
   CHIME_ACK_UNLOCK,
   CHIME_ACK_SET,

@@ -49,6 +49,119 @@ enum LogEventType : uint8_t {
   // started and did not arrive — different causes, different fixes. detail =
   // the state the door believed it was moving to.
   LOG_NO_MOVEMENT = 9,
+  // A limit switch reported the door at an end that nothing commanded it to go
+  // to, with no travel in flight. A hand, the wind, or the door's own vendor
+  // controller acting on a mode of its own — all three happen, and none of
+  // them was visible to this firmware before the switches were fitted. The
+  // controller has been observed leaving the open limit by itself ~15 s after
+  // arriving, twice, which is the kind of thing you can only chase if the door
+  // writes it down. detail = the DoorState observed, so the log says which way
+  // it went.
+  LOG_UNCOMMANDED = 10,
+  // A press was repeated because the previous one demonstrably moved nothing.
+  // detail = which attempt this was (1 = the first retry). Safe to retry
+  // immediately — nothing moved, so nothing is trapped — but worth recording,
+  // because a door that needs a retry every time is a door whose pulse width
+  // or wake threshold is wrong.
+  LOG_RETRY = 11,
+  // Close attempts are exhausted and the door is staying OPEN deliberately.
+  // detail = how many attempts were made. The single most important entry in
+  // this log: it means the door has stopped trying to protect the coop and is
+  // waiting for a person. Everything else here is history; this is a request.
+  LOG_GAVE_UP = 12,
+  // A wake press was sent before an actuation, because the vendor controller
+  // had been idle long enough to be asleep. detail = 1 if the wake press alone
+  // moved the door (so no second press was sent), 0 if the actuating press
+  // followed it. Recorded because the ratio between those two is the only
+  // evidence available for whether WAKE_IDLE_MS is set anywhere near right.
+  LOG_WAKE = 13,
+  // The beacon's own battery crossed BEACON_LOW_BATTERY_MV, as reported in its
+  // Eddystone-TLM frames. detail = 1 when it went low, 0 when it recovered;
+  // `reserved` carries the millivolts.
+  //
+  // Worth its own event because of what a flat beacon means here: the door
+  // refuses to act until it has heard the collar once since boot (invariant 5),
+  // so a battery that dies overnight does not shut the door — it stops the door
+  // working at all, silently, and the animal is outside. This is the warning
+  // that gives you days rather than a surprise.
+  //
+  // Latched with a recovery margin, so a cell sitting on the threshold produces
+  // one entry and not a stream of them.
+  LOG_BEACON_LOW = 14,
+  // A SENSOR disagreed with the other one badly enough to be called broken.
+  // detail = SensorFault below; `reserved` carries the evidence (a vibration
+  // count, or 0 where the fault is binary).
+  //
+  // Distinct from STALLED and NO_MOVE, which say the DOOR did not do what it
+  // was told. This says the thing watching the door is lying, which is worse:
+  // a stall is visible, and a dead sensor is not.
+  LOG_SENSOR_FAULT = 15,
+  // The same sensor telling the truth again. `detail` is the SensorFault code
+  // that was cleared.
+  //
+  // Logged because the alternative is a history that shows faults arriving and
+  // never leaving. Reading that log a week later, every fault the door ever
+  // recovered from still looks live, and the one that did not is
+  // indistinguishable from the rest. The status line carries the CURRENT state
+  // correctly, but a status line is not a history.
+  LOG_SENSOR_CLEARED = 16,
+};
+
+// Which sensor, and how it failed. Each is diagnosed by cross-checking against
+// the other sensor, so these name a part rather than a symptom.
+enum SensorFault : uint8_t {
+  // Both limit switches report the door at their end at once. Physically
+  // impossible: a shorted wire, a stuck switch, or a stray magnet.
+  SF_REEDS_CONTRADICT = 1,
+  // Travels the reeds VERIFIED produced no vibration. The door demonstrably
+  // moved, so the sensor is deaf, miswired, or has fallen off the door.
+  SF_VIBRATION_SILENT = 2,
+  // Vibration accumulating while the door stands still. Either the
+  // sensitivity screw is too far in, or it is mounted somewhere that feels the
+  // world rather than the door.
+  SF_VIBRATION_NOISY = 3,
+  // The door ran a full travel's worth of vibration and never arrived. The
+  // switch at that end is not making — a lost magnet or a broken wire — as
+  // opposed to an obstruction, which stops the vibration too.
+  SF_REED_MISSED = 4,
+  // The sensor produced NOT ONE EDGE across a whole actuation — relay pulses
+  // included. Unplugged, or its signal wire is broken.
+  //
+  // The only sensor fault diagnosable WITHOUT the other sensor, which is what
+  // makes it worth its own code: every other entry here needs something working
+  // to be checked against. A connected-but-deaf sensor still registers the
+  // relay's own click conducted through the structure — around a hundred edges
+  // a pulse on the reference door — so a flat zero is a missing signal path,
+  // not a stationary door.
+  //
+  // Found by unplugging one: it had been completely invisible, reading
+  // identically to a door that did not move.
+  SF_VIBRATION_DEAD = 5,
+  // The door is believed to be sitting at an end, nothing is moving, and the
+  // switch FITTED at that end is not made.
+  //
+  // The quiet failure every other check here misses. SF_REEDS_CONTRADICT needs
+  // both switches made at once; SF_REED_MISSED needs a commanded travel to run
+  // its full duration and not arrive. A connector shaken loose, or a magnet
+  // drifted a few millimetres, produces neither — the door just sits there with
+  // a switch that says nothing, and nothing complains until the next actuation.
+  SF_REED_LOST = 6,
+};
+
+// Flags packed into a LOG_OPEN / LOG_CLOSE entry's `reserved` field. The entry
+// already spends `detail` on the ActuationSource, and these say how much the
+// door actually knows about what it just did — which is the difference between
+// a log you can trust and a log of intentions.
+enum LogActuationFlags : uint16_t {
+  // A limit switch confirmed arrival. Without this bit the entry records that
+  // the door was COMMANDED there, nothing more.
+  LOGF_VERIFIED = 0x0001,
+  // A wake press preceded it.
+  LOGF_WOKE = 0x0002,
+  // At least one press had to be repeated.
+  LOGF_RETRIED = 0x0004,
+  // This travel was the firmware reversing a close of its own that stalled.
+  LOGF_FAILSAFE = 0x0008,
 };
 
 struct LogEntry {

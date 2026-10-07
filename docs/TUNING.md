@@ -134,6 +134,95 @@ answers are to move or reorient the board, or to fit the limit switches in
 
 ---
 
+## Measuring the travel time
+
+Separate from everything else on this page, which is about *where* the door
+decides to move. This is about how long it then takes, and it matters for three
+reasons:
+
+- it is the deadline for arrival. With limit switches fitted, a travel that
+  misses it is a **stall** — and a stalled close gets reversed;
+- it is how long the LED shows "moving" and the buzzer ticks;
+- `MIN_ACTUATION_INTERVAL_MS` has to exceed it, or a reversal can land
+  mid-travel, which most controllers read as STOP.
+
+**Open and close are not the same number.** Gravity assists one and opposes the
+other. Measured with the reference door lying flat they were 12,180 ms and
+12,704 ms; mounted upright they diverge further. Measure both.
+
+### With limit switches: `calibrate`
+
+One command, and it writes the answer to the device.
+
+```
+M            open a maintenance window, so the collar cannot interfere
+C            calibrate
+```
+
+It needs **both** switches — it has to be able to see the door arrive at each
+end — and it refuses without a maintenance window, because a collar walking
+past mid-measurement would move the door.
+
+Then it waits. **90 seconds of quiet, with nothing commanded and no switch
+changing**, before it trusts anything. If the door moves during that period it
+aborts and says so, and that result is worth more than the measurement would
+have been:
+
+```
+[cal] the door moved during the quiet period — a vendor mode is still enabled
+```
+
+The reference controller did exactly this — it drove the door with nothing
+commanding it, most visibly leaving the open limit about fifteen seconds after
+arriving. A travel time measured while that is happening is not a measurement
+of your door. Find the mode, turn it off, and run it again. See
+[COOP-CONVERSION.md](COOP-CONVERSION.md).
+
+After the quiet period it drives the door to one end and back, timing each leg
+from the press, and adopts and saves both figures:
+
+```
+[cal] measured open 12184 ms, close 12702 ms — adopted and saved
+```
+
+### Without limit switches: a stopwatch
+
+```
+w                       the timing menu
+travel 12200 12700      open ms, close ms
+```
+
+One value sets both. With no switches this number is **only** an announcement —
+the "arrived" chime becomes a stopwatch expiring and will chime cheerfully at a
+door stuck halfway. Err on the generous side; it costs nothing but a longer
+tick.
+
+### Keeping it honest afterwards
+
+With switches fitted, `s` reports the duration of the last verified travel in
+each direction beside the configured pair:
+
+```
+  door travel  : open 12200 ms, close 12700 ms configured
+  last verified: open 12184 ms, close 12702 ms (measured, this boot)
+```
+
+That comparison is the whole of travel-time maintenance. A measured figure
+creeping towards the deadline is a door getting slower — stiffer in January,
+or a mechanism starting to bind — and the firmware says so before it starts
+reporting stalls:
+
+```
+[door] !! that is within a second of the 15700 ms deadline — raise it with
+[door] !! 'w' then 'travel', or run 'calibrate'
+```
+
+`TRAVEL_GRACE_MS` (3 s by default) is the margin that absorbs the ordinary
+variation. Raising the travel time is the fix for a door that has genuinely
+slowed; raising the grace is the fix for one that varies.
+
+---
+
 ## The short way
 
 If you just want the door to open where the beacon is standing right now, put

@@ -452,6 +452,46 @@ reversible, and none of them is a thing happening *at* the door.
 `door close` and `door auto` are missing for the same reason the lockout only
 gates closing: they are the safe direction.
 
+#### …and when the door reports something wrong
+
+Commands are things *you* did. These are things the door found out, and they
+arrive on their own:
+
+| Mailed | Why it earns an interruption |
+|---|---|
+| **`GAVE_UP`** | Close attempts are exhausted and **the doorway is standing open** until someone deals with it. Every other event here is a record of something that happened; this one is a request. Never rate limited |
+| **`STALLED`** | A travel started and never arrived — an obstruction, a jam, or a switch that stopped making. **Rate limited to one an hour per door**, because a persistent cause produces one per attempt and they would bury the `GAVE_UP` that follows |
+| **`SENSOR_FAULT`** | A sensor has been caught lying, diagnosed by cross-checking it against the other one. Latched in the firmware, so one failure is one message |
+| **`BEACON_LOW`** | The collar's battery is going flat. Days of warning, not minutes |
+| **`CONSOLE`** (wrong password) | Somebody tried the door's network console and failed. That port can open the door |
+| **a door that has gone quiet** | See below — the only one not triggered by the door itself |
+
+Everything else is logged and visible on the dashboard but does not interrupt
+you: ordinary opens and closes, refusals, `RETRY`, `WAKE`, `UNCOMMANDED`,
+`NO_MOVEMENT`, maintenance windows.
+
+#### The watchdog, which is the only alert the door does not send
+
+Every alert above depends on the door **sending** something. A door that has
+lost WiFi, browned out, or whose ESP32 has died sends nothing by definition — so
+the more completely it fails, the less this system has to say about it. Silence
+looked exactly like a door with nothing to report.
+
+So the server watches the *absence*: a background pass every five minutes mails
+if any door's last upload is older than `PETDOOR_STALE_AFTER_S` (default two
+hours), and mails again when it comes back. One message per outage, not one per
+check.
+
+Two hours is roughly four missed heartbeats. A healthy door calls in every 30
+minutes even with nothing happening, and misses one now and then to a busy radio
+or an OTA window, so a single miss must not raise an alarm.
+
+**It says the door may still be working.** The door decides entirely on its own
+and never needs this server — a door that has dropped off WiFi can still be
+letting the animal in and out perfectly well. What has been lost is the ability
+to see or change anything remotely, and the message says so rather than implying
+the door is dead.
+
 The message says what was queued, for which door, when, from where, and — when
 it came from the dashboard — **which signed-in account asked**, taken from the
 identity the proxy passes through rather than anything the caller supplied. It
@@ -525,11 +565,58 @@ petdoor.example.com {
         you $2a$14$...        # caddy hash-password
     }
     reverse_proxy 127.0.0.1:8080
+
+    # Set these too. The dashboard shows when a house is empty, so it wants the
+    # stricter end of each: DENY rather than SAMEORIGIN, no-referrer rather
+    # than strict-origin-when-cross-origin.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options           "DENY"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "no-referrer"
+        Permissions-Policy        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+        -Server                   # the log server announces its Python version
+        # Report-Only to begin with — see below. This reports, and blocks nothing.
+        Content-Security-Policy-Report-Only "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+    }
+
+    # A security contact behind a sign-in page is not a security contact, so this
+    # goes with the PUBLIC routes, explicitly, rather than falling through to the
+    # private catch-all. Served by the proxy rather than the app so a deploy
+    # cannot break it.
+    handle /.well-known/security.txt {
+        header Content-Type "text/plain; charset=utf-8"
+        respond `Contact: mailto:you@example.com
+Expires: 2027-01-01T00:00:00.000Z
+Policy: https://github.com/you/PetDoor/blob/main/SECURITY.md
+` 200
+    }
 }
 ```
 
 With an identity provider, replace `basic_auth` with your `forward_auth` block
 against the same `@private` matcher — the matcher is the part that matters.
+
+**Put the headers on the HTTPS vhost only.** If you run a second plain-HTTP
+vhost so the door can reach `/ingest` without TLS — which is the usual shape,
+because an ESP32 cannot afford a handshake — it must not carry HSTS. HSTS is
+ignored on a plaintext response anyway, and advertising it there is just
+confusing.
+
+**The CSP above is `-Report-Only`, and that is step one of two.**
+`dashboard.html` is a single file with its script and style inline plus two
+inline `on*` handlers, so the enforcing version of that same policy would break
+it outright — and the failure looks like a server fault, not a header.
+
+Report-Only cannot break anything: the browser enforces nothing and logs what it
+*would* have blocked. Load `/dashboard`, open the console, and the violations are
+the inventory of what the page actually needs. Step two is to move the inline
+script and the two handlers into a served file, then drop `-Report-Only`.
+
+The two font permissions are real and will survive into the enforcing policy:
+the page loads IBM Plex, so `fonts.googleapis.com` serves the stylesheet and
+`fonts.gstatic.com` serves the font files — different directives, both required.
+Drop both if you self-host the fonts, which is the tidier end state.
 
 ### nginx
 

@@ -114,6 +114,13 @@ const char *typeName(uint8_t type) {
     case LOG_FIX_LOST: return "FIX_LOST";
     case LOG_FIX_GOT: return "FIX_GOT";
     case LOG_STALLED: return "STALLED";
+    case LOG_UNCOMMANDED: return "UNCOMMANDED";
+    case LOG_RETRY: return "RETRY";
+    case LOG_GAVE_UP: return "GAVE_UP";
+    case LOG_WAKE: return "WAKE";
+    case LOG_BEACON_LOW: return "BEACON_LOW";
+    case LOG_SENSOR_FAULT: return "SENSOR_FAULT";
+    case LOG_SENSOR_CLEARED: return "SENSOR_OK";
     case LOG_MAINT: return "MAINT";
     case LOG_CONSOLE: return "CONSOLE";
     case LOG_NO_MOVEMENT: return "NO_MOVE";

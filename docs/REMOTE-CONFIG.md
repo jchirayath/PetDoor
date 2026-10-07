@@ -84,8 +84,14 @@ Everything the serial console can set, and nothing else.
 | `dwell <open> <close> <lockout>` | Dwell times and the actuation lockout, ms |
 | `gap <ms>` | Relay interlock dead time |
 | `pulse <ms>` | How long the relay is held closed — the "button press" |
-| `presses <n> [gap]` | Press n times per actuation. For a controller that swallows presses; see the caveat in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-relay-clicks-but-the-door-does-not-move) |
-| `travel <ms>` | How long your door takes to move. Drives the "moving" LED and buzzer; 0 silences them |
+| `presses <n> [gap]` | Press n times inside one press. **Leave it at 1** — it stacks with the wake press. See the caveat in [TROUBLESHOOTING.md](TROUBLESHOOTING.md#the-relay-clicks-but-the-door-does-not-move) |
+| `travel <ms>` | How long your door takes to move, both directions |
+| `travel <open> <close>` | Per direction. On a mounted door they differ — gravity assists one and opposes the other. Drives the arrival deadline, the "moving" LED and the buzzer; `0` silences and un-verifies |
+| `wake <ms>` | Idle time after which a **wake press** is sent before actuating, because the controller sleeps. `0` turns it off |
+| `retry <minutes> <attempts>` | After a **stalled close**: how long to wait, and how many attempts before the door stays open and says so |
+| `retry clear` | Reset a door that has already given up closing. For when you have just cleared whatever was in the way and are not at the door |
+| `calibrate` | Time a travel in each direction and adopt the result. Needs both switches and an open maintenance window; starts with a quiet period and aborts if the door moves during it |
+| `led` | Flash the status LED now — the same trick as `beep`, for the pin you cannot walk out to look at |
 | `buzzer <pin>\|off` | Which GPIO the buzzer is on. Add `passive` for a bare transducer, `low` if it sounds when pulled to GND |
 | `beep` | Sound the buzzer now — how you find an undocumented board's buzzer pin from indoors |
 | `sensors <open> <closed>` | Limit switch pins, or `off`. `-1` for an end with no switch. This is how sensors get switched on after they are wired, without a flash |
@@ -95,6 +101,13 @@ Everything the serial console can set, and nothing else.
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
 | `door open\|close\|auto` | Actuate now, or clear a manual hold |
 | `lock` / `unlock` | Stop the beacon opening the door — see below |
+| `schedule add 22:00-06:00 [days]` | Add a scheduled lockout window |
+| `schedule del 22:00-06:00` | Remove one **by its times**. Order-independent — prefer this |
+| `schedule del <n>` | Remove one by its number from `list`. **Deleting several this way only works highest-number first**: removing a window renumbers the rest, so `del 0` then `del 1` deletes one and refuses the other, and over this channel the refusal is heard only as a tone. Use the times form, or `clear` |
+| `schedule clear` | Remove every window |
+| `schedule list` | Report what is stored |
+| `schedule tz <minutes>` | Minutes east of UTC |
+| `maint <minutes>` / `maint off` | Open or close a maintenance window |
 | `resetstats` | Zero the proximity statistics |
 | `ota` | Open an OTA window so you can push new firmware |
 | `defaults` | Revert every stored setting to the compiled-in values |
@@ -104,6 +117,20 @@ Everything the serial console can set, and nothing else.
 Each one calls **the same setter the serial console calls**, so the validation
 that protects a person at the keyboard protects the network path identically.
 
+### `door open` and `door close` no longer claim success
+
+They return "door opening", not "door opened".
+
+A travel takes twelve seconds, and the acknowledgement goes out immediately —
+so the old wording was a claim the door was in no position to make. The
+**outcome** arrives separately, as an event, once the travel resolves: `OPEN`
+or `CLOSE` with a `verified by a switch` flag, or `STALLED`, or `NO_MOVE`. On
+the dashboard the difference is visible in the event's detail column.
+
+A movement asked for from here is also attributed to the network rather than to
+a person, both in the log and audibly: four beeps rather than three. See
+[DIAGNOSTICS.md](DIAGNOSTICS.md#buzzer).
+
 ### From a browser instead
 
 **Everything in that table is also on the private dashboard**, if the server was
@@ -112,9 +139,10 @@ tunable as a typed field filled in with the door's current value. Same queue,
 same validation, same delay. See
 [WEB-DASHBOARD.md](WEB-DASHBOARD.md#controlling-the-door-from-the-browser).
 
-The four that lose state or take the door off the air — `macs`, `defaults`,
-`reboot`, `ota` — ask for confirmation there, and the server refuses them
-without it even if the request is crafted by hand.
+The ones that lose state, take the door off the air, or drive the motor on
+purpose — `macs`, `defaults`, `reboot`, `ota`, `maint`, `schedule` and
+`calibrate` — ask for confirmation there, and the server refuses them without
+it even if the request is crafted by hand.
 
 The command line remains the only way in when the dashboard is not reachable,
 and the only place the credentials can be changed at all.
@@ -124,6 +152,38 @@ Either way, the consequential ones can email you — see
 Thresholds that form no hysteresis band, a lockout longer than the close dwell,
 an open filter slower than the close filter — all still refused, and the refusal
 comes back in the acknowledgement.
+
+### When a command seems not to arrive
+
+A command reaches the door only on an **upload**, and an upload has to be
+allowed. Three things hold one back, all deliberately:
+
+| | |
+|---|---|
+| the door is not **idle** | the collar is present, or the door is OPEN, or a travel is in flight. Sharing the antenna while any of those is true costs detections |
+| less than `upmin` since the last upload | 5 minutes by default, and it is what stops the radio living permanently on WiFi |
+| **a console menu is open** | `g_entry` is part of the idle test, so a half-typed configuration is never uploaded — and a menu left open on a cable suppresses inbound commands with it |
+
+The heartbeat (30 minutes by default) fires regardless of idle, so nothing waits
+forever. Pressing **`u`** on the console forces an upload immediately and is the
+quickest way to see whether a command was really queued:
+
+```
+[cmd] 1 command(s) from the server
+[cmd] schedule del 0 -> window removed
+```
+
+One real session lost ten minutes to the third row of that table: a schedule
+delete sat queued the whole time because a console submenu had been left open.
+
+> **`[cmd] reply ignored: unsigned` is normal.** The server signs a reply only
+> when it carries commands; an upload that finds an empty queue gets a plain
+> unsigned acknowledgement. Firmware built before this was understood printed
+> that line on *every* upload, and it reads exactly like a broken channel — two
+> diagnoses in one session wrongly concluded remote configuration was dead while
+> commands were being applied perfectly well. Newer builds say nothing for the
+> ordinary acknowledgement and complain only about an unsigned reply that
+> actually purports to carry orders.
 
 ### `macs` restarts the door
 
@@ -289,7 +349,20 @@ Every upload now carries a status line, and `--doors` shows it:
     commands   : accepted
     sees       : rssi=-63 raw=-63 dist=1.4 present=1 door=OPEN gap=2087
                  samples=1246 adv=62845 weak=9 heap=138420 up=676
+                 act=idle gaveup=0 retry=0 mopen=10203 mclose=11229
+                 batt=2890 battlow=0
 ```
+
+Three groups worth knowing about in there:
+
+| Key | Means |
+|---|---|
+| `act=` | what the actuation path is doing — `idle`, `waking`, `waiting to move`, `travelling` |
+| `gaveup=1` | close attempts are exhausted and the door is **staying open on purpose**. The one field that distinguishes a deliberate open door from a dead one |
+| `mopen=` / `mclose=` | the duration of the last **verified** travel each way. Compare against the configured pair to spot a door getting slower |
+| `batt=` | the beacon's own battery in mV. **`-1` means it has never reported any** — normal for an iBeacon-only beacon, not a fault. `0` means the beacon said it is mains powered |
+| `battlow=1` | the low-battery latch is set. The server also emails on the crossing |
+| `sfault=` | `0` is healthy; otherwise a sensor is broken — see the `SENSOR_FAULT` codes in [DIAGNOSTICS.md](DIAGNOSTICS.md). This is what tells "the door is open because it gave up" from "the door is open because the switch that would confirm a close has stopped working" |
 
 `push to` is the door's **own** address, which it now reports itself. The server
 sees only whatever last hop connected — behind a reverse proxy that is the

@@ -20,12 +20,24 @@ open an issue and label it `safety`. That matters more than any feature.
 
 ## Before you open a pull request
 
-There is no test suite. **Verification means "it compiles for the target".**
+**Two things, and the first needs no hardware:**
 
 ```bash
+tests/host/run.sh      # unit tests + fuzz for the payload parsers
+
 ARDUINO_CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
 "$ARDUINO_CLI" compile --fqbn esp32:esp32:esp32 petdoor
 ```
+
+`tests/host/run.sh` builds `petdoor/beacon.cpp` on your machine and tests it
+against real advertisement payloads, then fuzzes it under ASan/UBSan. Run it for
+any change to `beacon.*` or to the BLE stack adapter in `ble_scanner.cpp`. It
+exists because a bug that compiled cleanly ran on a real door for weeks — see
+[tests/host/README.md](tests/host/README.md).
+
+Most of the firmware still has no tests, because most of it needs the chip, a
+radio or a relay. If you are changing something that is pure logic, a test is
+welcome and `tests/host/` is where it goes.
 
 A standalone `arduino-cli` on `PATH` works identically. Target is **ESP32
 Arduino core 3.x** (3.3.5 is what this was developed against).

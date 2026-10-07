@@ -213,16 +213,39 @@ Confirm with the bench test in
 The firmware is doing its job — you can hear the coil — and nothing happens
 downstream. Work through this in order; each step rules something out.
 
-> **First, make the door tell you what it thinks it is doing.** Measure the
-> travel time and set it (`w`, then `travel 15000`). The status LED then goes
-> near-solid for exactly that long after every actuation, and if you fit a
-> buzzer it ticks and then chimes — see
-> [WIRING.md](WIRING.md#the-annunciator). That does not fix anything, but it
-> separates *"the firmware never actuated"* from *"the firmware actuated and
-> the door did not move"*, which are the two halves of this page and are
-> otherwise indistinguishable from where you are standing.
+> **Before anything else: is your pulse long enough?** `RELAY_PULSE_MS`
+> defaults to **1000 ms** and used to default to 200. On the reference
+> controller a **500 ms press is swallowed and a 1000 ms press works, every
+> time** — so if you are carrying an older `secrets.h` with `RELAY_PULSE_MS`
+> set to 200, that alone is a complete explanation for this symptom. Try
+> `w`, then `pulse 1000`, and come back to the rest of this page only if it
+> is still happening.
 >
-> It cannot tell you the door **arrived** — that is a timer, not a sensor.
+> **Second: has your controller gone to sleep?** The reference controller
+> swallows the first press after a long idle and obeys the second, 4 times out
+> of 4 after three minutes idle. A coop door is idle for hours, so *nearly
+> every real actuation is a cold one*. The firmware now sends a wake press when
+> it has been idle for `WAKE_IDLE_MS` — but if you have set `wake 0`, or your
+> idle period is shorter than the threshold, this is the symptom you get. See
+> [SAFETY.md](SAFETY.md#the-controller-may-not-be-awake).
+>
+> **Then make the door tell you what it thinks it is doing.** Two $1 sensors
+> turn this entire page from deduction into a readout:
+>
+> - a **vibration sensor** (`w`, then `vibration 33`) answers *did it start*,
+>   within a second. A press that moved nothing is then reported as
+>   `NO_MOVE` — explicitly, by name — instead of looking exactly like success.
+> - two **reed switches** (`sensors 32 25`) answer *did it arrive*. A travel
+>   that starts and does not finish is `STALLED`.
+>
+> With neither fitted, measure the travel time instead and set it (`w`, then
+> `travel 12200 12700`). The LED then goes near-solid for exactly that long and
+> a buzzer ticks and chimes. That separates *"the firmware never actuated"*
+> from *"the firmware actuated and the door did not move"* — the two halves of
+> this page, and otherwise indistinguishable from where you are standing.
+>
+> It still cannot tell you the door **arrived**. That is a timer, not a sensor,
+> which is the whole argument for the switches.
 
 **1. Does a manual short move the door?** With the relay module powered, bridge
 `COM` and `NO` on that channel with a wire or a screwdriver blade. If the door
@@ -230,9 +253,10 @@ moves, the wiring from the relay to your controller is good and the controller
 is fine. If it does *not* move, the fault is downstream — check the crimps and
 that you are on the controller's button terminals.
 
-Note what this does **not** prove. A hand-made short lasts a second or more; the
-firmware's pulse is 200 ms. So a successful manual bridge is equally consistent
-with "the contacts never close" and "the pulse is too short". The next two steps
+Note what this does **not** prove. A hand-made short lasts a second or more,
+and a hand is also the second press a sleeping controller was waiting for. So a
+successful manual bridge is equally consistent with "the contacts never close",
+"the pulse is too short" and "the controller was asleep". The next two steps
 separate them.
 
 **1a. If the hand-short works but the relay never does — suspect the contacts.**

@@ -33,6 +33,7 @@ import os
 import re
 import secrets
 import socketserver
+import threading
 import sqlite3
 import sys
 import time
@@ -105,9 +106,104 @@ EVENT_LABEL = {
     "MAINT": "maintenance mode",
     "CONSOLE": "network console",
     "NO_MOVE": "did not move at all",
+    # The door's own controller has modes of its own and has been watched
+    # driving the door with nothing commanding it. Only visible once limit
+    # switches are fitted, which is why this event is newer than the rest.
+    "UNCOMMANDED": "moved by itself",
+    "RETRY": "pressed again",
+    # The one entry here that is a request rather than a record: close attempts
+    # are exhausted and the door is staying open until a person deals with it.
+    "GAVE_UP": "GAVE UP closing",
+    "WAKE": "woke the controller",
+    # The beacon's own battery, from its Eddystone-TLM frames. Worth surfacing
+    # because of what a flat one does: the door refuses to act until it has
+    # heard the collar once since boot, so a dead beacon does not shut the door
+    # — it stops the door working, quietly, with the animal outside.
+    "BEACON_LOW": "beacon battery",
+    # A sensor disagreed with the other one badly enough to be called broken.
+    # Distinct from STALLED/NO_MOVE, which say the DOOR misbehaved: this says
+    # the thing watching the door is lying, which is worse because a stall is
+    # visible and a dead sensor is not.
+    "SENSOR_FAULT": "sensor fault",
+    # The same sensor telling the truth again. Logged so the history does not
+    # show faults arriving and never leaving — read a week later, a fault the
+    # door shrugged off would otherwise look identical to one still live.
+    "SENSOR_OK": "sensor recovered",
 }
+
+# petdoor/eventlog.h : enum SensorFault. Each is diagnosed by cross-checking
+# one sensor against the other, so each names a PART rather than a symptom.
+def sensor_fault_evidence(detail, src):
+    """What the spare field means for this fault code, in words.
+
+    `src` is one integer shared by every event type, and SENSOR_FAULT does not
+    even use it consistently: for the vibration faults it is an edge count, but
+    for SF_REED_LOST (6) it is WHICH END the door was sitting at. Rendering it
+    as "1 vibration edges" is the kind of wrong that sends someone to inspect
+    the wrong sensor, so the meaning is decided in one place and used by both
+    the email and the table.
+    """
+    if not src:
+        return None
+    if detail == 6:
+        return {1: "the door was sitting OPEN", 2: "the door was sitting CLOSED"}.get(
+            src, f"end code {src}")
+    return f"{src} vibration edges"
+
+
+SENSOR_FAULT = {
+    1: ("both limit switches made at once",
+        "a shorted wire, a stuck switch, or a stray magnet"),
+    2: ("the vibration sensor felt nothing during a VERIFIED travel",
+        "the door moved and the sensor did not notice — deaf, unplugged, "
+        "or come off the door"),
+    3: ("the vibration sensor is firing with the door standing still",
+        "sensitivity screw too far in, or mounted where it feels the world "
+        "rather than the door"),
+    5: ("the vibration sensor produced no edges at all during an actuation",
+        "unplugged, a broken wire, or no power — even a badly mounted sensor "
+        "hears the relay click, so zero means no signal path"),
+    4: ("the door ran a full travel and never arrived",
+        "the limit switch at that end is not making — most likely a magnet "
+        "that has come off or drifted out of its narrow capture range"),
+    6: ("a limit switch at the end the door is sitting at is not making",
+        "the door has been at rest at that end for minutes and the switch "
+        "fitted there reports nothing — check the connector first, then the "
+        "magnet-to-reed gap with the door against its stop. Nothing else "
+        "notices this one: it takes neither both switches at once nor a "
+        "travel that fails, so it stays invisible until the next actuation"),
+}
+
+# What a door actuation's `detail` means: ActuationSource in petdoor/door.h.
+ACTUATION_SOURCE = {0: "the collar", 1: "the console", 2: "the dashboard",
+                    3: "a safety reversal"}
+
+# Flags packed into an actuation's spare field: LogActuationFlags in
+# petdoor/eventlog.h. "verified" is the one worth reading — without it the
+# entry records only that the door was COMMANDED somewhere.
+ACTUATION_FLAGS = ((0x0001, "verified by a switch"), (0x0002, "after a wake press"),
+                   (0x0004, "needed a repeat press"), (0x0008, "safety reversal"))
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
+
+# Which of those mean the door FELL OVER, as opposed to being restarted on
+# purpose. 1 (power-on) and 3 (software) are ordinary — a software restart is
+# exactly what an OTA push does, and power-on is a plug. Everything else is the
+# door dying and coming back, and every one of them used to be silent: a door
+# panicked opening an OTA window and the only way to find out was to go and look.
+ABNORMAL_RESET = {4, 5, 6, 7, 9}
+
+RESET_ADVICE = {
+    4: "a crash. The backtrace only ever exists on the serial console, so it is "
+       "gone unless a cable was attached. Compare maxalloc against heap in the "
+       "status line: a large gap means the heap is fragmented, which takes a door "
+       "out while every other number still looks healthy.",
+    5: "an interrupt watchdog — something blocked with interrupts disabled.",
+    6: "a task watchdog — a task stopped yielding.",
+    7: "a watchdog reset.",
+    9: "the supply sagged. Check the PSU and anything sharing it with the motor; "
+       "a relay coil on a marginal supply is the classic cause.",
+}
 
 
 # --------------------------------------------------------------------------- db
@@ -130,10 +226,15 @@ def init_db():
             detail   INTEGER NOT NULL,
             rssi     INTEGER NOT NULL,
             received INTEGER NOT NULL,
-            -- Origin, when the event has one. 0 for almost everything; today
-            -- only CONSOLE rows set it, to the last octet of the address that
-            -- connected. Deliberately not part of the primary key: it says
-            -- something ABOUT the event, it does not identify it.
+            -- The event's one spare integer. 0 for most rows. Named for its
+            -- first use and since outgrown it, which is worth knowing before
+            -- reading a value here: CONSOLE rows put the last octet of the
+            -- connecting address in it, SENSOR_FAULT the evidence that raised
+            -- the fault, BEACON_LOW the millivolts, and an inferred
+            -- UNCOMMANDED the milliseconds of movement it was inferred from.
+            -- Read it according to `type` and never on its own.
+            -- Deliberately not part of the primary key: it says something
+            -- ABOUT the event, it does not identify it.
             src      INTEGER NOT NULL DEFAULT 0,
             -- The door has no unique event id, so identity is the tuple that
             -- cannot repeat for one device: which boot, how far into it, what
@@ -212,7 +313,7 @@ VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
                "scan", "reboot", "lock", "unlock", "presses",
                "travel", "buzzer", "beep", "sensors", "upload", "maint",
-               "schedule", "vibration")
+               "schedule", "vibration", "led", "wake", "retry", "calibrate")
 
 # ---------------------------------------------------------------- web control
 #
@@ -323,7 +424,21 @@ WEB_COMMANDS = {
 
     # --- timing ------------------------------------------------------------
     "dwell":      ([_whole(100, 600000, " ms")] * 3, 3, _lockout_below_close, False),
-    "travel":     ([_whole(0, 120000, " ms")], 1, None, False),
+    # One value sets both directions; two set them separately. They are not
+    # equal on a mounted door — gravity assists the close and opposes the open.
+    "travel":     ([_whole(0, 120000, " ms"), _whole(0, 120000, " ms")], 1, None, False),
+    # How long an idle vendor controller is assumed to need a wake press before
+    # it will listen. 0 turns the wake press off.
+    "wake":       ([_whole(0, 3600000, " ms")], 1, None, False),
+    # After a close that stalled: how long to wait, and how many attempts
+    # before the door stays open and says so. `retry clear` resets a door that
+    # has already given up, for somebody who has just cleared the obstruction.
+    "retry":      ([_whole(1, 1440, " min"), _whole(1, 10)], 2, None, False),
+    # Times a travel in each direction and adopts the result. Confirmed,
+    # because it drives the door twice, on purpose, while somebody may be
+    # standing at it — and it refuses unless a maintenance window is open.
+    "calibrate":  ([], 0, None, True),
+    "led":        ([], 0, None, False),
 
     # --- the relay ---------------------------------------------------------
     "pulse":      ([_whole(50, 10000, " ms")], 1, None, False),
@@ -408,6 +523,12 @@ def web_command_allowed(command):
     if verb == "vibration" and args and args[0].lower() in ("off", "none"):
         return (True, "") if len(args) == 1 else (False, "'vibration off' takes nothing else")
 
+    # "retry clear" resets a door that has given up closing, for somebody who
+    # has just cleared whatever was in the way. A word where a number belongs,
+    # so it has to be taken before the range checks run.
+    if verb == "retry" and args and args[0].lower() == "clear":
+        return (True, "") if len(args) == 1 else (False, "'retry clear' takes nothing else")
+
     if verb == "maint" and args and args[0].lower() in ("off", "on"):
         return (True, "") if len(args) == 1 else (False, f"'maint {args[0].lower()}' takes nothing else")
 
@@ -479,8 +600,15 @@ EMAIL_SUNK = "#F1F4F7"
 EMAIL_ACCENT = {
     "calm": "#2A9D8F",    # teal: something happened, nothing is wrong
     "door": "#E9A23B",    # amber: the door was asked to move
+    "warn": "#E9A23B",    # amber: act within days; nothing is broken yet
     "alert": "#C4453B",   # red: somebody should look at this today
 }
+# "door" and "warn" are the same amber on purpose. They mean different things —
+# one is an actuation, the other is a battery going flat — and keeping separate
+# keys means either can be recoloured without dragging the other with it. An
+# unknown accent falls back to "calm" silently, which is why a new one is added
+# here rather than passed in hopefully: a low battery rendered teal reads as
+# "nothing is wrong".
 LOGO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                          "petdoor-logo.png")
 
@@ -817,6 +945,37 @@ def store(device, rows):
     return added
 
 
+# How long to stay quiet about the same KIND of event from the same door.
+#
+# INSERT OR IGNORE already stops the door's repeated ring uploads from mailing
+# the same row twice. This is for the other case: a genuinely new row each time,
+# arriving over and over because the underlying fault persists. A dead closed-end
+# reed produces a fresh STALLED on every close attempt — three per episode, every
+# episode, all night — and mailing each one is how the message that mattered ends
+# up buried with the rest.
+#
+# In memory on purpose. A restart re-arms every alert, which is the right way
+# round to fail: the worst case is one extra email, not a missed one.
+NOTIFY_COOLDOWN_S = int(os.environ.get("PETDOOR_NOTIFY_COOLDOWN_S", "3600"))
+_notified_at = {}
+
+# (device, fault code) -> True once a fault email has actually gone out for it.
+# The recovery mail is sent only if this says somebody was told about the fault in
+# the first place, which is the same shape as _stale_alerted below. Without it, a
+# sensor that flaps sends a stream of good news nobody asked for.
+_fault_alerted = {}
+
+
+def notify_due(device, kind):
+    """True if we have not mailed about this (door, kind) pair recently."""
+    now = time.time()
+    key = (device, kind)
+    if now - _notified_at.get(key, 0) < NOTIFY_COOLDOWN_S:
+        return False
+    _notified_at[key] = now
+    return True
+
+
 # Events the door reports that are worth an email on arrival. Kept deliberately
 # tiny: the door uploads its whole ring repeatedly, and a chatty rule here is
 # how PetDoor mail ends up in a folder nobody opens — at which point the one
@@ -847,6 +1006,259 @@ def notify_events(device, rows):
                 accent="alert")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for console reject: {why}\n")
+
+        # The beacon's battery went low. The second event here that earns a mail,
+        # and it earns it for an unobvious reason: a flat beacon does NOT shut
+        # the door. The firmware refuses to act until it has heard the collar
+        # once since boot, so a cell that dies overnight leaves the door stuck
+        # wherever it was, with the animal on the wrong side and nothing
+        # obviously broken. You want days of notice, and a coin cell gives them.
+        #
+        # Safe to mail because the firmware latches with a recovery margin and
+        # INSERT OR IGNORE dedupes the ring: one crossing, one row, one message.
+        elif r["type"] == "BEACON_LOW" and r["detail"] == 1:
+            mv = r["src"] if "src" in r.keys() and r["src"] else None
+            ok, why = send_notification(
+                f"beacon battery low on {device}",
+                title="The beacon's battery is going flat",
+                lede="The door's beacon reported a low battery. Replace the "
+                     "cell in the next few days.",
+                rows=[("door", device),
+                      ("battery", f"{mv} mV" if mv else "below the threshold"),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="A flat beacon does not close the door on anything — the "
+                     "door will not act at all until it has heard the collar "
+                     "once since starting up. What it does instead is stop "
+                     "working, without looking broken, which is why this is "
+                     "worth an email rather than a line in a log. A CR2032 "
+                     "reads about 3000 mV fresh.",
+                cta_label="Open the dashboard",
+                accent="warn")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for beacon battery: {why}\n")
+
+        # A sensor went bad. The third event to earn a mail, and the most
+        # urgent of the three.
+        #
+        # Once the limit switches are fitted the firmware TRUSTS them, so a
+        # switch that stops making does not degrade gracefully: every close
+        # becomes a STALL, and a stalled close fails OPEN by design. The door
+        # then sits open night after night, having done exactly the right thing
+        # with wrong information, and nothing about it looks broken. Same shape
+        # for a vibration sensor firing at idle — the wake probe reads it as
+        # "already moving" and suppresses the actuating press.
+        #
+        # Latched in the firmware, so this is one message per failure and not
+        # one per travel.
+        elif r["type"] == "SENSOR_FAULT":
+            what, why_txt = SENSOR_FAULT.get(
+                r["detail"], (f"fault code {r['detail']}", "unrecognised"))
+            ev = sensor_fault_evidence(
+                r["detail"], r["src"] if "src" in r.keys() else 0)
+            ok, why = send_notification(
+                f"sensor fault on {device}",
+                title="A door sensor has stopped telling the truth",
+                lede=what.capitalize() + ".",
+                rows=[("door", device),
+                      ("likely cause", why_txt),
+                      ("evidence", ev or "n/a"),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="This is worth looking at today. The door trusts these "
+                     "sensors: a limit switch that stops making turns every "
+                     "close into a stall, and a stalled close deliberately "
+                     "fails OPEN — so the door ends up standing open all night "
+                     "having followed its rules correctly on bad information. "
+                     "The door keeps working; what it has lost is the ability "
+                     "to know whether it did.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            # Record that somebody WAS told, which is what entitles the
+            # recovery below to mail. A fault nobody heard about needs no
+            # all-clear.
+            if ok:
+                _fault_alerted[(device, r["detail"])] = True
+            else:
+                sys.stderr.write(f"  NOTIFY FAILED for sensor fault: {why}\n")
+
+        # The door has STOPPED TRYING TO CLOSE and is standing open until a
+        # person deals with it. The most important thing this system produces:
+        # every other event is a record of something that happened, and this one
+        # is a request. No cooldown — it is terminal and it is rare, and a door
+        # that gave up twice in one night is a door you want told about twice.
+        # A door that fell over and came back.
+        #
+        # Deliberately NOT behind notify_due(): repeated crashes are the signal,
+        # not noise. The history that forced the NimBLE default was three
+        # consecutive reset=4 boots, and a cooldown would have hidden two of them
+        # — which is precisely the information that identified the cause.
+        elif r["type"] == "BOOT" and r["detail"] in ABNORMAL_RESET:
+            reason = RESET_REASON.get(r["detail"], f'reset {r["detail"]}')
+            ok, why = send_notification(
+                f"{device} restarted unexpectedly ({reason})",
+                title="A door fell over and came back",
+                lede=f"{device} came up on boot #{r['boot']} after {reason}. It is "
+                     "running again, so this is a report rather than an outage — "
+                     "but nothing asked it to restart.",
+                rows=[("door", device),
+                      ("reset reason", reason),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note=RESET_ADVICE.get(r["detail"], "Unrecognised reset reason."),
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for abnormal boot: {why}\n")
+
+        # The same sensor telling the truth again. Only mailed if the fault
+        # itself was mailed: being told a door is broken and never told it
+        # recovered is how somebody drives out to a coop for nothing.
+        elif (r["type"] == "SENSOR_OK"
+              and _fault_alerted.pop((device, r["detail"]), False)):
+            what, _why = SENSOR_FAULT.get(
+                r["detail"], (f"fault code {r['detail']}", "unrecognised"))
+            ok, why = send_notification(
+                f"sensor recovered on {device}",
+                title="That door sensor is reporting again",
+                lede="It is no longer true that " + what + ".",
+                rows=[("door", device),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="Nothing needs doing. This is the counterpart to the fault "
+                     "mail you had earlier, sent so a door that fixed itself does "
+                     "not leave you assuming it is still broken. A sensor that "
+                     "recovers and fails repeatedly is worth a look even so.",
+                accent="calm")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
+
+        elif r["type"] == "GAVE_UP":
+            ok, why = send_notification(
+                f"door is staying OPEN on {device}",
+                title="The door has given up closing and is standing open",
+                lede=f"{r['detail']} close attempts stalled in a row, so the door "
+                     "has stopped trying and is deliberately staying open.",
+                rows=[("door", device),
+                      ("attempts", r["detail"]),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="This is deliberate, not a crash. A door that stops partway "
+                     "while closing is exactly when something may be underneath "
+                     "it, so the firmware reverses and retries a few times and "
+                     "then stops rather than driving onto whatever is in the way. "
+                     "It will not close again by itself: clear the obstruction "
+                     "and press 'x' on the console, or send `door close`. Until "
+                     "then the doorway is open.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for gave-up: {why}\n")
+
+        # A travel started and never arrived. Rate limited, because a persistent
+        # cause produces one of these per attempt — and the attempts that follow
+        # end in GAVE_UP above, which is not rate limited and says more.
+        elif r["type"] == "STALLED" and notify_due(device, "STALLED"):
+            going = {1: "opening", 2: "closing"}.get(r["detail"], "moving")
+            ok, why = send_notification(
+                f"door stalled while {going} on {device}",
+                title=f"The door stalled while {going}",
+                lede="It started moving and never reached the other end.",
+                rows=[("door", device),
+                      ("direction", going),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="An obstruction, a jam, or a limit switch that has stopped "
+                     "making. A stalled CLOSE is reversed automatically and "
+                     "retried after a delay; if the retries run out you will get "
+                     "a second message saying the door is staying open. Further "
+                     "stalls on this door are suppressed for an hour so a "
+                     "persistent fault cannot bury that one.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for stall: {why}\n")
+
+
+# ---------------------------------------------------------------- watchdog
+#
+# THE ONE FAILURE NOTHING ELSE CAN CATCH.
+#
+# Every other alert in this file is triggered by the door SENDING something. A
+# door that has lost WiFi, browned out, or whose ESP32 has died sends nothing by
+# definition — so the quieter it gets, the less this system has to say about it.
+# Silence looked exactly like a door with nothing to report.
+#
+# So this watches the absence instead. It is the only check that runs without
+# the door's participation, which is precisely why it is the one worth having.
+#
+# The threshold has to clear the door's own heartbeat with room to spare: a
+# healthy door calls in every WIFI_HEARTBEAT_MS (30 minutes by default) even
+# with nothing happening, and misses one now and then to a busy radio or an OTA
+# window. Two hours is roughly four missed heartbeats — long enough not to cry
+# wolf over a single one, short enough to tell you the same evening.
+STALE_AFTER_S = int(os.environ.get("PETDOOR_STALE_AFTER_S", "7200"))
+WATCHDOG_EVERY_S = 300
+
+# device -> True once we have mailed about this outage. Cleared when it comes
+# back, so a door that flaps gets one message per outage rather than per check.
+_stale_alerted = {}
+
+
+def check_stale_doors():
+    """One pass. Mails for doors that have gone quiet, and for their return."""
+    if not NOTIFY_TO:
+        return
+    now = int(time.time())
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT device, last_seen, version FROM devices").fetchall()
+    for r in rows:
+        dev, seen = r["device"], r["last_seen"] or 0
+        if not seen:
+            continue          # never reported at all; nothing to be silent about
+        quiet = now - seen
+        if quiet >= STALE_AFTER_S and not _stale_alerted.get(dev):
+            _stale_alerted[dev] = True
+            hrs = quiet / 3600.0
+            ok, why = send_notification(
+                f"{dev} has stopped reporting",
+                title="A door has gone quiet",
+                lede=f"Nothing has been heard from {dev} for {hrs:.1f} hours.",
+                rows=[("door", dev),
+                      ("last heard", time.strftime("%Y-%m-%d %H:%M UTC",
+                                                   time.gmtime(seen))),
+                      ("firmware", r["version"] or "unknown")],
+                note="A healthy door calls in on a heartbeat even when nothing "
+                     "is happening, so silence this long means it is not "
+                     "running, not on the network, or not reaching this server. "
+                     "The door may still be working the collar perfectly well — "
+                     "it decides entirely on its own and never needs this "
+                     "server — but nothing can be seen or changed remotely "
+                     "until it comes back. Check power first, then WiFi.",
+                cta_label="Open the dashboard",
+                accent="alert")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for stale door {dev}: {why}\n")
+        elif quiet < STALE_AFTER_S and _stale_alerted.get(dev):
+            _stale_alerted[dev] = False
+            ok, why = send_notification(
+                f"{dev} is reporting again",
+                title="The door is back",
+                lede=f"{dev} has started calling in again.",
+                rows=[("door", dev), ("firmware", r["version"] or "unknown")],
+                note="Nothing needs doing. This closes out the earlier message "
+                     "about it having gone quiet.",
+                cta_label="Open the dashboard",
+                accent="calm")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for stale recovery {dev}: {why}\n")
+
+
+def watchdog_loop():
+    # Daemon: it must never hold the process open on shutdown. A failure in here
+    # must not take the server with it either — a crashed watchdog would stop
+    # the ingest endpoint, which is far worse than a missed alert.
+    while True:
+        time.sleep(WATCHDOG_EVERY_S)
+        try:
+            check_stale_doors()
+        except Exception as exc:                        # noqa: BLE001
+            sys.stderr.write(f"  watchdog error (continuing): {exc}\n")
 
 
 def parse_csv(text):
@@ -955,7 +1367,9 @@ def render():
                      ("Doors", devices), ("Brownouts", brown)])
 
     cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b",
-           "NO_MOVE": "b", "STALLED": "b"}
+           "NO_MOVE": "b", "STALLED": "b", "UNCOMMANDED": "b", "GAVE_UP": "b",
+           "RETRY": "b", "WAKE": "s", "BEACON_LOW": "b", "SENSOR_FAULT": "b",
+           "SENSOR_OK": "i"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -966,9 +1380,74 @@ def render():
             if r["detail"] == 9:
                 detail = f'<strong style="color:var(--bad)">{detail}</strong>'
         elif r["type"] == "REFUSED":
+            # 1-6 are ActuationResult; 100 is the scheduled lockout, which is
+            # deliberately outside that enum so adding to it cannot re-label
+            # history already in the database.
             detail = {1: "already there", 2: "too soon", 3: "boot grace",
-                      5: "scheduled lockout"}.get(
+                      4: "already travelling", 5: "waiting to retry a failed close",
+                      6: "gave up closing — staying open",
+                      100: "scheduled lockout"}.get(
                 r["detail"], f'reason {r["detail"]}')
+        elif r["type"] in ("OPEN", "CLOSE"):
+            # Who asked, and how much the door actually knows about what it
+            # did. An entry with no "verified" is an intention, not a record.
+            bits = [ACTUATION_SOURCE.get(r["detail"], f'source {r["detail"]}')]
+            flags = r["src"] if "src" in r.keys() and r["src"] else 0
+            bits += [name for mask, name in ACTUATION_FLAGS if flags & mask]
+            if not flags & 0x0001:
+                bits.append("assumed — no switch confirmed it")
+            detail = html.escape(", ".join(bits))
+        elif r["type"] == "GAVE_UP":
+            detail = ('<strong style="color:var(--bad)">'
+                      f'{r["detail"]} close attempts stalled; the door is staying OPEN'
+                      "</strong>")
+        elif r["type"] == "UNCOMMANDED":
+            # detail is the end the door reached. 1/2 mean a limit switch
+            # MEASURED it; 11/12 mean it was INFERRED from how long the
+            # vibration sensor felt the door moving, on a door whose switches
+            # could not see the travel. Rendered differently on purpose: an
+            # inference and a measurement are not the same claim, and showing
+            # them identically is how one quietly becomes the other.
+            d = r["detail"]
+            inferred = d >= 10
+            where = {1: "open", 2: "closed"}.get(d - 10 if inferred else d,
+                                                 f"state {d}")
+            if inferred:
+                ms = r["src"] if "src" in r.keys() and r["src"] else 0
+                how = ("inferred from %.1f s of movement — no limit switch saw it"
+                       % (ms / 1000.0)) if ms else \
+                      "inferred from the duration of the movement"
+            else:
+                how = "a limit switch saw it"
+            detail = ('<strong style="color:var(--bad)">'
+                      f"the door moved to {where} and nothing commanded it"
+                      f'</strong> <span class="muted">({how})</span>')
+        elif r["type"] == "RETRY":
+            detail = f'attempt {r["detail"]} — the previous press moved nothing'
+        elif r["type"] == "WAKE":
+            detail = ("the wake press moved the door by itself"
+                      if r["detail"] == 1 else "a wake press was needed")
+        elif r["type"] == "SENSOR_FAULT":
+            what, why = SENSOR_FAULT.get(
+                r["detail"], (f"fault {r['detail']}", "unrecognised code"))
+            ev = sensor_fault_evidence(
+                r["detail"], r["src"] if "src" in r.keys() else 0)
+            detail = ('<strong style="color:var(--bad)">' + html.escape(what)
+                      + "</strong> — " + html.escape(why)
+                      + (" (" + html.escape(ev) + ")" if ev else ""))
+        elif r["type"] == "SENSOR_OK":
+            what, _ = SENSOR_FAULT.get(r["detail"],
+                                       (f"fault {r['detail']}", "unrecognised code"))
+            detail = ("recovered — no longer true that " + html.escape(what))
+        elif r["type"] == "BEACON_LOW":
+            # The millivolts ride in the spare field; detail is the direction.
+            mv = r["src"] if "src" in r.keys() and r["src"] else None
+            where = f" ({mv} mV)" if mv else ""
+            if r["detail"] == 1:
+                detail = ('<strong style="color:var(--bad)">'
+                          f"LOW{where} — replace the beacon battery</strong>")
+            else:
+                detail = f"back above the threshold{where}"
         elif r["type"] == "NO_MOVE":
             # The relay fired and nothing moved. Louder than STALLED, which at
             # least means the door tried.
@@ -1428,6 +1907,17 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 def main():
+    # Line-buffer stdout. In a container stdout is a pipe, so Python
+    # block-buffers it and the startup banner — ports, key state, the web-control
+    # warning, the watchdog line — sits unflushed for hours while the request log
+    # on stderr appears immediately. The result is a server that looks like it
+    # never printed its configuration. It cost a deployment's worth of doubt
+    # about whether the watchdog thread had started at all.
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:                                   # noqa: BLE001
+        pass                                            # not a tty-like stream
+
     global ALLOW_WEB_CONTROL
     ap = argparse.ArgumentParser(description="PetDoor log server")
     ap.add_argument("--port", type=int, default=8080)
@@ -1598,6 +2088,13 @@ def main():
         print("  !! WEB CONTROL IS ON. Anyone who can load /dashboard can open,")
         print("  !! close, lock and unlock the door. That route must have")
         print("  !! authentication in front of it — see docs/WEB-DASHBOARD.md.")
+    if NOTIFY_TO:
+        threading.Thread(target=watchdog_loop, daemon=True).start()
+        print(f"  watchdog  : mails if a door goes quiet for "
+              f"{STALE_AFTER_S // 3600}h (checked every {WATCHDOG_EVERY_S // 60}m)")
+    else:
+        print("  watchdog  : off (no PETDOOR_NOTIFY_TO configured)")
+
     with Server((args.host, args.port), Handler) as srv:
         try:
             srv.serve_forever()

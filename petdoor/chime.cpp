@@ -1,5 +1,8 @@
 #include "chime.h"
 
+#include "position.h"
+#include "vibration.h"
+
 namespace Chime {
 namespace {
 
@@ -11,34 +14,97 @@ struct Step {
 };
 
 // "Wait." A short tick roughly once a second, for as long as the door is
-// believed to be moving. Deliberately sparse: this plays for fifteen seconds
+// believed to be moving. Deliberately sparse: this plays for twelve seconds
 // at a time, several times a day, a few feet from a coop. Anything denser
 // becomes an alarm, and an alarm nobody can stand gets unplugged.
 const Step kWorking[] = {{2200, 120}, {0, 880}};
 
-// "OK." Rising, because rising reads as finished and falling reads as failed
-// in every appliance anyone owns. Two notes, a fifth apart.
-const Step kDone[] = {{1568, 160}, {0, 60}, {2349, 280}};
+// ---- the movement announcements -------------------------------------------
+//
+// Count of beeps = who asked (2 collar, 3 console, 4 network); the long beep
+// goes last to open and first to close. See chime.h for why it is counted
+// rather than pitched.
+//
+// Every step is >= 120 ms because the control task ticks at 100 ms and that is
+// the floor on how precisely a pattern can be timed. Shorter steps would be
+// stretched to a tick and the short-vs-long contrast — the part that survives
+// on an active buzzer — would blur into "some beeps" for all six.
+constexpr uint16_t kShort = 150;   // a "dot"
+constexpr uint16_t kLong = 400;    // a "dash"
+constexpr uint16_t kGap = 120;     // between beeps of the same tune
+constexpr uint16_t kLo = 1200;     // the dots' pitch, on a passive buzzer
+constexpr uint16_t kHi = 1800;     // the dash's pitch: rising reads as opening
 
-// "No." Low and flat — the opposite shape to kDone, so the two can never be
-// confused through a wall.
-const Step kRefused[] = {{440, 500}};
+const Step kMoveBeaconOpen[] = {
+    {kLo, kShort}, {0, kGap}, {kHi, kLong}};
+const Step kMoveBeaconClose[] = {
+    {kHi, kLong}, {0, kGap}, {kLo, kShort}};
+const Step kMoveConsoleOpen[] = {
+    {kLo, kShort}, {0, kGap}, {kLo, kShort}, {0, kGap}, {kHi, kLong}};
+const Step kMoveConsoleClose[] = {
+    {kHi, kLong}, {0, kGap}, {kLo, kShort}, {0, kGap}, {kLo, kShort}};
+const Step kMoveRemoteOpen[] = {
+    {kLo, kShort}, {0, kGap}, {kLo, kShort}, {0, kGap}, {kLo, kShort}, {0, kGap}, {kHi, kLong}};
+const Step kMoveRemoteClose[] = {
+    {kHi, kLong}, {0, kGap}, {kLo, kShort}, {0, kGap}, {kLo, kShort}, {0, kGap}, {kLo, kShort}};
+
+// ---- the four endings -----------------------------------------------------
+
+// "Arrived." Two equal medium beeps, rising a fifth. No movement tune has two
+// equal beeps, which is what keeps this from being heard as one.
+const Step kDone[] = {{1568, 250}, {0, 80}, {2349, 250}};
+
+// "No." One long low beep — the opposite shape to everything above, so a
+// refusal can never be mistaken for the door setting off.
+const Step kRefused[] = {{440, 700}};
+
+// "Not... now." A scheduled window is refusing to open the door. Two long low
+// beeps with a deliberately wide gap — the same register as kRefused, because
+// it means the same kind of thing, but unmistakably two events rather than one.
+//
+// The 400 ms gap is what carries it. kNoMove below is also two long low beeps
+// and differs only in its gap being 150 ms, which sounds like a stutter where
+// this sounds like two separate statements.
+const Step kRefusedSchedule[] = {{440, 500}, {0, 400}, {440, 500}};
+
+// "Nothing moved." Said twice, flatly and low. Twice rather than once because
+// it is the ending that means "that press did not take" — which is worth
+// distinguishing from a flat refusal standing right next to it.
+const Step kNoMove[] = {{440, 500}, {0, 150}, {440, 500}};
+
+// "It stopped partway." Five fast beeps: the most urgent pattern in the set,
+// because this is the one ending that can mean something is under the door.
+// The burst gap is 70 ms, well under every other tune's, so it reads as a
+// clatter rather than as a count even on a one-pitch buzzer.
+const Step kStalled[] = {{880, 180}, {0, 70}, {880, 180}, {0, 70}, {880, 180},
+                         {0, 70},    {880, 180}, {0, 70}, {880, 180}};
+
+// "I have given up closing it and it is staying open." One very long beep then
+// two short — nothing else in the set starts with 800 ms. This plays once,
+// not on a loop: the door reports this state continuously on its LED, in the
+// log and in the status line, and a buzzer that repeated it all night would be
+// an alarm, which gets unplugged, which loses the message entirely.
+const Step kGaveUp[] = {{600, 800}, {0, 250}, {600, 200}, {0, 250}, {600, 200}};
+
+// "The door moved and it was not me." Two short blips, far apart — the sound
+// of the door asking a question rather than reporting a result.
+const Step kUncommanded[] = {{1500, 150}, {0, 450}, {1500, 150}};
+
+// "Something is wrong with me." Three short low blips with wide gaps — spaced
+// so it reads as deliberate rather than urgent, because it repeats and anything
+// urgent that repeats gets unplugged. Three distinguishes it from the two of
+// kUncommanded, and the low register from that tune's high one.
+const Step kSensorFault[] = {{440, 120}, {0, 350}, {440, 120}, {0, 350}, {440, 120}};
 
 // Three even beeps: long enough to hear, distinctive enough that you know the
 // buzzer is responding to you and not to the door.
 const Step kTest[] = {{2000, 150}, {0, 150}, {2000, 150}, {0, 150}, {2000, 150}};
 
-// The acknowledgements. Open and close are each other's mirror, and so are
-// lock and unlock, which is what makes them learnable: one pair differs by
-// DIRECTION, the other by REGISTER.
-// Every step is >= 120 ms because the control task ticks at 100 ms and that is
-// the floor on how precisely a pattern can be timed. Shorter steps would be
-// stretched to a tick and the short-vs-long contrast — the part that survives
-// on an active buzzer — would blur into "two beeps" for all of them.
-const Step kAckOpen[]   = {{1200, 150}, {0, 120}, {1800, 400}};
-const Step kAckClose[]  = {{1800, 400}, {0, 120}, {1200, 150}};
-const Step kAckLock[]   = {{700,  150}, {0, 130}, {700,  150}, {0, 130}, {700, 150}};
-const Step kAckUnlock[] = {{2200, 500}};
+// The acknowledgements. Lock and unlock are a pair distinguished by LENGTH as
+// well as pitch — two short against one medium — because the register they
+// used to differ by is not ours to choose on an active buzzer.
+const Step kAckLock[]   = {{700, 150}, {0, 130}, {700, 150}};
+const Step kAckUnlock[] = {{2200, 350}};
 const Step kAckSet[]    = {{2000, 150}};
 
 struct Pattern {
@@ -48,18 +114,31 @@ struct Pattern {
 };
 
 Pattern patternFor(ChimeTune t) {
+#define PETDOOR_TUNE(steps, loops) \
+  { (steps), sizeof(steps) / sizeof(Step), (loops) }
   switch (t) {
-    case CHIME_WORKING: return {kWorking, sizeof(kWorking) / sizeof(kWorking[0]), true};
-    case CHIME_DONE:    return {kDone,    sizeof(kDone)    / sizeof(kDone[0]),    false};
-    case CHIME_REFUSED: return {kRefused, sizeof(kRefused) / sizeof(kRefused[0]), false};
-    case CHIME_TEST:    return {kTest,    sizeof(kTest)    / sizeof(kTest[0]),    false};
-    case CHIME_ACK_OPEN:   return {kAckOpen,   sizeof(kAckOpen)  /sizeof(Step), false};
-    case CHIME_ACK_CLOSE:  return {kAckClose,  sizeof(kAckClose) /sizeof(Step), false};
-    case CHIME_ACK_LOCK:   return {kAckLock,   sizeof(kAckLock)  /sizeof(Step), false};
-    case CHIME_ACK_UNLOCK: return {kAckUnlock, sizeof(kAckUnlock)/sizeof(Step), false};
-    case CHIME_ACK_SET:    return {kAckSet,    sizeof(kAckSet)   /sizeof(Step), false};
-    default:            return {nullptr, 0, false};
+    case CHIME_WORKING:            return PETDOOR_TUNE(kWorking, true);
+    case CHIME_MOVE_BEACON_OPEN:   return PETDOOR_TUNE(kMoveBeaconOpen, false);
+    case CHIME_MOVE_BEACON_CLOSE:  return PETDOOR_TUNE(kMoveBeaconClose, false);
+    case CHIME_MOVE_CONSOLE_OPEN:  return PETDOOR_TUNE(kMoveConsoleOpen, false);
+    case CHIME_MOVE_CONSOLE_CLOSE: return PETDOOR_TUNE(kMoveConsoleClose, false);
+    case CHIME_MOVE_REMOTE_OPEN:   return PETDOOR_TUNE(kMoveRemoteOpen, false);
+    case CHIME_MOVE_REMOTE_CLOSE:  return PETDOOR_TUNE(kMoveRemoteClose, false);
+    case CHIME_DONE:               return PETDOOR_TUNE(kDone, false);
+    case CHIME_REFUSED:            return PETDOOR_TUNE(kRefused, false);
+    case CHIME_REFUSED_SCHEDULE:   return PETDOOR_TUNE(kRefusedSchedule, false);
+    case CHIME_NO_MOVE:            return PETDOOR_TUNE(kNoMove, false);
+    case CHIME_STALLED:            return PETDOOR_TUNE(kStalled, false);
+    case CHIME_GAVE_UP:            return PETDOOR_TUNE(kGaveUp, false);
+    case CHIME_UNCOMMANDED:        return PETDOOR_TUNE(kUncommanded, false);
+    case CHIME_SENSOR_FAULT:       return PETDOOR_TUNE(kSensorFault, false);
+    case CHIME_TEST:               return PETDOOR_TUNE(kTest, false);
+    case CHIME_ACK_LOCK:           return PETDOOR_TUNE(kAckLock, false);
+    case CHIME_ACK_UNLOCK:         return PETDOOR_TUNE(kAckUnlock, false);
+    case CHIME_ACK_SET:            return PETDOOR_TUNE(kAckSet, false);
+    default:                       return {nullptr, 0, false};
   }
+#undef PETDOOR_TUNE
 }
 
 int pin_ = -1;
@@ -142,6 +221,17 @@ const char *pinProblem(int pin) {
   if (pin == PIN_RELAY_OPEN) return "that is the OPEN relay — a beep would move the door";
   if (pin == PIN_RELAY_CLOSE) return "that is the CLOSE relay — a beep would move the door";
   if (pin == PIN_STATUS_LED) return "that is the status LED";
+  // The switches and the vibration sensor are configured at runtime too, so
+  // the buzzer has to ask them rather than assume its pin is free.
+  if (Position::fittedAt(DOOR_OPEN) && pin == Position::openPin()) {
+    return "that is the OPEN limit switch";
+  }
+  if (Position::fittedAt(DOOR_CLOSED) && pin == Position::closedPin()) {
+    return "that is the CLOSED limit switch";
+  }
+  if (Vibration::enabled() && pin == Vibration::pin()) {
+    return "that is the vibration sensor";
+  }
 
 #if CONFIG_IDF_TARGET_ESP32
   if (pin == 0 || pin == 2 || pin == 12 || pin == 15) {
@@ -186,16 +276,26 @@ ChimeTune playing() { return tune_; }
 
 const char *tuneName(ChimeTune t) {
   switch (t) {
-    case CHIME_WORKING: return "working";
-    case CHIME_DONE:    return "done";
-    case CHIME_REFUSED: return "refused";
-    case CHIME_TEST:    return "test";
-    case CHIME_ACK_OPEN:   return "ack-open";
-    case CHIME_ACK_CLOSE:  return "ack-close";
-    case CHIME_ACK_LOCK:   return "ack-lock";
-    case CHIME_ACK_UNLOCK: return "ack-unlock";
-    case CHIME_ACK_SET:    return "ack-set";
-    default:            return "silent";
+    case CHIME_WORKING:            return "working";
+    case CHIME_MOVE_BEACON_OPEN:   return "beacon-open";
+    case CHIME_MOVE_BEACON_CLOSE:  return "beacon-close";
+    case CHIME_MOVE_CONSOLE_OPEN:  return "console-open";
+    case CHIME_MOVE_CONSOLE_CLOSE: return "console-close";
+    case CHIME_MOVE_REMOTE_OPEN:   return "remote-open";
+    case CHIME_MOVE_REMOTE_CLOSE:  return "remote-close";
+    case CHIME_DONE:               return "arrived";
+    case CHIME_REFUSED:            return "refused";
+    case CHIME_REFUSED_SCHEDULE:   return "refused-schedule";
+    case CHIME_NO_MOVE:            return "never-moved";
+    case CHIME_STALLED:            return "stalled";
+    case CHIME_GAVE_UP:            return "gave-up";
+    case CHIME_UNCOMMANDED:        return "uncommanded";
+    case CHIME_SENSOR_FAULT:       return "sensor-fault";
+    case CHIME_TEST:               return "test";
+    case CHIME_ACK_LOCK:           return "ack-lock";
+    case CHIME_ACK_UNLOCK:         return "ack-unlock";
+    case CHIME_ACK_SET:            return "ack-set";
+    default:                       return "silent";
   }
 }
 

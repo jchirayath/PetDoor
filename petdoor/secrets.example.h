@@ -69,3 +69,33 @@
 // #define RSSI_ENTER_DBM   -60
 // #define RSSI_EXIT_DBM    -72
 // #define RELAY_ACTIVE_LOW 1
+
+// ---------------------------------------------------------------------------
+// The reference build, as actually measured on hardware (docs/REQUIREMENTS.md).
+//
+// These are NOT the compiled-in defaults, and deliberately so: the pins below
+// describe one ESP32 2-relay board with two reed switches, a buzzer and a
+// vibration sensor wired to it, and attaching to an arbitrary GPIO on the
+// assumption that something harmless is there is how a firmware moves somebody
+// else's door. The sensor and buzzer pins all default to -1.
+//
+// Uncomment what matches your build. Everything here is also settable at
+// runtime and saved on the device — `sensors 32 25`, `buzzer 27`,
+// `vibration 33` — so you can wire one thing at a time without reflashing.
+// ---------------------------------------------------------------------------
+// #define PIN_SENSOR_OPEN     32     // reed, made when fully OPEN
+// #define PIN_SENSOR_CLOSED   25     // reed, made when fully CLOSED
+// #define PIN_BUZZER          27     // passive buzzer
+// #define BUZZER_PASSIVE       1
+// #define PIN_VIBRATION       33     // SW-420, mounted ON THE DOOR
+
+// Travel time. MEASURE YOUR OWN — these were taken with the reference door
+// lying FLAT, and mounted upright the two directions diverge because gravity
+// assists the close and opposes the open. With both reed switches fitted,
+// `calibrate` measures them for you and writes them to the device.
+// #define DOOR_TRAVEL_OPEN_MS  12200
+// #define DOOR_TRAVEL_CLOSE_MS 12700
+
+// The vendor controller sleeps: the first press after a long idle is swallowed.
+// 30 s is the default and is conservative. Set it to 0 if yours does not sleep.
+// #define WAKE_IDLE_MS 30000

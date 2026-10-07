@@ -1,17 +1,30 @@
 name: build
 
-# Verification for this project means "it compiles for the target" — there is
-# no test suite. Two things are checked:
+# Verification is a host test suite plus "it compiles for every target".
+#
+# The tests came after a bug that compiled perfectly and ran for weeks: the
+# NimBLE adapter converted binary advertisement payloads through c_str(), which
+# stops at the first NUL — and both frames this firmware parses have a NUL in
+# byte 2. Eddystone battery telemetry never decoded and iBeacon UUID matching
+# could never match. "It compiles" could not have caught it; one unit test with
+# a real payload catches it instantly. See tests/host/README.md.
+#
+# Checked here:
 #
 #   1. It builds unconfigured (discovery mode), which is how a new user first
 #      flashes it.
-#   2. It builds for both BLE stacks — Bluedroid on the classic ESP32, NimBLE
-#      on the S3/C3. Keeping both alive is a project invariant, and it is easy
-#      to break without noticing on one board.
-#   3. It builds with PETDOOR_USE_NIMBLE=1 (the NimBLE-Arduino library) on the
-#      classic ESP32. That is a different thing from item 2: it is the optional
-#      small build, and it goes through the stack adapter in ble_scanner.cpp
-#      that nothing else exercises.
+#   2. It builds for both BLE stacks. NimBLE is the default, so every job needs
+#      the NimBLE-Arduino library installed; the classic-ESP32 job opts back
+#      out with PETDOOR_USE_NIMBLE=0 to keep Bluedroid compiling. Keeping both
+#      alive is a project invariant and it is easy to break on one board
+#      without noticing.
+#   3. It builds the default stack on the reference board — classic ESP32 with
+#      NimBLE — in its own job. The matrix cannot cover it, because that same
+#      board is where Bluedroid is exercised.
+#
+# Both halves of the stack adapter in ble_scanner.cpp must stay compiled. A
+# job that silently loses its stack flag would leave one half untested while
+# still showing green.
 
 on:
   push:
@@ -20,6 +33,31 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Pure-logic tests, no hardware and no Arduino toolchain — so they run first
+  # and fail fast. beacon.* parses bytes from any radio in range, which makes it
+  # the only attacker-controlled input the firmware has; it is fuzzed under
+  # ASan/UBSan here (TEST-10) as well as unit tested.
+  host-tests:
+    runs-on: ubuntu-latest
+    name: host tests (beacon, proximity, sensor verdicts, fuzz, server alerting)
+    steps:
+      - uses: actions/checkout@v4
+      # Ubuntu's clang ships the libFuzzer runtime, so CI gets real
+      # coverage-guided fuzzing where a Mac falls back to the deterministic
+      # driver. run.sh picks whichever is available.
+      - name: Install clang (for libFuzzer)
+        run: sudo apt-get update -qq && sudo apt-get install -y clang
+      - name: Unit tests, fuzz and the BLE-adapter guard
+        env:
+          CXX: clang++
+          FUZZ_SECONDS: 60
+        run: tests/host/run.sh
+      # The log server's alerting is state-machine logic in dictionaries, and
+      # both its failure modes are silent: too eager buries the message that
+      # mattered, too shy never mentions the door that stopped reporting.
+      - name: Log server alerting rules
+        run: tests/server/run.sh
+
   compile:
     runs-on: ubuntu-latest
 
@@ -27,12 +65,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Bluedroid is no longer the default, so this job has to ask for it
+          # explicitly. Without the flag it would build NimBLE and the older
+          # stack would go untested while the job still passed.
           - fqbn: esp32:esp32:esp32
             name: ESP32 (Bluedroid)
+            stackflags: >-
+              --build-property compiler.cpp.extra_flags=-DPETDOOR_USE_NIMBLE=0
+              --build-property compiler.c.extra_flags=-DPETDOOR_USE_NIMBLE=0
+          # Empty: these take the default stack, which is NimBLE.
           - fqbn: esp32:esp32:esp32s3
             name: ESP32-S3 (NimBLE)
+            stackflags: ''
           - fqbn: esp32:esp32:esp32c3
             name: ESP32-C3 (NimBLE)
+            stackflags: ''
 
     name: ${{ matrix.name }}
 
@@ -41,18 +88,22 @@ jobs:
 
       - uses: arduino/setup-arduino-cli@v2
 
-      - name: Install ESP32 core 3.x
+      # NimBLE-Arduino is required even for the Bluedroid job: the matrix shares
+      # one install step, and every other entry builds the default stack, which
+      # needs the library. ble_scanner.cpp #errors out without it.
+      - name: Install ESP32 core 3.x and NimBLE-Arduino
         run: |
           arduino-cli core update-index \
             --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
           arduino-cli core install esp32:esp32 \
             --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli lib install NimBLE-Arduino@2.5.1
           arduino-cli core list
 
       # How a new user first flashes it: no secrets.h, no beacon, discovery
       # mode, and the door is never touched.
       - name: Compile unconfigured
-        run: arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs --warnings default petdoor
+        run: arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs ${{ matrix.stackflags }} --warnings default petdoor
 
       # Exercises the configured path, and the secrets.h include in config.h.
       # secrets.h is git-ignored, so CI has to create one.
@@ -65,7 +116,7 @@ jobs:
           #define RSSI_EXIT_DBM    -72
           #define RELAY_ACTIVE_LOW 1
           EOF
-          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs --warnings default petdoor
+          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs ${{ matrix.stackflags }} --warnings default petdoor
           rm petdoor/secrets.h
 
       # The static_asserts are load-bearing safety guardrails. Confirm they
@@ -78,7 +129,7 @@ jobs:
           check() {
             local label="$1"
             cat > petdoor/secrets.h
-            if arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs petdoor >/dev/null 2>&1; then
+            if arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs ${{ matrix.stackflags }} petdoor >/dev/null 2>&1; then
               echo "::error::$label — expected the build to FAIL, but it succeeded"
               fail=1
             else
@@ -131,15 +182,16 @@ jobs:
       - name: Report size
         if: always()
         run: |
-          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs petdoor 2>&1 | tail -3
+          arduino-cli compile --fqbn ${{ matrix.fqbn }}:PartitionScheme=min_spiffs ${{ matrix.stackflags }} petdoor 2>&1 | tail -3
 
-  # The optional small build: NimBLE-Arduino on the classic ESP32, selected by
-  # PETDOOR_USE_NIMBLE=1. This is the only job that compiles the NimBLE half of
-  # the stack adapter in ble_scanner.cpp, so without it a change that builds
-  # fine on Bluedroid can silently break the smaller build.
+  # The default build on the reference hardware: classic ESP32 with NimBLE.
+  # This is what a new user gets, so it is the most important job here — but
+  # the matrix cannot cover it, because the classic-ESP32 entry there is spoken
+  # for by Bluedroid. The flag is redundant with the default in config.h and is
+  # passed anyway, so this job keeps testing NimBLE if that default ever moves.
   compile-nimble:
     runs-on: ubuntu-latest
-    name: ESP32 (PETDOOR_USE_NIMBLE=1)
+    name: ESP32 (NimBLE, default)
 
     steps:
       - uses: actions/checkout@v4

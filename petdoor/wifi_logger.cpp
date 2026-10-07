@@ -33,6 +33,10 @@ uint32_t g_bootCount = 0;
 namespace {
 
 volatile bool g_otaRequested = false;
+// Set only while an OTA window request is trying to associate. It exists so
+// radioUp() will WAIT for the access point instead of abandoning the attempt
+// on its first iteration — see the idle check in radioUp().
+volatile bool g_otaAssociating = false;
 
 #if REMOTE_CONFIG
 // Commands arrive on the WiFi task and are applied by the control task, which
@@ -65,14 +69,14 @@ char g_nonce[33] = {0};
 //
 // Filled by the control task, which owns the tracker and the door; the WiFi
 // task only sends the string it was handed.
-char g_statusLine[224] = {0};
+char g_statusLine[416] = {0};   // grows with every live field the dashboard shows
 
 // Seeded from config.h, then overridable at runtime and from NVS.
 uint32_t g_settleMs = WIFI_IDLE_SETTLE_MS;
 uint32_t g_minUploadMs = WIFI_MIN_UPLOAD_INTERVAL_MS;
 uint32_t g_heartbeatMs = WIFI_HEARTBEAT_MS;
 // Bigger than the status line because it carries every tunable at once.
-char g_configLine[448] = {0};   // grows with every tunable the dashboard shows
+char g_configLine[576] = {0};   // grows with every tunable the dashboard shows
 
 // A pending discovery-table dump. A String rather than a fixed buffer because
 // it is several KB and exists only between a `scan` request and the next flush.
@@ -179,7 +183,17 @@ bool radioUp() {
     // flush cannot express itself by setting that flag — `door open` makes the
     // door non-idle, and the request would be cancelled by the very state
     // change it was sent to report.
-    if (!g_idleNow && !g_flushForced) return false;
+    // Abandon only an OPPORTUNISTIC attempt.
+    //
+    // An OTA request counts as deliberate, exactly like a forced flush. Without
+    // g_otaAssociating here, `p` could not open a window unless the door
+    // happened to be idle — and "idle" requires the door to be CLOSED. A door
+    // sitting OPEN with the beacon away is precisely the one you need to
+    // update: it is where a stall, an exhausted close retry, or a dead beacon
+    // battery leaves it. That door refused every update, and the only reason
+    // OTA ever appeared to work is that a maintenance window forces this flag
+    // true. Found by pushing to a door that was open.
+    if (!g_idleNow && !g_flushForced && !g_otaAssociating) return false;
     vTaskDelay(pdMS_TO_TICKS(100));
   }
   return true;
@@ -310,7 +324,22 @@ bool responseTrusted(const String &body, const String &ts, const String &sig) {
     return false;
   }
   if (!sig.length()) {
-    Serial.println(F("[cmd] reply ignored: unsigned"));
+    // The server signs a reply ONLY when it carries commands. An upload that
+    // finds an empty queue gets a plain JSON acknowledgement — `{"received":
+    // N, ...}` — with no signature at all, which is correct and expected.
+    //
+    // Complaining about that was noise on EVERY upload, and worse, it read as
+    // a broken command channel: two separate diagnoses in one session
+    // concluded the server was failing to sign and that remote configuration
+    // was dead, while commands were in fact being delivered and applied
+    // perfectly well. The decision below is unchanged — an unsigned body is
+    // never obeyed — only the complaint is now reserved for a reply that
+    // actually purports to carry orders.
+    const char *p = body.c_str();
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p == '\0' || *p == '{') return false;  // the ordinary ack; nothing to obey
+    Serial.println(F("[cmd] reply ignored: unsigned, and it is not the usual"));
+    Serial.println(F("[cmd] acknowledgement — something sent us orders it cannot sign"));
     return false;
   }
   // Signed material is  ts + "\n" + nonce + "\n" + body.  signBody() puts a
@@ -595,7 +624,12 @@ void uploaderTask(void *) {
   for (;;) {
     if (g_otaRequested) {
       g_otaRequested = false;
-      if (radioUp()) {
+      // Let radioUp() wait out WIFI_CONNECT_TIMEOUT_MS rather than giving up
+      // immediately because the door is not idle.
+      g_otaAssociating = true;
+      const bool up = radioUp();
+      g_otaAssociating = false;
+      if (up) {
         startOta();
       } else {
         Serial.println(F("[ota] could not associate; window not opened"));

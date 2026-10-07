@@ -211,8 +211,8 @@ Type a single character. No Enter needed; newlines are ignored.
 | `d` | Toggle discovery mode (list every BLE device in range) |
 | `c` | Toggle the calibration stream (live RSSI) |
 | `r` | Reset the proximity filter |
-| `o` | Pulse the OPEN relay now — **bypasses the proximity logic** |
-| `x` | Pulse the CLOSE relay now — **bypasses the proximity logic** |
+| `o` | **Open the door now** — bypasses the proximity logic, the lockout and a gave-up state. Still interlocked, still wake-pressed, still verified |
+| `x` | **Close the door now** — same, and the only thing it cannot override is the boot grace |
 | `l` | Show the persistent event log — what the door actually did |
 | `L` | Same log as CSV, for capture and analysis |
 | `u` | Upload the event log over WiFi now, if configured |
@@ -226,6 +226,7 @@ Type a single character. No Enter needed; newlines are ignored.
 | `K` | Unlock |
 | `f` | Edit both filter shapes — the slow close filter and the fast open filter — saved on the device |
 | `!` | Reboot into flash mode — no IO0/EN buttons needed |
+| `C` | **Calibrate the travel time**, both directions. Needs both limit switches and an open maintenance window (`M` first); begins with a 90-second quiet period and aborts if the door moves during it. See [TUNING.md](TUNING.md#measuring-the-travel-time) |
 
 ### `o` holds the door open
 
@@ -348,13 +349,203 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 | Event | Meaning |
 |---|---|
 | `BOOT` | `detail` is the reset reason. **`reset=9` is a brownout** |
-| `OPEN` / `CLOSE` | A relay actually pulsed |
-| `REFUSED` | An actuation was refused. `reason=2` lockout, `reason=3` boot grace |
+| `OPEN` / `CLOSE` | A travel **resolved**. `detail` is who asked — `0` collar, `1` console, `2` network, `3` a safety reversal — and the spare field carries flags: verified by a switch, preceded by a wake press, needed a repeat press |
+| `REFUSED` | An actuation was refused. `reason=2` lockout, `reason=3` boot grace, `reason=4` already travelling, `reason=5` waiting to retry a failed close, `reason=6` gave up closing, `reason=100` a schedule window |
+| `STALLED` | It started and never arrived. A stalled **close** is reversed |
+| `NO_MOVE` | Every press was swallowed, or the door is jammed solid. Nothing moved, so nothing is trapped |
+| `GAVE_UP` | Close attempts exhausted. `detail` is how many. **The door is staying open until a person deals with it** |
+| `SENSOR_OK` | The same sensor telling the truth again. `detail` is the fault code that cleared. Logged because a history that shows faults arriving and never leaving makes a fault the door shrugged off look identical to one still live. Emailed **only if the fault itself was emailed** — an all-clear nobody needed is noise, but being told a door is broken and never told it recovered is how somebody drives out to a coop for nothing |
+| `UNCOMMANDED` | The door reached an end that nothing commanded it to — **a hand, the wind, or the door's own controller**. `detail` is which end: `1`/`2` when a limit switch measured it, `11`/`12` when it was inferred from the duration of the movement. Logged, sounded and uploaded at once; not emailed, because most of them are you |
+| `RETRY` | A press was repeated because the previous one moved nothing. `detail` is which attempt |
+| `SENSOR_FAULT` | A sensor disagreed with the other one badly enough to be called broken. `detail` names which (see below); the spare field carries the evidence. **Emailed.** Distinct from `STALLED`/`NO_MOVE`, which say the *door* misbehaved — this says the thing *watching* the door is lying |
+| `BEACON_LOW` | The beacon's **own battery** crossed the threshold. `detail` 1 = went low, 0 = recovered; the spare field carries the millivolts. Latched with a recovery margin, so one crossing is one entry. **This is the event that gives you days of notice** — see below |
+| `WAKE` | Recorded **only** when a wake press turned out to move the door by itself — the near-miss worth counting. The ordinary case is carried as a flag on the actuation instead, so the ring is not filled with it |
+| `MAINT` | A maintenance window started, ended, or expired |
+| `CONSOLE` | The network console: attached, refused, or a wrong password |
 | `FIX_GOT` / `FIX_LOST` | Beacon acquired or went stale — what precedes a close |
 
 `REFUSED` is the one worth knowing about: it is what explains a door that did
 not move when you expected it to. Repeats are collapsed, so a boot-grace window
 logs once rather than sixteen times.
+
+### Detecting a door that moved on its own
+
+A manual close — or the vendor controller acting on a mode of its own — is
+`UNCOMMANDED`. There are two ways the door notices, and it prefers the first:
+a **limit switch** that saw the door arrive, or, when no switch can see it, the
+**duration** of what the vibration sensor felt.
+
+What it compares is **the last END the door was seen at**, not the last reading.
+That distinction is the whole feature. A door being pushed shut reads `OPEN`,
+then `UNKNOWN` for the ten seconds it is in transit, then `CLOSED` — so
+comparing against the previous *reading* always compares against `UNKNOWN`, and
+"did it change ends?" is always answered no. Written that way the event could
+never fire for any door that physically travels, which is all of them.
+
+Three things must hold before it is called uncommanded, and each excludes a real
+false positive:
+
+| | Excludes |
+|---|---|
+| it was at a **known** end before | the first reading after boot — the door was not moving, we simply had not looked |
+| it is at a **different** end now | a reed chattering as the door settles on its stop |
+| no travel resolved in the last `UNCOMMANDED_SETTLE_MS` | a travel given up on as `ASSUMED` or `STALLED` that was still finishing, and whose reed made a second later |
+
+A hand-pushed door produces thousands of edges with no travel in flight, which
+is also the signature of a sensor firing at rest. So the noise check stands down
+whenever the door actually changed ends, or whenever the movement came in
+discrete runs, rather than blaming the one part that reported the truth. A
+"run" that goes on past `VIBRATION_RUN_MAX_MS` is the exception — nothing on a
+door moves for forty-five seconds, so that one is counted as the chatter it is.
+
+#### Without limit switches: inferring the travel from its duration
+
+The switches are optional and most builds will not have them, so on those doors
+everything above is dead and the believed state silently goes stale. A stale
+**open** is the expensive one: the next open request is refused as "already
+there" and the animal stands at a shut door.
+
+The vibration sensor cannot say which way the door went. It does not need to —
+**a door sitting at a limit can only travel one way**, so the direction follows
+from where it was. What vibration has to establish is that the movement was a
+*full travel* rather than a shove, and duration answers that, because the travel
+time is already measured per direction.
+
+A run of movement is accepted as a travel when it lasts between
+`VIBRATION_TRAVEL_MIN_PCT` and `VIBRATION_TRAVEL_MAX_PCT` of that direction's
+measured travel time. On the reference door, whose close takes 11.2 s, that is a
+band of roughly **7.8 s to 17.9 s** — comfortably clear of someone leaning on
+the panel for a second or two. Runs survive a quiet patch of
+`VIBRATION_RUN_GAP_MS`, because these modules are a spring in a tube and go
+briefly silent mid-travel; without that, one travel would be chopped into
+several that each match nothing.
+
+**The two directions are not treated alike, and that is deliberate.** This is an
+inference, and it will sometimes be wrong. What it costs when it is wrong is not
+symmetric:
+
+| Inference | If wrong | Cost |
+|---|---|---|
+| it **closed** | the door is really open | the next close is refused, the door stays open. Visible, and fail-open |
+| it **opened** | the door is really closed | the next **open** is refused and the animal is shut out |
+
+The second is the one request that must never be refused. So an inferred close
+commits the believed state, and an inferred open only logs it — dropping the
+belief to `UNKNOWN`, which refuses nothing in either direction. **Only a limit
+switch commits an open.**
+
+The log says which happened. `detail` is the end the door reached — `1` open, `2`
+closed — when a switch measured it, and the same value plus 10 (`11`, `12`) when
+it was inferred, with the duration in the spare column. The dashboard renders the
+two differently on purpose: an inference and a measurement are not the same
+claim, and showing them identically is how one quietly becomes the other.
+
+`s` reports the band, so you can see at a glance whether a hand-closed door would
+be noticed on this door:
+
+```
+  vibration    : GPIO 33, 15932 edges since boot (pull-up on)
+                 uncommanded travel inferred from 7.8-17.9 s of movement
+```
+
+If it says `no close travel time` instead, press `c` to calibrate — nothing can
+be inferred without a yardstick.
+
+### Reading a crash you were not plugged in for
+
+A panic's backtrace exists only on the serial console, so on a mounted door it is
+gone. Three numbers in the uploaded status line are what is left to reason with,
+and all three used to be console-only — which is how one crash cost an hour:
+
+| field | meaning |
+|---|---|
+| `heap` | total free heap right now |
+| `maxalloc` | the **largest single block** available. An allocation needs contiguous memory, so this is the number that fails, not `heap` |
+| `heaplow` | the least free heap this boot has ever seen |
+| `cstack` / `ustack` | minimum-ever-free stack for the control and uploader tasks |
+
+**A large gap between `heap` and `maxalloc` means the heap is fragmented**, and
+that is the failure that takes a door out while every other number looks
+healthy. A door with 124 KB free can still fail to allocate 8 KB.
+
+`ustack` is the one to watch when an **OTA window will not open**: `beginOtaWindow()`
+only raises a flag, and the work — associating, then `ArduinoOTA.begin()` — runs
+on the uploader task, so that is whose margin matters.
+
+An abnormal reset also **emails now**. Power-on (1) and software restart (3) are
+ordinary — a software restart is exactly what an OTA push does — but panic (4),
+the watchdogs (5, 6, 7) and brownout (9) each send one, and deliberately without
+a cooldown: the history that forced the NimBLE default was *three consecutive*
+panics, and suppressing the repeats would have hidden the evidence that found it.
+
+### The switch that quietly stops making
+
+Every other cross-check needs something to *happen*. "Both switches made at
+once" needs a short. "Ran a full travel and never arrived" needs a **commanded**
+travel. A connector shaken loose, or a magnet that has drifted a few
+millimetres, produces neither — the door sits at its end, the switch says
+nothing, and the firmware keeps deciding as though it were still there, until
+the next actuation, which might be tomorrow night.
+
+So a door that has been **at rest at an end for `REED_LOST_MS`** (two minutes by
+default) with the switch *fitted* at that end **not made** raises
+`SENSOR_FAULT` detail `6`. The spare field says which end it was sitting at.
+
+Three gates, each excluding something real:
+
+| | Excludes |
+|---|---|
+| a switch is **fitted** at that end | a legal single-switch build, which would otherwise be nagged forever about the end it cannot see |
+| nothing has moved for `REED_LOST_MS` | a reed opening for a moment as the door settles onto its stop |
+| the believed position is a known **end** | mid-travel and post-stall, where the belief is `UNKNOWN` and there is no claim to contradict — including the `UNKNOWN` an inferred open deliberately leaves behind |
+
+It clears itself as soon as the switch makes again.
+
+### How a broken sensor is told from a broken door
+
+Both sensors can fail quietly, and a quiet sensor is worse than none: the door
+keeps deciding, just on evidence that is no longer arriving. A reed whose magnet
+has come off turns every close into a `STALLED`, and the fail-open rule then
+parks the door open night after night with nothing looking wrong.
+
+What makes this detectable without false alarms is that **the two sensors check
+each other** — each diagnosis uses the other as ground truth, so a single
+failing part is identifiable rather than merely suspected:
+
+| `detail` | What it saw | What is broken |
+|---|---|---|
+| `1` | both limit switches made at once | a shorted wire, a stuck switch, or a stray magnet |
+| `2` | a reed-**verified** travel produced no vibration | **the vibration sensor.** A switch confirmed arrival, so the door definitely moved; there is no reading where the door is at fault |
+| `3` | vibration accumulating with the door standing still | **the vibration sensor**, too sensitive or mounted on the frame rather than the door |
+| `4` | a full travel's worth of vibration, and it never arrived | **the limit switch at that end.** The door ran, so this is not an obstruction — an obstruction stops the vibration too |
+
+Faults 2 and 4 need `SENSOR_FAULT_STRIKES` consecutive disagreements, so one
+short travel or one glancing magnet is not enough. All four are **latched**: one
+failure is one console message, one log entry and one email, not one per travel.
+
+The pair `2`/`4` is the useful part. Both begin as "a travel did not go as
+expected", and vibration is what splits them — plenty of movement means the door
+ran and the switch missed it; little movement means the door stopped, which is
+an obstruction and is already reported as `STALLED`.
+
+**Why `BEACON_LOW` matters more than it looks.** A flat beacon does **not** shut
+the door on anything: the firmware refuses to act until it has heard the collar
+once since boot (invariant 5), so a cell that dies overnight leaves the door
+wherever it was, with the animal on the wrong side and nothing obviously broken.
+It stops the door *working* rather than making it dangerous — which is exactly
+the kind of failure nobody notices until it matters. The log server also emails
+on this one.
+
+It only works if your beacon sends **Eddystone-TLM** frames. Many beacons never
+do, and an iBeacon-only mode never does, so "no reading" is normal rather than a
+fault — `s` says `not reported` and the uploaded status carries `batt=-1`. And
+note it reported nothing at all on any firmware before the NUL fix: TLM service
+data begins `20 00`, which the BLE adapter truncated at the NUL, so the warning
+was inert for the whole life of the feature.
+
+**An `OPEN` without the verified flag is an intention, not a record.** With no
+limit switches fitted, every actuation reads that way — which is the honest
+answer, and the reason the flag exists.
 
 `L` prints the same data as CSV for capture:
 
@@ -484,22 +675,35 @@ One LED, in priority order — most urgent wins.
 
 | Pattern | Meaning |
 |---|---|
-| **Solid** | Door was last commanded **OPEN** |
-| **Near-solid**, brief gap every 0.6 s | Door is **moving** — for `DOOR_TRAVEL_MS` after each actuation |
-| **Brief blip** every 2 s | Door was last commanded **CLOSED** |
+| **Solid** | Door **OPEN** |
+| **Near-solid**, brief gap every 0.6 s | Door is **moving** |
+| **Brief blip** every 2 s | Door **CLOSED** |
 | **Double blip** every 2 s | Door is closed **and locked** — the collar may not open it |
+| **Two quick blips** every 2 s | **A sensor has failed.** The door is still deciding, but on evidence it can no longer trust. One fewer blip than "gave up" below, because from a distance they would otherwise look identical — and they mean opposite things: gave-up is a door that *knows* it has a problem, this is a door that has lost the ability to tell |
+| **Three quick blips** every 2 s | **Gave up closing.** Close attempts are exhausted and the door is staying open until somebody clears the way |
 | 1 Hz blink | No beacon configured, or never heard since boot |
 | **2 Hz flash** | **Beacon battery low** (see `BEACON_LOW_BATTERY_MV`) |
 | 5 Hz flutter | Radio unhealthy — no advertisements from anything |
-| Off | Nothing commanded since boot |
+| Off | Position **unknown** |
 
-"Moving" is a stopwatch started by the relay pulse, not a position sensor. It
-means the firmware actuated and `DOOR_TRAVEL_MS` has not yet elapsed — nothing
-more. With `DOOR_TRAVEL_MS` at its `0` default this pattern never appears.
+The three-blip pattern sits **above** the battery flash on purpose. A flat
+beacon battery is a job for the weekend; a door that has stopped closing is
+tonight's.
 
-Solid-vs-blip shows what was last **commanded**, not where the door physically
-is — this firmware is open-loop and has no limit switches. If the motor jammed,
-the LED still shows solid.
+**What the top three patterns mean depends on whether you fitted the limit
+switches**, and this is the clearest place the difference shows up:
+
+| | No switches | Switches fitted |
+|---|---|---|
+| solid / blip | what was last **commanded** | where the door **is** |
+| off | nothing commanded since boot | genuinely **between** the two ends |
+| near-solid | a stopwatch running for `DOOR_TRAVEL_MS` | a travel actually in flight, ending when the switch says so |
+
+So without switches, a jammed motor still shows solid. With them, a door
+stopped partway shows **off** — neither open nor closed, which is the truth.
+
+With `DOOR_TRAVEL_MS` at its `0` default and no switches, "moving" never
+appears at all: nothing has told the firmware how long to show it for.
 
 > Door state is shown here rather than by flashing a relay: a relay's indicator
 > is driven by its coil, so "flashing" one would energise the motor and
@@ -511,39 +715,91 @@ Optional, off by default, and the only diagnostic you can read from across the
 yard without looking at anything. Set it up with `w` → `buzzer <pin>`; full
 detail in [WIRING.md](WIRING.md#the-annunciator).
 
+The set answers two questions: **who asked for this movement**, at the moment
+it is commanded, and **how it turned out**, twelve seconds later.
+
+#### Who asked — counted, not pitched
+
+The number of beeps is how far away the thing that asked for it was. The long
+beep is **last to open** and **first to close**, so you also hear which way the
+door is going.
+
+| Sound | Who |
+|---|---|
+| `. -`  — short, long | **the collar** arrived (`- .` = it left) |
+| `. . -` — short, short, long | **the console**: somebody typed `o` (`- . .` = `x`) |
+| `. . . -` | **the network**: `door open` from the dashboard (`- . . .` = `door close`) |
+
+#### How it turned out
+
 | Sound | Meaning |
 |---|---|
-| tick … tick … tick | Door is **moving** — one tick a second for `DOOR_TRAVEL_MS` |
-| rising two-tone | Travel time is up. It **should** be there |
-| one low buzz | Refused: the door is **locked**. Sounds once per arrival, not repeatedly |
+| tick … tick … tick | Still **moving** — one tick a second while the travel is in flight |
+| rising pair, two equal beeps | **Arrived.** Verified by a limit switch, or, with none fitted, the travel timer expiring |
+| **two long** low beeps | It **never moved**. The press was swallowed, or the door is jammed solid. Nothing is trapped — the door is still where it was |
+| **five fast** beeps | It **STALLED**: started and never arrived. A stalled *close* is reversed |
+| **long, then two short** | **Gave up** closing. The door is staying open until somebody clears the way |
+| **three short low blips**, repeating every 15 min | **A sensor has failed** — the only tune that repeats. See below |
+| **blip … pause … blip** | The door moved and **nothing commanded it**. A hand, the wind, or a mode on the door's own controller |
+| one long low buzz | **Refused**: the door is locked by hand, or refused for some other reason. Once per arrival, not repeatedly |
+| **two long** low beeps, well separated | **Refused by a SCHEDULED WINDOW.** "Not… now." The wide gap is what tells it from the two-long "never moved" above, which stutters |
 | three even beeps | Answering your `beep` — proves the buzzer, says nothing about the door |
-| **short then long**, rising | Acknowledging `door open` — the command arrived |
-| **long then short**, falling | Acknowledging `door close` |
-| **three short**, low | Acknowledging `lock` |
-| **one long**, high | Acknowledging `unlock` |
+| **two short**, low | Acknowledging `lock` |
+| **one medium**, high | Acknowledging `unlock` |
 | one short blip | Acknowledging a setting change |
 
-The same caveat as the LED, and it is worth repeating because a chime sounds
-more confident than a blink: **the rising two-tone is a timer expiring, not an
-arrival.** A door jammed halfway gets the same chime.
+With no limit switches fitted, **the rising pair is a timer expiring, not an
+arrival** — a door jammed halfway gets the same chime, which is most of the
+argument for fitting them. With switches, it is an arrival, and the three
+failure sounds above become reachable.
 
-### Why the acknowledgements sound the way they do
+### Why they sound the way they do
 
-A remote command waits for the door's next check-in, so the beep is how you
-learn it landed without walking to a screen. They are told apart by **rhythm
-first, pitch second** — an active buzzer has one pitch it chose at the factory,
-so tunes distinguished only by pitch would collapse into a single sound on half
-the hardware this supports.
+A manual lock takes precedence in the announcement as well as in the logic: if
+you locked the door by hand you hear the single beep, even if a window happens
+to be in force too. The two-beep version means *only* a window is refusing —
+which matters because the remedies differ. A manual lock needs `unlock`; a
+window needs waiting, or editing with `n`.
 
-The pairs mirror each other, which is what makes them learnable: **open and
-close differ by direction** (rising / falling), **lock and unlock by register**
-(low / high). Anything that merely changes a setting gets one short blip,
-because the distinction that matters from the coop is "the door is about to
-move" versus "the door took a note".
+Everything here is told apart by **rhythm first, pitch second**. An active
+buzzer has one pitch it chose at the factory, so a set of tunes separated only
+by pitch would collapse into a single sound on half the hardware this supports.
+Pitch then makes them nicer on a passive one.
 
-One sound per batch, not one per command — several commands usually arrive
-together. A refusal always wins over a confirmation: "something did not take"
-is the part you need to hear.
+That is why "who asked" is a **count**. Three sources need three sounds, and
+counting beeps is the only distinction that survives a one-pitch buzzer intact.
+The direction rides on *where* the long beep sits, which is the shape every
+appliance anyone owns already uses: rising means finished, falling means
+stopping.
+
+The endings are then kept clear of that scheme and of each other. No movement
+tune has two equal beeps, which is what keeps "arrived" from being heard as a
+movement; the stall is a five-beep clatter at a 70 ms gap, well under every
+other tune's, so it reads as urgency rather than as a count; and nothing else
+in the set opens with an 800 ms beep, which is what makes "gave up" findable.
+
+**The sensor-fault reminder is the one exception to playing once**, and it is a
+considered one. A door that gave up is standing open where you can see it; a
+reed that stopped making looks like a perfectly ordinary door right up until the
+night it matters. A fault with no outward sign is the case where silence is the
+wrong default.
+
+It is kept sparse for exactly the reason the rule exists: three short low blips
+a quarter of an hour apart is a reminder, not an alarm, and it never becomes the
+thing somebody disconnects. It also never interrupts — if anything else is
+playing, or a travel is in flight, it waits for the next interval. Set
+`SENSOR_FAULT_BEEP_MS` to 0 to silence it; raise it if the door is near a
+bedroom window. There is deliberately no quiet-hours logic: a fault that stays
+silent until morning is a fault you learn about in the morning.
+
+"Gave up" plays **once**, not on a loop. The door reports that state
+continuously on its LED, in the log and in the uploaded status line — and a
+buzzer repeating it all night would be an alarm, and an alarm nobody can stand
+gets unplugged, which loses the message entirely.
+
+One sound per batch of remote commands, not one per command — several usually
+arrive together. A refusal always wins over a confirmation: "something did not
+take" is the part you need to hear.
 
 Silence where you expected a sound is nearly always the pin or the buzzer type,
 not the door. `beep` separates the two in one keystroke: if `beep` is silent the
@@ -640,10 +896,13 @@ These appear on their own as things happen.
 ```
 [fix] acquired  (rssi -35 dBm, ~1.2 m, 5 samples)
 [presence] PRESENT  (rssi -35 dBm, ~1.2 m, 5 samples)
-[door] OPEN  (rssi -35 dBm, ~1.2 m)
+[door] opening — the collar is here (rssi -35 dBm, ~1.2 m)
+[door] wake press sent (the controller had been idle)
+[door] OPEN — ARRIVED, verified by the limit switch in 12184 ms
 [fix] lost  (last heard 3240 ms ago) — counts as FAR
 [presence] ABSENT  (rssi -76 dBm, ~8.4 m, 90 samples)
-[door] CLOSED  (rssi -76 dBm, ~8.4 m)
+[door] closing — the collar is gone (rssi -76 dBm, ~8.4 m)
+[door] CLOSED — ARRIVED, verified by the limit switch in 12702 ms
 [radio] UNHEALTHY — nothing heard from any device for 15012 ms
 [radio] healthy — advertisements resumed
 ```
@@ -656,13 +915,56 @@ polling with `s`:
 | `[fix] acquired` | Enough recent samples to trust the reading |
 | `[fix] lost` | Signal went stale — **counts as FAR**, so this is what precedes an unexpected close |
 | `[presence]` | The hysteresis state machine changed its mind |
-| `[door]` | A relay actually pulsed — covers manual `o`/`x` as well as automatic |
+| `[door] opening` / `closing` | A travel has just been **commanded**, and by whom |
+| `[door] OPEN` / `CLOSED` | A travel **resolved**, and how |
+| `[pos]` | A limit switch said something about where the door is |
+| `[batt]` | The beacon's own battery crossed the low threshold, or came back above it |
+| `[sensor]` | A sensor has been judged broken by cross-checking it against the other |
+| `[cal]` | Travel-time calibration |
 | `[radio]` | The scan watchdog's view of radio health changed |
 
 `[fix] lost` followed by `[presence] ABSENT` about `EXIT_CONFIRM_MS` later is
 the normal, healthy close sequence. `[fix] lost` appearing while the beacon is
 sitting right next to the ESP32 means its advertising interval is too slow —
 see the rate recipe below.
+
+### A commanded travel and a resolved travel are two different lines
+
+This is the single biggest change in how the console reads. A movement is
+announced when it is **asked for**, and again when it is **over** — because on
+this hardware those are twelve seconds and several possible outcomes apart.
+
+```
+[door] closing — the collar is gone (rssi -81 dBm, ~11.0 m)
+[door] wake press sent (the controller had been idle)
+[door] nothing moved; pressing again (retry 1)
+[door] !! travelling CLOSED STALLED — it started and never arrived.
+[door] !! An obstruction, a jam, or a controller that stopped partway.
+[door] !! The door's position is now UNKNOWN.
+[door] !! It was CLOSING, so it is being reopened. A door
+[door] !! stopped partway shut is exactly when something
+[door] !! may be under it.
+[door] !! next attempt in 5 min (attempt 2 of 3).
+```
+
+The endings, and what each one is telling you to do:
+
+| Ending | Means | Do |
+|---|---|---|
+| `ARRIVED, verified … in N ms` | A switch at the destination confirmed it | nothing. Compare N against `travel` occasionally |
+| `travel time elapsed (assumed; no limit switch at that end)` | The stopwatch ran out. Nothing measured this | fit the switches, if you want this to mean anything |
+| `!! N presses and the door NEVER MOVED` | Every press was swallowed, or it is jammed solid. Nothing is trapped | raise `pulse` — 500 ms is swallowed by some controllers and 1000 ms is not |
+| `!! … STALLED` | It started and never arrived | go and look. Something is in the way, or `travel` is set too short |
+| `!! N close attempts have now stalled. GIVING UP` | The door is staying **open** | clear the way, then `x` |
+| `[pos] !! the door moved to X and NOTHING commanded it` | A hand, the wind, or a mode on the door's own controller | if it repeats, find the vendor mode and turn it off |
+
+A `[door] opening`/`closing` line that is **not** followed by a resolution
+means the travel is still in flight; `s` says which phase it is in and how long
+it has before it counts as a stall.
+
+If presence changed but no `[door]` line followed at all, the actuation was
+refused — lockout, boot grace, a schedule window, the retry delay after a
+failed close, or the door was already in that state. `s` says which.
 
 ```
 [cmd] forcing OPEN
@@ -671,10 +973,6 @@ see the rate recipe below.
 [ble] no advertisements for 15012ms, restarting scan
 [fatal] BLE scanner failed to start; rebooting in 5 s
 ```
-
-A `[door]` line only prints when a relay actually pulsed. If presence changed
-but no `[door]` line followed, the actuation was refused — lockout, boot grace,
-or the door was already in that state.
 
 ---
 
@@ -839,6 +1137,84 @@ Both relays must be **released at idle**. If one sits energised, invert
 `RELAY_ACTIVE_LOW`. Full procedure in
 [WIRING.md](WIRING.md#bench-test-procedure).
 
+### Bench-testing the buzzer, LED and sensors
+
+All four peripherals are **runtime-configurable**, so none of this needs a
+reflash — which is the point. Finding out you guessed a pin wrong should cost
+you a console session, not a trip back to the laptop with the board in pieces.
+
+**Start with `M`.** Maintenance mode blocks the door in *both* directions for a
+bounded window, unlike the lock, which only stops the beacon opening it. That is
+the envelope you want while your hands are near the doorway. It expires on its
+own, so a forgotten window cannot leave the door inert.
+
+**1 — Buzzer.** `w`, then:
+
+```
+buzzer 27            the GPIO it is on
+beep                 three beeps
+```
+
+Silence means the wrong pin, or the wrong kind. A bare transducer needs a tone
+rather than DC: `buzzer 27 passive`, then `beep` again. One that sounds when
+pulled to ground wants `buzzer 27 active low`.
+
+**2 — Limit switches.** `w`, then `sensors 32 25` — open pin first, closed pin
+second. Use `-1` for an end with no switch fitted. Then `s`:
+
+```
+  position     : open GPIO 32, closed GPIO 25, active LOW — reads OPEN MADE
+```
+
+With the motor still inhibited, walk the door by hand to each end of travel (or
+just pass the magnet across each reed) and read `s` again. Expect **exactly one
+end MADE at a time**. Both MADE at once is physically impossible and means a
+shorted pair or a pin collision — the firmware will take the pins but it cannot
+detect that fault for you.
+
+The switches are wired **normally open to GND**, read with `INPUT_PULLUP`, so a
+pin idles HIGH and reads LOW only at that end. That polarity is deliberate: a
+broken wire or a magnet that has fallen off reads as "not at that end", never as
+a false arrival.
+
+**3 — Vibration sensor.** `w`, then `vibration 33`. Now `s`, tap the sensor, and
+`s` again:
+
+```
+  vibration    : GPIO 33, 412 edges since boot (pull-up on)
+```
+
+The count must climb. It counts edges in an ISR rather than polling because
+these modules emit pulses shorter than the 100 ms control tick — polling samples
+between them and concludes the door never moved.
+
+Mount it **on the door, not on the controller board**. A sensor bolted beside
+the relay hears the relay on every actuation whether or not the door moved,
+which is exactly the signal it exists to tell apart from movement.
+
+**4 — Status LED.** `w`, then `led` — three flashes, the same trick as `beep`.
+
+```
+led                  three flashes on the status LED
+```
+
+Nothing at all means the wrong pin. Lit solid and then going dark means it is
+wired backwards. The test overrides every other pattern while it runs, faults
+included, and expires by itself after about 2.4 seconds — a status light you
+could leave stuck in test mode would be a status light that lies.
+
+To check the LED is telling the truth about the *door* rather than just that the
+pin works, disconnect the motor, leave maintenance mode with `M`, and use the
+relay recipe above: `o`, then `x`. Solid after `o`, brief blip every 2 s after
+`x`. The full pattern table is under [Status LED](#status-led).
+
+| Step | Command | Working looks like |
+|---|---|---|
+| Buzzer | `w` → `beep` | three beeps |
+| Limit switches | `w` → `sensors <o> <c>`, then `s` | exactly one end `MADE` |
+| Vibration | `w` → `vibration <pin>`, then `s` | edge count climbing |
+| Status LED | `w` → `led` | three flashes |
+
 ---
 
 ## Flashing a board with no auto-reset
@@ -928,6 +1304,13 @@ and the window closes on its own.
 >   -p 192.168.1.66 --protocol network --upload-field password=... petdoor
 > ```
 
+> **The push must come from the same build you are looking at.** Use
+> `compile --upload`, or push the `.bin` from a compile you just ran — a bare
+> `arduino-cli upload` ships whatever happens to be sitting in the build
+> directory, which has written a Bluedroid image to a NimBLE door before now.
+> The hint the firmware prints is a bare `upload`; treat it as the address
+> rather than the command.
+
 Three things it deliberately does:
 
 - **Refuses while the beacon is present.** An update reboots the door and shares
@@ -939,6 +1322,48 @@ Three things it deliberately does:
 
 > The radio is up for the whole window, so BLE sampling is degraded throughout.
 > That is why it is a window you open rather than a service that listens.
+
+#### Confirm the image before you reboot the door
+
+A freshly pushed image boots **on probation**. The bootloader holds it in
+`PENDING_VERIFY` and rolls it back to the previous slot on the next reset
+unless the firmware marks it good — and it only does that once **an upload to
+your log server has succeeded**, because an image that boots but cannot be
+managed is exactly the one not to keep.
+
+So after a push:
+
+```
+u                     force an upload now
+[ota] image confirmed good (upload succeeded); rollback cancelled
+```
+
+Until you see that line, **any reset loses the update** and you are back on the
+old build with no warning beyond the version in the banner. `s` reports the
+state, and a door left alone will get there on its own at the next heartbeat —
+but that can be up to `WIFI_HEARTBEAT_MS` (30 minutes by default) away, because
+opportunistic uploads wait for the door to be idle and *a door sitting open is
+not idle*.
+
+This is easy to trip over: push, reset to "make sure it took", and the reset is
+what un-takes it. It was tripped over on real hardware — the banner read two
+builds old and nothing else said why.
+
+#### If `p` says "could not associate"
+
+Open a **maintenance window** first (`M`), then `p`.
+
+Associating is abandoned early for an *opportunistic* radio request so a
+missing access point cannot hold BLE hostage. An OTA request now counts as
+deliberate and waits out `WIFI_CONNECT_TIMEOUT_MS` — but on firmware built
+before that fix, `p` could only associate when the door was already idle, and
+"idle" requires the door to be **CLOSED**.
+
+That made the door you most need to update the one that refused: a door sitting
+open with the beacon away is where a stall, an exhausted close retry, or a flat
+beacon battery leaves it. A maintenance window forces the idle flag true, which
+is why it is the workaround — and why OTA appeared to work whenever one
+happened to be open.
 
 **Chicken and egg:** the board has to already be running OTA-capable firmware.
 Getting there takes one last button-flash — and it also changes the partition

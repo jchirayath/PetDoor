@@ -10,8 +10,16 @@
 //   * repeating a command the door is already executing does nothing;
 //   * the door is never driven closed during the post-boot grace window.
 //
-// This is open-loop: without limit switches the firmware knows what it
-// commanded, not where the door actually is. See docs/SAFETY.md.
+// WHAT THIS CLASS IS NOT RESPONSIBLE FOR: sequencing an attempt. It presses a
+// button and it gates whether a press is allowed; it does not decide whether a
+// wake press is needed first, does not wait for the door to arrive, and does
+// not retry. That belongs to one owner — see petdoor/actuator.h — because the
+// rules are about a whole attempt rather than about a pulse, and spreading
+// them across the control task, the chime logic and the position module is how
+// the door came to be commandable mid-travel.
+//
+// Without limit switches the firmware still knows only what it commanded, not
+// where the door is. See docs/SAFETY.md.
 
 #pragma once
 
@@ -30,6 +38,16 @@ enum DoorState {
 enum ActuationSource : uint8_t {
   SRC_BEACON = 0,  // the proximity logic decided
   SRC_MANUAL = 1,  // someone typed o or x at the console
+  // Split out from SRC_MANUAL because the two answer different questions
+  // weeks later. "I was standing at the door" and "something on the network
+  // asked" look identical in a log that calls both manual, and only one of
+  // them is worth investigating when a door opened at 3 a.m. It also earns a
+  // different sound: see ChimeTune.
+  SRC_REMOTE = 2,
+  // The firmware reversing a close of its own that stalled. Not a person and
+  // not the collar — the door protecting whatever it failed to close onto.
+  // Always worth finding in a log, and always worth hearing.
+  SRC_FAILSAFE = 3,
 };
 
 enum ActuationResult {
@@ -37,19 +55,46 @@ enum ActuationResult {
   ACT_ALREADY,          // already in that state, nothing to do
   ACT_LOCKED_OUT,       // too soon after the previous actuation
   ACT_BOOT_GRACE,       // refusing to close during the boot grace window
+  // A travel in this direction is already in flight. A second press in the
+  // same direction mid-travel reads as STOP on real controllers, which parks
+  // the door halfway — so it is refused rather than queued.
+  ACT_BUSY,
+  // A close stalled and the retry delay has not elapsed. Minutes, by design.
+  ACT_RETRY_WAIT,
+  // Close attempts are exhausted. The door is staying open deliberately.
+  ACT_GAVE_UP,
 };
 
 class DoorController {
  public:
   void begin();
 
-  ActuationResult requestOpen(uint32_t nowMs);
-  ActuationResult requestClose(uint32_t nowMs);
+  // ---- the three steps of an actuation, kept separate on purpose ----------
+  //
+  // They are separate because the thing between them takes seconds and must
+  // not be spent inside this class: a wake press has to be followed by a look
+  // at whether the door moved, and an arrival has to be waited for. Fusing
+  // them back into one requestOpen() would mean either blocking the control
+  // task for a whole travel or going back to assuming.
+  //
+  // Only Actuator calls press() and commit(). Keeping that to one caller is
+  // what makes "the door has one owner" checkable rather than aspirational.
 
-  // Bypasses state and lockout checks but keeps the interlock. Serial commands
-  // only, for bench-testing the wiring.
-  void forcePulseOpen();
-  void forcePulseClose();
+  // May a travel to `target` start now? Gating only — nothing moves.
+  // `force` is a human or the network asking rather than the collar: it
+  // overrides "already there" and the actuation lockout, which exist to stop
+  // the beacon thrashing the motor, and never overrides the boot grace.
+  ActuationResult check(DoorState target, uint32_t nowMs, bool force);
+
+  // One interlocked press of the button for `direction`. Blocks for the pulse
+  // width and no longer. Changes NOTHING about what the door believes: a press
+  // is not an arrival, and on this hardware it is not even reliably a
+  // movement.
+  void press(DoorState direction);
+
+  // Record that a travel to `target` has been committed, for `src`. This is
+  // what moves the believed state and the counters.
+  void commit(DoorState target, ActuationSource src, uint32_t nowMs);
 
   DoorState state() const { return state_; }
 
@@ -79,8 +124,30 @@ class DoorController {
     // Nothing moved because of us. Only the belief changed.
     return true;
   }
+  // Admit that the door's position is no longer known.
+  //
+  // Called when a travel stalled: the door is somewhere between the two ends
+  // and claiming either would be a lie. The lie that matters is "closed",
+  // because that is the one that makes the next close request a no-op — so the
+  // door says UNKNOWN instead and the next request actuates.
+  //
+  // Deliberately narrower than observePosition(), which refuses to store
+  // DOOR_UNKNOWN: there, UNKNOWN is the normal mid-travel reading from a pair
+  // of switches and forgetting the last position every time the door passed
+  // between them would be worse than useless. Here it is a conclusion.
+  void setBeliefUnknown() { state_ = DOOR_UNKNOWN; }
+
   uint32_t lastActuationMs() const { return lastActuationMs_; }
   bool hasActuated() const { return hasActuated_; }
+
+  // When a relay last closed, for ANY reason — a wake press, a retry, or a
+  // real actuation. This is the clock the wake decision runs on, and it is
+  // deliberately not lastActuationMs(): the question "is the controller
+  // awake?" is answered by when it last saw a button, not by when the door
+  // last agreed to go somewhere.
+  uint32_t lastPressMs() const { return lastPressMs_; }
+  bool hasPressed() const { return hasPressed_; }
+  uint32_t pressCount() const { return pressCount_; }
 
   // Why the door last moved. Meaningless before the first actuation.
   ActuationSource lastSource() const { return lastSource_; }
@@ -137,13 +204,19 @@ class DoorController {
     return true;
   }
 
-  // Repeat presses, for a controller that occasionally swallows one.
+  // Repeat presses within a single press of the button. LEAVE THIS AT 1.
   //
-  // Capped at 3 because this is a blind retry: with no position feedback the
-  // door cannot know the first press worked, so every extra press is another
-  // chance to hit a moving door with what its controller may read as STOP.
-  // Two is a stopgap; three is already pushing it; more is not a fix, it is
-  // noise. See RELAY_PULSE_COUNT in config.h.
+  // It predates the wake press and was the old answer to a controller that
+  // swallowed a press: press twice and hope. The wake press replaced it with a
+  // version that looks at whether the door moved in between, which is strictly
+  // better — and these two stack. Setting this to 2 means every press the
+  // actuator issues becomes two, so a cold actuation sends four, and on this
+  // hardware a press mid-travel reads as STOP.
+  //
+  // Kept because a controller may yet turn up that the wake logic cannot
+  // handle and a blind double-press can. Capped at 3 for the same reason it
+  // always was: every extra blind press is another chance to stop a moving
+  // door. See RELAY_PULSE_COUNT in config.h.
   //
   // The gap has a floor because two presses closer together than a
   // controller's own debounce window are one press as far as it is concerned,
@@ -171,6 +244,9 @@ class DoorController {
   DoorState state_ = DOOR_UNKNOWN;
   uint32_t lastActuationMs_ = 0;
   bool hasActuated_ = false;
+  uint32_t lastPressMs_ = 0;
+  bool hasPressed_ = false;
+  uint32_t pressCount_ = 0;
 
   ActuationSource lastSource_ = SRC_BEACON;
   uint32_t minIntervalMs_ = MIN_ACTUATION_INTERVAL_MS;

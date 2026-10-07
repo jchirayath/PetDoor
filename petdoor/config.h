@@ -283,11 +283,25 @@
 #define RELAY_ACTIVE_LOW 0
 #endif
 
-// Momentary pulse length. Matches a door controller with separate OPEN and
-// CLOSE momentary inputs. If your motor instead needs the relay held closed
-// for the whole travel, see docs/WIRING.md.
+// Momentary pulse length — how long the relay holds the controller's button
+// down. Matches a door controller with separate OPEN and CLOSE momentary
+// inputs. If your motor instead needs the relay held closed for the whole
+// travel, see docs/WIRING.md.
+//
+// 1000 ms, NOT the 200 ms this used to default to, and the difference is not a
+// margin: on the reference controller a 500 ms press is SWALLOWED and a
+// 1000 ms press works, every time. A relay that clicks into a door that does
+// not move is the single most-reported symptom of this project, and for a
+// whole day of bench work the cause was this number. Measure yours before
+// lowering it; see docs/REQUIREMENTS.md §1.
+//
+// The cost of a long press is that the control task sits in delay() for it,
+// so no BLE sample is drained and no presence re-evaluated during the press.
+// That is bounded at ONE press: everything between presses — the wake probe,
+// the repeat gap, the whole verification window — is non-blocking. See
+// petdoor/actuator.h.
 #ifndef RELAY_PULSE_MS
-#define RELAY_PULSE_MS 200
+#define RELAY_PULSE_MS 1000
 #endif
 
 // Minimum gap between any two actuations. Protects the motor from thrash.
@@ -325,6 +339,18 @@
 // Set to 0 to disable the warning.
 #ifndef BEACON_LOW_BATTERY_MV
 #define BEACON_LOW_BATTERY_MV 2400
+#endif
+
+// How far the battery must climb back ABOVE the threshold before the warning
+// clears. A coin cell's reading is not monotonic — it sags under the beacon's
+// transmit pulse and recovers between them, and it rises with temperature, so a
+// cell sitting at the threshold crosses it repeatedly. Without this margin that
+// is a latch that flaps, which means a log entry and an email per flap.
+//
+// Only the LATCH uses this. The reported millivolts are always whatever the
+// beacon last said.
+#ifndef BEACON_LOW_BATTERY_CLEAR_MV
+#define BEACON_LOW_BATTERY_CLEAR_MV 150
 #endif
 
 // ===========================================================================
@@ -368,12 +394,16 @@
 // Compile the WiFi subsystem in at all. Setting this to 0 removes the uploader,
 // OTA and the whole network stack from the binary.
 //
-// Measured, classic ESP32:
-//     with WiFi     1,757,751 flash (89% of min_spiffs)   65,588 static RAM
-//     without       1,118,063 flash (56%)                 46,188 static RAM
-//                    -639,688 flash                       -19,400 RAM
+// Measured, classic ESP32 with NimBLE (the default), 6 Oct 2026:
+//     with WiFi     1,395,331 flash (70% of min_spiffs)   70,528 static RAM
+//     without         718,039 flash (36%)
 //
-// That is 33 percentage points of the partition and ~19 KB of RAM for a feature
+// The older figures here read 1,757,751 / 89% and were taken on Bluedroid, before
+// NimBLE became the default — which is 450 KB of flash on its own, so the saving
+// attributed to WiFi was being measured against the wrong baseline. Re-measure
+// after any change of BLE stack, not just after a change to this flag.
+//
+// That is 34 percentage points of the partition and ~19 KB of RAM for a feature
 // a local-only door never uses. If you are not uploading logs and not using
 // over-the-air updates, turn it off — you get the space back and the radio is
 // never shared with Bluetooth at all.
@@ -429,10 +459,18 @@
 
 // Compile in TLS support for the log upload.
 //
-// OFF by default because it does not fit on a classic ESP32. Measured on real
-// hardware: with WiFi, BLE and this firmware resident, free heap is ~80 KB, and
-// a TLS handshake drove the low-water mark to 18 KB and then failed to connect.
-// It also costs ~170 KB of flash whether or not the endpoint uses it.
+// OFF by default. It cost ~170 KB of flash whether or not the endpoint used it,
+// and on Bluedroid — where free heap was ~80 KB — a handshake drove the low-water
+// mark to 18 KB and then failed to connect.
+//
+// ON NIMBLE THAT HEADROOM ARGUMENT NO LONGER HOLDS, and the note should not be
+// read as if it did: the reference door measures 147 KB free at idle and 93 KB
+// with the radio up (6 Oct 2026). Whether a handshake fits has not been
+// re-measured since the stack changed. If you try it, raise WIFI_TASK_STACK
+// first — a handshake needs several KB more stack than a plain POST — and watch
+// heaplow and maxalloc in the uploaded status line, not just heap.
+//
+// Uploads still do not need it, which is the actual reason this stays off.
 //
 // Uploads do not need it: each one is signed with HMAC-SHA256 so it cannot be
 // forged or replayed, and the key never crosses the wire. TLS would add
@@ -610,6 +648,181 @@
 #define VIBRATION_MIN_PULSES 3
 #endif
 
+// The count that means the door is genuinely IN MOTION, as opposed to the
+// count above, which only means something happened.
+//
+// Two different questions needing two different bars, because the cost of
+// being wrong points in opposite directions:
+//
+//   * After the actuating press, "did it start?" wants a LOW bar. A false
+//     negative there sends another press, and a press mid-travel reads as STOP
+//     on this hardware — so missing real motion is the expensive mistake.
+//   * After a WAKE press, "did that one press already move it?" wants a HIGH
+//     bar. A false positive there suppresses the actuating press entirely, so
+//     the door never moves and the attempt ends up reported as a stall.
+//
+// 50 is reached in about 25 ms of real travel, which emits roughly 2,000
+// edges per second. A relay's contacts still ringing past the blanking window
+// do not get anywhere near it.
+#ifndef VIBRATION_MOVING_PULSES
+#define VIBRATION_MOVING_PULSES 50
+#endif
+
+// ---- telling a broken sensor from a broken door ---------------------------
+//
+// Both sensors can fail quietly, and a quiet sensor is worse than none: the
+// firmware keeps deciding, just on evidence that is no longer arriving. A reed
+// whose magnet fell off (which happened once during bench cycling) turns every
+// close into a STALL, and the fail-open rule then parks the door open night
+// after night with nothing obviously wrong.
+//
+// What makes this detectable without false alarms is that THE TWO SENSORS
+// CHECK EACH OTHER:
+//
+//   * a travel the reeds VERIFIED is proof the door moved. If the vibration
+//     sensor felt nothing during it, the sensor is deaf — not the door stuck.
+//   * heavy vibration during a travel that STALLED says the door ran its
+//     travel and the reed never noticed. That is a reed fault, where the same
+//     stall with NO vibration would be an obstruction.
+//
+// How many times a sensor must disagree with the other before it is called
+// broken. One disagreement is a short travel or a glancing magnet; two in a
+// row is a part.
+#ifndef SENSOR_FAULT_STRIKES
+#define SENSOR_FAULT_STRIKES 2
+#endif
+
+// Edges counted while the door is standing still that mean the vibration
+// sensor is crying wolf. At rest the reference sensor reads exactly 0, and a
+// sensor firing at idle is not harmless: the wake probe reads it as "the door
+// already moved" and SUPPRESSES the actuating press, so a noisy sensor stops
+// the door rather than merely annoying it.
+//
+// Generous, because wind and passing traffic are real and this must not cry
+// wolf either. The message says so, because either answer is actionable: back
+// the sensitivity screw off, or move the sensor.
+#ifndef VIBRATION_IDLE_NOISE_PULSES
+#define VIBRATION_IDLE_NOISE_PULSES 200
+#endif
+
+#ifndef VIBRATION_IDLE_WINDOW_MS
+#define VIBRATION_IDLE_WINDOW_MS 60000
+#endif
+
+// How often to re-sound a latched sensor fault. 0 silences the repeat.
+//
+// This is the one place the annunciator deliberately repeats itself, and it is
+// a considered exception rather than an oversight. chime.cpp argues — correctly
+// — that a buzzer which repeats all night becomes an alarm, and an alarm nobody
+// can stand gets unplugged, which loses every future message with it. The
+// "gave up" tune plays once for exactly that reason.
+//
+// A sensor fault is different in one respect that changes the answer: it is
+// INVISIBLE AT THE DOOR. A door that gave up is standing open where you can see
+// it; a reed that stopped making looks like a perfectly normal door right up
+// until the night it matters. So the reminder is sparse — a quarter of an hour
+// apart, three short low blips — which is a reminder rather than an alarm, and
+// long enough that it never becomes the thing somebody disconnects.
+//
+// Raise it if the door is near a bedroom window. There is no quiet-hours logic:
+// the schedule module knows the time, so it could have some, but a fault that
+// stays silent until morning is a fault you find out about in the morning.
+// How long after a travel resolves before a limit switch making counts as
+// UNCOMMANDED movement rather than that travel arriving late.
+//
+// A travel given up on as ASSUMED or STALLED can still be finishing: the door
+// settles onto its stop a second or two later and the reed makes. Calling that
+// "the door moved and nothing commanded it" would be both wrong and alarming.
+#ifndef UNCOMMANDED_SETTLE_MS
+#define UNCOMMANDED_SETTLE_MS 5000
+#endif
+
+#ifndef SENSOR_FAULT_BEEP_MS
+#define SENSOR_FAULT_BEEP_MS 900000
+#endif
+
+// How long the door may sit at an end, at rest, with that end's switch NOT made
+// before the switch is called broken.
+//
+// Generous, because the cost of crying wolf here is a buzzer every quarter hour
+// and an email, and because a reed can legitimately open for a moment as the
+// door settles onto its stop or the structure cools. Two minutes is far longer
+// than any settling and far shorter than a night, which is the timescale that
+// matters: the point is to hear about it the same evening rather than on the
+// next actuation, which might be tomorrow.
+//
+// Only consulted when a switch is actually fitted at the believed end — a
+// single-switch build is legal and must not be nagged about the end it cannot
+// see.
+#ifndef REED_LOST_MS
+#define REED_LOST_MS 120000
+#endif
+
+// ---------------------------------------------------------------------------
+// Inferring a travel from vibration alone, when no limit switch can see one
+// ---------------------------------------------------------------------------
+//
+// A door pushed shut by hand is detected by the reed switches: OPEN, then ten
+// seconds of UNKNOWN, then CLOSED. With no switches fitted — they are optional,
+// and most builds will not have them — or with one disconnected, that is
+// invisible, and the believed state silently goes stale. A stale "open" is the
+// expensive one: the next open request is refused as "already there" and the
+// animal stands at a shut door.
+//
+// The vibration sensor cannot say WHICH WAY the door went. It does not need to.
+// A door sitting at a limit can only travel one way, so the direction follows
+// from where it was; what vibration has to establish is that the movement was a
+// FULL TRAVEL rather than a shove. Duration is what distinguishes them, because
+// the travel time is already measured per direction (R17) and a door that ran
+// for ten seconds ran from one end to the other.
+
+// Edges per second that mean "the door is moving". The reference door reads
+// about 2,900 while travelling and exactly 0 at rest, so this sits two orders
+// of magnitude clear of the noise floor and an order below the signal.
+#ifndef VIBRATION_MOVING_PPS
+#define VIBRATION_MOVING_PPS 100
+#endif
+
+// How long each movement/no-movement decision is averaged over. Long enough to
+// be stable across a 100 ms control tick, short enough to place the start and
+// end of a ten-second travel to well within the tolerance band below.
+#ifndef VIBRATION_SAMPLE_MS
+#define VIBRATION_SAMPLE_MS 500
+#endif
+
+// How long the sensor may fall quiet before the run counts as finished.
+//
+// These modules are a spring in a tube: they go briefly silent mid-travel when
+// the door is running smoothly. Ending the run on the first quiet sample would
+// chop one travel into several short ones, none of which would match.
+#ifndef VIBRATION_RUN_GAP_MS
+#define VIBRATION_RUN_GAP_MS 1500
+#endif
+
+// The band, as a percentage of the measured travel time for that direction,
+// within which a run is accepted as a full travel.
+//
+// Asymmetric on purpose. Short of the travel time means the door did not reach
+// the far end, so the lower bound is the tighter one. Over it is ordinary — a
+// hand resting on the door after it stops, a door that drags — so the upper
+// bound is loose. Both are deliberately well inside "someone leaned on it",
+// which is a second or two.
+#ifndef VIBRATION_TRAVEL_MIN_PCT
+#define VIBRATION_TRAVEL_MIN_PCT 70
+#endif
+
+#ifndef VIBRATION_TRAVEL_MAX_PCT
+#define VIBRATION_TRAVEL_MAX_PCT 160
+#endif
+
+// A run longer than this is not a door. It is a sensor stuck on, a sensitivity
+// screw wound all the way in, or a module mounted where it feels the world.
+// The run is abandoned rather than concluded, and counted as evidence of noise
+// — which is what it is.
+#ifndef VIBRATION_RUN_MAX_MS
+#define VIBRATION_RUN_MAX_MS 45000
+#endif
+
 // ---------------------------------------------------------------------------
 // Maintenance mode — a bounded window in which the beacon cannot move the door
 // ---------------------------------------------------------------------------
@@ -699,23 +912,44 @@
 // changing these: it reports how much each task has never used. Too small is a
 // crash on an unusual input; too large is heap doing nothing.
 //
-// Measured on hardware after exercising the heaviest paths (discovery dump plus
-// a log upload): control peaked at ~1,970 bytes used, uploader at ~2,650. These
-// sizes leave roughly 3 KB and 1.4 KB of margin respectively, and hand about
-// 5 KB back to the heap versus the 8192/6144 they started at.
+// THESE WERE 5120/5120, ON A MEASUREMENT THAT HAS SINCE BEEN EXCEEDED.
 //
-// Raise WIFI_TASK_STACK if you enable LOG_ALLOW_TLS — a TLS handshake needs
-// several KB more stack than a plain POST.
+// The old note recorded "control peaked at ~1,970 bytes used, uploader at
+// ~2,650" after "the heaviest paths (discovery dump plus a log upload)", and
+// shrank both from 8192/6144 on the strength of it. Re-measured on the reference
+// door, both peaks are higher than that:
+//
+//   control    1,970 documented  ->  3,304 actually used   (1,816 free of 5,120)
+//   uploader   2,650 documented  ->  2,996 actually used   (2,124 free of 5,120)
+//
+// The control figure is 1.7x the number that justified the size, which left
+// 1.8 KB of margin rather than the 3 KB the note claimed.
+//
+// THE PATH THAT WAS NEVER IN THE MEASURED SET IS THE OTA WINDOW, and it is the
+// heaviest thing the uploader does: beginOtaWindow() only raises a flag, so
+// radioUp() and ArduinoOTA.begin() both run on the uploader task. A door
+// panicked opening a window 3.5 hours into a boot, and while that was never
+// reproduced and may yet prove to be heap fragmentation rather than stack, a
+// 2 KB margin in front of WiFi association is not a margin worth defending for
+// the 4 KB of heap these two cost.
+//
+// A stack overflow is a hard crash, not a degraded anything. Check `task stacks`
+// in the `s` output — or cstack/ustack in the uploaded status line, which is how
+// to read this on a door with no cable attached — and keep real headroom.
+//
+// Raise WIFI_TASK_STACK further if you enable LOG_ALLOW_TLS — a TLS handshake
+// needs several KB more stack than a plain POST.
 #ifndef CONTROL_TASK_STACK
-#define CONTROL_TASK_STACK 5120
+#define CONTROL_TASK_STACK 7168
 #endif
 //
-// 4096 was tried and measured at only ~1.4 KB of headroom, which is too thin
-// for a task handling variable-length HTTP responses — a stack overflow is a
-// hard crash, not a degraded upload. 5120 restores ~2.4 KB while still handing
-// 1 KB back versus the original 6144.
+// 4096 was tried and measured at only ~1.4 KB of headroom, which is too thin for
+// a task handling variable-length HTTP responses. 5120 was the next attempt and
+// measured 2,124 free once an OTA window had been opened — see above. 7168 puts
+// the margin back above 4 KB, which is what WiFi association and
+// ArduinoOTA.begin() running on this task deserve.
 #ifndef WIFI_TASK_STACK
-#define WIFI_TASK_STACK 5120
+#define WIFI_TASK_STACK 7168
 #endif
 
 // Max distinct devices held in the discovery table.
@@ -779,31 +1013,192 @@
 #define RELAY_PULSE_GAP_MS 1000
 #endif
 
-// How long YOUR door takes to travel from fully open to fully closed, in ms.
-// 0 means "not measured" and disables the checks below.
+// How long YOUR door takes to travel, in ms. 0 means "not measured".
 //
-// The firmware never waits for this — it has no position feedback and cannot
-// know when travel actually finishes. What it does with the number is announce
-// it: for this long after each actuation the status LED shows "moving" and the
-// annunciator ticks, and when it expires the annunciator plays its done chime.
-// That is a TIMER, not a measurement. It will chime at a door stuck halfway.
+// This is the number the whole verification path is built on, so it is worth
+// being exact about what it does:
 //
-// It also exists because two other settings are only sensible in relation to
-// it, and getting them wrong produces a door that visibly starts moving and
-// then stops partway:
+//   * it is the deadline for arrival. With limit switches fitted, a travel that
+//     does not reach its end within this (plus TRAVEL_GRACE_MS) is a STALL —
+//     logged, sounded, and for a close, reversed. See petdoor/actuator.h.
+//   * it drives the announcement. For this long the status LED shows "moving"
+//     and the annunciator ticks.
+//   * with no switches fitted it is ONLY the announcement, and the "arrived"
+//     chime is a stopwatch expiring. It will chime at a door stuck halfway.
 //
-//   MIN_ACTUATION_INTERVAL_MS  must be >= travel time, or the firmware can
-//                              command a reversal while the door is still
-//                              moving. Most controllers treat a second command
-//                              mid-travel as "stop".
-//   RELAY_PULSE_MS             only needs to exceed travel time if your motor
-//                              has no limit switches and you are driving it
-//                              directly. See docs/WIRING.md.
+// At 0 the firmware does not verify and does not announce, because it has not
+// been told how long to wait. That is the default, and it is deliberately not
+// a guess: a travel time too short reads every good travel as a stall, and
+// with a close that means reversing a door that was closing perfectly well.
 //
-// Measure it with a stopwatch: `o`, wait for it to settle, `x`, and time the
-// close. The reference build measures ~15 s.
+// OPEN AND CLOSE ARE SEPARATE, and on a mounted door they are not equal.
+// Gravity assists one direction and opposes the other, and mounted upright the
+// two diverge further. Measure both.
+//
+// TWO DIFFERENT NUMBERS GET CALLED "THE TRAVEL TIME", and this setting wants the
+// second one. On the reference door, flat:
+//
+//     stopwatch, press to physical stop     open 12,180 ms   close 12,704 ms
+//     reed to reed, what the firmware sees  open 10,203 ms   close 11,229 ms
+//
+// Reed-to-reed is shorter, and correctly so: a reed makes before the door reaches
+// its stop. It is also the number the arrival deadline wants, because the arrival
+// deadline is waiting on a reed. Using the stopwatch figure here adds two seconds
+// of slack to every stall decision.
+//
+// Measure them in service rather than with a stopwatch: `s` reports the
+// duration of the last verified travel in each direction, and `calibrate`
+// times both and adopts the result. See docs/TUNING.md.
 #ifndef DOOR_TRAVEL_MS
 #define DOOR_TRAVEL_MS 0
+#endif
+
+// Per-direction overrides. Both default to DOOR_TRAVEL_MS, so a build that
+// only knows one number still works and a build that knows two says so.
+#ifndef DOOR_TRAVEL_OPEN_MS
+#define DOOR_TRAVEL_OPEN_MS DOOR_TRAVEL_MS
+#endif
+
+#ifndef DOOR_TRAVEL_CLOSE_MS
+#define DOOR_TRAVEL_CLOSE_MS DOOR_TRAVEL_MS
+#endif
+
+// How much longer than the measured travel to wait before calling it a stall.
+// A door is slower in January, slower with a bird leaning on it, and slower
+// as the mechanism wears. This is the margin that keeps those from reading as
+// failures — and keeping it as a separate number means the travel time stays
+// an honest measurement rather than a measurement with padding baked in.
+#ifndef TRAVEL_GRACE_MS
+#define TRAVEL_GRACE_MS 3000
+#endif
+
+// The deadline for arrival when limit switches ARE fitted but the travel time
+// is not yet known. With a switch at the destination the door does not need a
+// travel time to know it has arrived — the switch says so — so it waits, and
+// the duration it waited becomes the measurement. This only bounds how long
+// that wait may be before it is called a stall.
+//
+// It is generous on purpose: being wrong in this direction costs a slow stall
+// report on a door nobody has calibrated, and being wrong in the other
+// direction reports a perfectly good travel as a failure.
+#ifndef ARRIVAL_WAIT_MAX_MS
+#define ARRIVAL_WAIT_MAX_MS 60000
+#endif
+
+// ---- waking the vendor controller (see docs/REQUIREMENTS.md F1) ------------
+//
+// The ESP32 does not drive the motor. It closes a relay across a button on a
+// commercial door controller, and that controller SLEEPS: the first press
+// after a long idle is always swallowed, and the second works. Confirmed 4 out
+// of 4 after 180 s idle, while six consecutive presses seconds apart all
+// worked.
+//
+// A coop door is idle for hours between uses, so nearly every real actuation
+// is a cold one — which is why this is not an edge case to tolerate but the
+// normal path to design for.
+//
+// The fix is a WAKE PRESS: when the controller is believed asleep, press once
+// to wake it, then press again to actuate. What makes that safe rather than a
+// second way to break things is that the two presses are not sent blind. A
+// press that lands on an awake controller MOVES THE DOOR, and a second press
+// mid-travel reads as STOP on this hardware — the exact failure the wake press
+// would otherwise introduce. So after the wake press the firmware watches for
+// WAKE_PROBE_MS, and if the door started moving it does not press again.
+//
+// WAKE_IDLE_MS is how long since the last press before the controller is
+// believed asleep. Below it, one press; above it, wake then press.
+#ifndef WAKE_IDLE_MS
+#define WAKE_IDLE_MS 30000
+#endif
+
+// How long to watch after a wake press before deciding it did nothing.
+// Motion onset measured at ~1300 ms after a press, so this must be comfortably
+// past that or a press that DID take would be followed by one that stops the
+// door. It is also dead time added to every cold actuation, so it should not be
+// much longer than it needs to be.
+#ifndef WAKE_PROBE_MS
+#define WAKE_PROBE_MS 1800
+#endif
+
+// How long to wait for the door to start moving after the actuating press.
+// Only meaningful with a vibration sensor or a limit switch at the starting
+// end — with neither, nothing can observe a start and this is unused.
+#ifndef MOTION_ONSET_MS
+#define MOTION_ONSET_MS 2500
+#endif
+
+// A press that demonstrably moved nothing may be retried straight away: the
+// door is still where it was, nothing is trapped, and the failure is
+// distinguishable from a stall. This bounds how many times.
+#ifndef SWALLOW_RETRY_LIMIT
+#define SWALLOW_RETRY_LIMIT 2
+#endif
+
+// ---- when a close fails ----------------------------------------------------
+//
+// A door that stops partway while CLOSING is the one case this project exists
+// to prevent, because that is exactly when something may be under it. So a
+// stalled close fails OPEN: the firmware reverses its own command rather than
+// pressing again.
+//
+// Retrying the close is then delayed by MINUTES, not seconds — long enough
+// that whatever blocked it has moved or been noticed — and limited to
+// CLOSE_RETRY_LIMIT attempts. After that the door stays open and says so, on
+// the console, in the log, in the status line and on the LED. An open door is
+// an inconvenience; a door that keeps driving onto an obstruction is not.
+#ifndef CLOSE_RETRY_DELAY_MS
+#define CLOSE_RETRY_DELAY_MS 300000
+#endif
+
+#ifndef CLOSE_RETRY_LIMIT
+#define CLOSE_RETRY_LIMIT 3
+#endif
+
+// How long to leave a direction alone after an attempt in it achieved nothing.
+//
+// Without this the door loops. Nothing moved, so nothing was committed, so the
+// condition that asked for the travel is still true, so the control task asks
+// again on its next tick — ten times a second, pressing a relay each time. The
+// internal retry (SWALLOW_RETRY_LIMIT) is the fast one and has already been
+// spent by the time this applies; this is the slow one, for "that did not work
+// and doing it all again immediately will not work either".
+//
+// Per direction, so a close that achieved nothing never delays the open that
+// follows it. Opening is the safe direction and is never held back by this.
+#ifndef FAILED_ATTEMPT_COOLDOWN_MS
+#define FAILED_ATTEMPT_COOLDOWN_MS 30000
+#endif
+
+// The floor between immediate "the door moved" reports to the server.
+//
+// A completed travel changes the one thing a dashboard exists to show, so it is
+// uploaded at once rather than waiting for the door to be idle. That overrides
+// the idle gate deliberately — see wifi_logger.h for why that gate exists — and
+// a forced flush bypasses the upload interval ENTIRELY, so without a floor a
+// door flapping at the threshold would put the radio up every half minute for
+// as long as it lasted, which is precisely the starvation the gate prevents.
+//
+// A minute is longer than any realistic open/close cycle (a close needs the
+// full exit dwell of confirmed absence first), so in normal use this never
+// bites. When it does bite, nothing is lost: the state still goes out with the
+// next ordinary upload.
+#ifndef DOOR_REPORT_MIN_MS
+#define DOOR_REPORT_MIN_MS 60000
+#endif
+
+// ---- travel-time calibration (see docs/REQUIREMENTS.md R18) ----------------
+//
+// `calibrate` times a travel in each direction and adopts the result. It
+// begins with a QUIET PERIOD during which nothing is commanded and no limit
+// switch may change, because the vendor controller has modes of its own and
+// has been observed driving the door with nothing commanding it. A measurement
+// taken while that is happening is not a measurement of anything.
+//
+// 90 s because that is the quiet period that recorded zero movement once those
+// modes were disabled. Shorter risks certifying a door that simply had not got
+// round to moving yet.
+#ifndef CAL_QUIET_MS
+#define CAL_QUIET_MS 90000
 #endif
 
 // ---- position sensors ------------------------------------------------------

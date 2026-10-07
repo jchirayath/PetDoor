@@ -209,6 +209,163 @@ harder**, never the reverse.
 
 ---
 
+## The actuation path
+
+Everything above answers *should the door move*. This answers *did it*.
+
+It is a separate module (`actuator.*`) and a separate state machine, and the
+reason is a single discovery on real hardware: **the ESP32 does not drive the
+motor.** It closes a relay across a button on a commercial door controller,
+and that controller has modes, timers and a sleep of its own.
+
+```
+  BLE beacon ──rssi──▶ ESP32 ──2 relays──▶ vendor controller ──▶ motor
+                         │                       │
+                         │                       └── has its OWN modes,
+                         │                           buttons and timers
+                         └── reads 2 reed switches, 1 vibration sensor
+```
+
+Four measured failure modes follow from that second box, and no two of them can
+be handled in the same place:
+
+| | What happens | What it forces |
+|---|---|---|
+| **F1** | The controller **sleeps**. The first press after a long idle is always swallowed; the second works. | A wake press |
+| **F2** | The controller **moves the door by itself** — watched leaving the open limit ~15 s after arriving, twice, with nothing commanding it. | The firmware must not assume it is the only thing that moves this door |
+| **F3** | A repeat press **mid-travel reads as STOP**, parking the door halfway. | Bounds on *when* a repeat press is allowed |
+| **F4** | "The press failed" and "the door was already there" are **indistinguishable** without position feedback. | Verification, or honest labelling |
+
+F1 and F3 together are why this is a state machine rather than a flag. The
+answer to a sleeping controller is to press twice; the answer to F3 is that the
+second press must not be sent if the first one already started the door moving.
+Deciding that requires *looking at the door between two presses* — so an
+attempt has a middle, and something has to own it.
+
+### The machine
+
+```mermaid
+flowchart TD
+    I["IDLE"] -->|request| W{"idle long enough<br/>to be asleep?"}
+    W -- yes --> WP["press<br/><i>the wake press</i>"]
+    WP --> PR{"did it move?<br/><i>strong evidence</i>"}
+    PR -- "yes: that WAS the actuation" --> AA
+    PR -- no --> P["press<br/><i>the actuating press</i>"]
+    W -- no --> P
+    P --> AS["AWAIT_START<br/><i>vibration, or the origin<br/>switch letting go</i>"]
+    AS -->|"moving"| AA["AWAIT_ARRIVAL"]
+    AS -->|"nothing, retries spent"| NM["NO_MOVE"]
+    AS -->|"nothing"| P
+    AA -->|"destination switch made"| OK["ARRIVED<br/><i>measured</i>"]
+    AA -->|"timeout, switch fitted"| ST["STALLED"]
+    AA -->|"timeout, no switch"| AS2["ASSUMED"]
+
+    style OK fill:#2A9D8F,stroke:#21867A,color:#ffffff
+    style ST fill:#C4453B,stroke:#9E3730,color:#ffffff
+    style NM fill:#C4453B,stroke:#9E3730,color:#ffffff
+    style AS2 fill:#E9A23B,stroke:#C8862A,color:#3b2a10
+```
+
+Five endings, where there used to be one "done":
+
+| Ending | Means | The door then |
+|---|---|---|
+| `ARRIVED` | A switch at the destination reported arrival | believes it, and records how long it took |
+| `ASSUMED` | The travel time elapsed; nothing could confirm it | believes it, and the log entry says *assumed* |
+| `UNTIMED` | No travel time and no switch — nothing to wait for | believes it, and announces nothing |
+| `NO_MOVE` | Press after press, and the door demonstrably never moved | **does not** change what it believes |
+| `STALLED` | It started and never arrived | admits its position is `UNKNOWN` |
+
+`NO_MOVE` not moving the belief is the whole point of being able to tell. The
+old firmware recorded a close there, and then refused the *next* close because
+it thought the door was already shut.
+
+### Nothing blocks for a travel
+
+A travel takes twelve seconds. The control task cannot be absent for twelve
+seconds — it is what drains BLE samples and re-evaluates presence, and a
+returning animal has to be noticed *during* a close.
+
+So every wait in the machine is a deadline checked each tick, not a `delay()`.
+The one exception is the press itself: `pulse()` still blocks for the pulse
+width, and deliberately.
+
+| Blocks | Why |
+|---|---|
+| the press, ~1 s | the relay's release is on the far side of a `delay()`, so a control task that wedges elsewhere cannot leave a relay energised |
+| nothing else | the wake probe, the repeat gap, the start wait and the whole arrival window are deadlines |
+
+Before the rebuild a cold actuation with repeat presses spent several seconds
+inside `delay()`. Now the worst case is one press width.
+
+### A stalled close fails open
+
+This is the one place the firmware reverses a command of its own.
+
+A door stopped partway while **closing** is exactly when something may be under
+it. So a stalled close is not retried — it is **reversed**, immediately, and
+the retry is deferred:
+
+- the reopen goes out on the next tick, after the stall has been announced;
+- the next close attempt waits **minutes**, so whatever stopped the door has
+  time to move or to be noticed;
+- attempts are **limited**. After the limit the door stays open and says so —
+  on the console, in the log, in the uploaded status line, and with its own LED
+  pattern and chime.
+
+An open door is an inconvenience. A door that keeps driving onto an obstruction
+is not, and neither is a door that silently stopped trying.
+
+This is not a sensor commanding a motor, and the distinction is worth keeping.
+A switch here can only end a wait sooner or turn a success into a stall; the
+reversal is the firmware undoing *its own* command. A stuck switch that can
+drive a door is a far worse failure than one that cannot, and it is still not
+possible.
+
+### Two sensors, two questions, two thresholds
+
+| Sensor | Answers | Never answers |
+|---|---|---|
+| vibration | "did it **start**?", within about a second | direction, position |
+| reed switch | "did it **arrive**?", after the full travel | anything before that |
+
+They compose: vibration says *started*, the switch says *finished*, and a jam
+is started-but-never-arrived.
+
+The vibration bar is deliberately different in the two places it is consulted,
+because being wrong costs opposite things:
+
+- after the **actuating** press, "did it start?" uses a **low** bar
+  (`VIBRATION_MIN_PULSES`). A false negative sends another press, and a press
+  mid-travel reads as STOP — so missing real motion is the expensive mistake.
+- after a **wake** press, "did that already move it?" uses a **high** bar
+  (`VIBRATION_MOVING_PULSES`). A false positive suppresses the actuating press
+  entirely, so the door never moves and the attempt is reported as a stall.
+
+Real travel emits roughly 2,000 edges a second, so the high bar is crossed in
+about 25 ms of movement and is not reachable by relay contacts still ringing
+past the blanking window.
+
+### Loops, and what stops them
+
+A failed attempt commits nothing — which means the condition that asked for it
+is still true, and the control task will ask again on its very next tick. Ten
+presses a second, forever.
+
+Three separate holds stop that, and they are deliberately different lengths:
+
+| Hold | Length | For |
+|---|---|---|
+| the internal retry | immediate, bounded by `SWALLOW_RETRY_LIMIT` | a swallowed press. Nothing moved, so nothing is trapped |
+| the per-direction cooldown | `FAILED_ATTEMPT_COOLDOWN_MS` | "that did not work, and doing it all again right now will not either" |
+| the close retry delay | `CLOSE_RETRY_DELAY_MS`, minutes | a stalled close, where something may be in the way |
+
+The cooldown is **per direction**, so a close that achieved nothing never
+delays the open that follows it. Opening is the safe direction and is never
+held back by any of this.
+
+---
+
 ## Concurrency
 
 Two tasks touch the interesting state.
@@ -349,14 +506,20 @@ convenience and plays no part in matching.
 
 ## Position sensors, and why they do not close the loop
 
-Everything above is **open loop**. The pipeline decides, the relay pulses, and
-the firmware records what it *commanded*. Nothing tells it what the door did.
-Most of this project's honest caveats trace back to that one fact:
+Everything above decides *whether* the door should move. Nothing in it can tell
+whether the door then did. With no switches fitted the firmware records what it
+**commanded**, and most of this project's honest caveats trace back to that one
+fact:
 
 - a door that jammed halfway still reports as open;
 - the "arrived" chime is a timer expiring, not an arrival;
 - a button press the controller swallowed is indistinguishable from one it
-  obeyed, which is why `RELAY_PULSE_COUNT` is a *blind* retry.
+  obeyed.
+
+Fitting the switches is what turns each of those from an assumption into a
+measurement. It does not change who decides — see
+[the actuation path](#the-actuation-path) for what does the deciding, and this
+section for what the switches themselves are allowed to do.
 
 Two normally-open reed switches close that gap. `position.*` debounces them and
 reports `DOOR_OPEN`, `DOOR_CLOSED`, or `DOOR_UNKNOWN` — the last being the
@@ -392,7 +555,10 @@ indefinitely, and the animal is standing in it. What the switches buy is
 |---|---|
 | State is what we commanded | State is what was measured |
 | A stale belief persists until the next command | Reality corrects it, so the next request actuates |
-| Travel time expires → assume arrival | Travel time expires with no switch made → `STALLED`, logged and sounded |
+| Travel time expires → assume arrival | Arrival is observed, and its duration measured |
+| A travel that failed looks like one that worked | It is `STALLED` or `NO_MOVE` — different causes, different fixes |
+| A door moved by a hand or by its own controller is invisible | It is `UNCOMMANDED`, logged and sounded — measured by a limit switch, or inferred from how long the vibration sensor felt it move |
+| The status LED shows what was commanded | It shows where the door is |
 
 There is one deliberate omission in the other direction too: `observePosition()`
 does not touch `hasActuated_` or `lastActuationMs_`. Those mean "we pulsed a
@@ -561,6 +727,7 @@ partition schemes rather than quietly trimming features.
 | `ble_scanner.*` | BLE stack, scan, target matching, discovery table |
 | `proximity.*` | dual-rate median + EWMA filters, hysteresis state machine |
 | `door.*` | relay pulses, interlock, lockout, boot grace |
+| `actuator.*` | one actuation attempt end to end: wake press, verification, retry, fail-open |
 | `beacon.*` | iBeacon parsing, classification, distance estimate — pure functions |
 | `eventlog.*` | the NVS ring of what happened, and its CSV form |
 | `wifi_logger.*` | WiFi, the signed upload, the command channel, OTA |
@@ -602,3 +769,15 @@ And enforced by design, not by the compiler:
     delaying an open is the one direction that can strand an animal outside a
     door it just watched close. Thrash stays impossible anyway: a close needs
     the full exit dwell of confirmed absence first.
+14. **A repeat press is never sent while a travel is in flight.** Same
+    direction mid-travel reads as STOP on real controllers. The *opposite*
+    direction always supersedes — "open it, something is under it" arriving
+    during a close must never be the request that gets refused.
+15. **A stalled close fails open, and the retry is limited.** Minutes between
+    attempts, a hard attempt limit, and after it the door stays open and says
+    so rather than trying forever.
+16. **A failed attempt does not move what the door believes.** `NO_MOVE`
+    leaves the belief alone; `STALLED` sets it to `UNKNOWN`. Only an arrival —
+    measured or, with no switch to measure it, assumed — commits.
+17. **`Actuator` is the only caller of `DoorController::press()`.** That chain
+    is what makes invariant 12 checkable rather than aspirational.
