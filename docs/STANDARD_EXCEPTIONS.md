@@ -10,6 +10,11 @@ useful than writing a name twice.
 
 Reviewed: **2026-10-06**.
 
+Items waiting on an external event rather than on effort — the beacon's TLM slot,
+an unreproduced panic — live in [PARKING_LOT.md](PARKING_LOT.md). A deviation here
+is a commitment with a date; a parked item cannot be worked on yet. Keeping them
+apart is what stops this file filling up with excuses.
+
 ---
 
 ## Why so much of the standard does not apply
@@ -36,14 +41,11 @@ The two places the standard applies with full force are:
 
 | Rule | Deviation | Reason | Expiry |
 |---|---|---|---|
-| **§2A** | The dashboard's `Content-Security-Policy` is `-Report-Only`, so nothing is enforced | Half done. The Report-Only header is deployed and is collecting the violation inventory in the browser console. What remains is moving `dashboard.html`'s inline script and its two inline `on*` handlers into a served file, after which the same policy can enforce. A `script-src 'unsafe-inline'` CSP would have been theatre, which is why this was not shortcut | 2026-12-31 |
-| **VULN-3** | No Dependabot/Renovate, no scheduled `osv-scanner` run | The firmware has one third-party dependency (NimBLE-Arduino, pinned) and the log server imports only the Python standard library — so there is almost no dependency surface to monitor. Worth turning on anyway because "almost none" is not none, and the ESP32 core itself is pinned by hand | 2027-01-31 |
-| **VULN-6** | No OpenSSF Scorecard workflow | Same reason as VULN-3: cheap to add, not yet added | 2027-01-31 |
+| **VULN-3** | Arduino/PlatformIO dependencies are not watched automatically | Dependabot is enabled for `github-actions`, which is the whole surface it can see. The ESP32 core and NimBLE-Arduino are pinned by hand in CI and `platformio.ini`, and Dependabot has no ecosystem for either, so those two are checked by a person when the core is bumped | 2027-06-30 |
 | **TEST-0 / TEST-7** | No feature→test map; no e2e or walkthrough tests | There is no nav inventory to map to. Most of the firmware needs a chip, a radio and a relay, so it is verified on the reference door and recorded in commit messages instead. The parts that are pure logic — `beacon.*`, `proximity.*`, the sensor verdicts, the server's alerting — do have unit tests (180 host checks, 53 server checks) | No expiry — see note below |
 | **REL-1 / REL-3** | No `docs/SLO.md`, no incident section in a `docs/RUNBOOK.md` | The "service" is one door and one log server with one user. An SLO would be fiction. `docs/TROUBLESHOOTING.md` and `docs/DIAGNOSTICS.md` are the runbook in practice | 2027-03-31, to revisit if anyone else deploys the server |
 | **Checklist** | No `mappings/ASVS-5.0.md` | The ASVS L1–L2 review was done and acted on (the NUL-truncation P0, the security headers, the public/private route split) but never written up as a mapping document | 2027-01-31 |
 | **Checklist** | No `docs/THREAT_MODEL.md` or `docs/OBSERVABILITY.md` | The threat model exists in prose, in the Scope section of `SECURITY.md`, which is where a contributor will actually look. A separate document would duplicate it | 2027-03-31 |
-| **§7.1** | CI gates are not *blocking* — no branch protection on `main` | One maintainer, so there is no review to block on. CI does run on every PR and must be green before merge by convention. Worth making mechanical | 2026-12-31 |
 
 ### On TEST-0 having no expiry
 

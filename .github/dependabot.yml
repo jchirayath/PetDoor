@@ -1,0 +1,27 @@
+# VULN-3: continuous monitoring of what is already shipped.
+#
+# ONLY github-actions, and that is not laziness — it is the whole dependency
+# surface Dependabot can see here:
+#
+#   the firmware   depends on the ESP32 Arduino core and NimBLE-Arduino, both
+#                  pinned by hand (see platformio.ini and the CI workflow).
+#                  Dependabot has no Arduino or PlatformIO ecosystem, so these
+#                  cannot be watched here and are checked by hand when the core
+#                  is bumped. Noted in docs/STANDARD_EXCEPTIONS.md.
+#   the log server imports only the Python standard library. There is no
+#                  requirements.txt because there are no requirements.
+#   the dashboard  loads IBM Plex from Google Fonts and nothing else. No npm,
+#                  no bundler, no lockfile.
+#
+# So this file watches the Actions, which is the one place a third-party version
+# string actually enters the build.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies

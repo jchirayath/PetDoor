@@ -1574,6 +1574,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if sent is not None:
                 return sent
             return self._send(200, render(), "text/html; charset=utf-8")
+        # The dashboard's and the demo's CSS and JS, lifted out of the pages so a
+        # Content-Security-Policy can ENFORCE rather than merely report. An
+        # inline <script> cannot be allowed by a strict policy without
+        # 'unsafe-inline', which would permit every injected script too and make
+        # the header decorative.
+        #
+        # The content is byte-identical to what was inline; only the delivery
+        # changed. Access follows the page it belongs to: the proxy's `/demo*`
+        # prefix keeps demo.css/js public, and dashboard.css/js fall into the
+        # private catch-all with /dashboard itself. Neither contains data — they
+        # are the same code that is public in the GitHub repo — but there is no
+        # reason to widen the split for them.
+        if path in ("/dashboard.css", "/dashboard.js",
+                    "/demo.css", "/demo.js"):
+            name = path.lstrip("/")
+            ctype = ("text/css; charset=utf-8" if name.endswith(".css")
+                     else "text/javascript; charset=utf-8")
+            sent = self._serve_file(name, ctype)
+            if sent is not None:
+                return sent
+            return self._send(404, "not found")
         if path.startswith("/images/"):
             # Static, read-only, and strictly from the images directory beside
             # this script. basename() strips any traversal attempt outright.

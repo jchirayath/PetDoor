@@ -2254,6 +2254,23 @@ void updateVibrationNoise(uint32_t nowMs) {
                      g_vibRunRanAway, g_sensorFault == SF_VIBRATION_NOISY);
 
   if (verdict == SV_RAISE) {
+    // The explanation once, the measurement every window.
+    //
+    // This verdict is reached on EVERY noisy window, not just the first — the
+    // window keeps being measured on purpose, so a latched fault is still being
+    // tested and can clear. raiseSensorFault() dedupes the event, but the console
+    // text did not, so a genuinely noisy sensor reprinted the same six-line
+    // explanation every minute for as long as it was wrong. That is how a console
+    // becomes unreadable at exactly the moment you need to read it.
+    //
+    // The edge count still prints every window, because that is the live feedback
+    // you want while turning the sensitivity screw down.
+    if (g_sensorFault == SF_VIBRATION_NOISY) {
+      Con.printf("[sensor] !! still noisy: %lu edges this window\r\n",
+                 static_cast<unsigned long>(seen));
+      raiseSensorFault(SF_VIBRATION_NOISY,
+                       static_cast<int16_t>(seen > 32767 ? 32767 : seen));
+    } else {
     Con.printf("[sensor] !! vibration sensor felt %lu edges in %lu s with the "
                   "door STANDING STILL.\r\n",
                   static_cast<unsigned long>(seen),
@@ -2266,6 +2283,7 @@ void updateVibrationNoise(uint32_t nowMs) {
     Con.println(F("[sensor] !! sensor on the frame feels the world, not the door."));
     raiseSensorFault(SF_VIBRATION_NOISY,
                      static_cast<int16_t>(seen > 32767 ? 32767 : seen));
+    }
   } else if (verdict == SV_CLEAR) {
     // A WHOLE QUIET WINDOW. Let the fault go.
     //

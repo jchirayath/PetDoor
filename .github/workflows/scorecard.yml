@@ -1,0 +1,57 @@
+# VULN-6: repo security posture is measured rather than assumed.
+#
+# OpenSSF Scorecard checks the things that are easy to believe are true and are
+# not — whether CI is actually required, whether tokens are least-privilege,
+# whether dependencies are pinned. This repo has already been wrong about one of
+# those: CI looked healthy for days while main's build was red, because nothing
+# reported it anywhere a person would look.
+#
+# Runs weekly and on pushes to main. Results go to the Security tab.
+name: scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "41 5 * * 1"      # Mondays, off the hour to avoid the stampede
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # to upload the SARIF result
+      id-token: write          # for the signed, publishable result
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Kept even though the SARIF upload below also surfaces them: the artifact
+      # is readable without the Security tab, which matters when the thing you
+      # are debugging IS the Security tab.
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

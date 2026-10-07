@@ -1,0 +1,280 @@
+:root{
+  --ground:#FAFBFC; --panel:#FFFFFF; --sunk:#F1F4F7;
+  --ink:#17212B; --ink-2:#4A5A6A; --ink-3:#7C8B9A;
+  --line:#DFE5EB; --line-2:#EDF1F5;
+  --in:#2A9D8F; --in-soft:#2A9D8F26;
+  --out:#E9A23B; --out-soft:#E9A23B2E;
+  --fault:#C4453B; --fault-soft:#C4453B1F;
+  --night:#17212B0A;
+  --shadow:0 1px 2px #17212B0F, 0 8px 24px -12px #17212B24;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
+  --ink:#E6EDF3; --ink-2:#A3B1BF; --ink-3:#6E7F8E;
+  --line:#26313C; --line-2:#1D262F;
+  --in:#26937F; --in-soft:#26937F33;
+  --out:#BE8129; --out-soft:#BE812938;
+  --fault:#E06C60; --fault-soft:#E06C6026;
+  --night:#FFFFFF08;
+  --shadow:0 1px 2px #0008, 0 8px 24px -12px #000A;
+}}
+:root[data-theme="dark"]{
+  --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
+  --ink:#E6EDF3; --ink-2:#A3B1BF; --ink-3:#6E7F8E;
+  --line:#26313C; --line-2:#1D262F;
+  --in:#26937F; --in-soft:#26937F33;
+  --out:#BE8129; --out-soft:#BE812938;
+  --fault:#E06C60; --fault-soft:#E06C6026;
+  --night:#FFFFFF08;
+  --shadow:0 1px 2px #0008, 0 8px 24px -12px #000A;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Sans",ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+  font-size:15px; line-height:1.55;
+  padding-block:28px; padding-left:20px; padding-right:20px;
+}
+.wrap{max-width:1080px; margin:0 auto; display:flex; flex-direction:column; gap:24px}
+.mono{font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; font-variant-numeric:tabular-nums}
+
+/* ---- header ---- */
+header{display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; justify-content:space-between}
+.brand{display:flex; align-items:center; gap:12px}
+.brand svg{width:40px;height:40px;flex:none}
+h1{font-size:25px; font-weight:700; letter-spacing:-.02em; margin:0; line-height:1.1}
+.sub{color:var(--ink-2); font-size:13.5px; margin:2px 0 0}
+.tools{display:flex; gap:8px; flex-wrap:wrap}
+button{
+  font:inherit; font-size:13px; font-weight:500; color:var(--ink);
+  background:var(--panel); border:1px solid var(--line); border-radius:7px;
+  padding:7px 12px; cursor:pointer;
+}
+button:hover{border-color:var(--ink-3)}
+button:focus-visible{outline:2px solid var(--in); outline-offset:2px}
+button.primary{background:var(--in); border-color:var(--in); color:#fff}
+button.primary:hover{filter:brightness(1.07)}
+
+/* ---- stat row ---- */
+.stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+  background:var(--line); border:1px solid var(--line); border-radius:10px; overflow:hidden}
+.stat{background:var(--panel); padding:14px 16px}
+.stat .k{font-size:10.5px; text-transform:uppercase; letter-spacing:.09em; color:var(--ink-3); font-weight:600}
+.stat .v{font-size:27px; font-weight:600; letter-spacing:-.02em; margin-top:3px; line-height:1.05}
+.stat .n{font-size:12px; color:var(--ink-2); margin-top:2px}
+.stat .v small{font-size:14px; font-weight:500; color:var(--ink-2); margin-left:1px}
+
+/* ---- panels ---- */
+section{background:var(--panel); border:1px solid var(--line); border-radius:10px; box-shadow:var(--shadow)}
+.head{display:flex; align-items:baseline; justify-content:space-between; gap:12px;
+  padding:14px 18px; border-bottom:1px solid var(--line-2); flex-wrap:wrap}
+h2{font-size:14px; font-weight:600; margin:0; letter-spacing:-.01em}
+.hint{font-size:12.5px; color:var(--ink-3)}
+.body{padding:16px 18px}
+
+/* ---- legend ---- */
+.legend{display:flex; gap:14px; flex-wrap:wrap; font-size:12.5px; color:var(--ink-2)}
+.legend span{display:inline-flex; align-items:center; gap:6px}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+.swatch{width:16px;height:9px;border-radius:2px;flex:none}
+
+/* ---- day strip ---- */
+.strip{width:100%; overflow-x:auto}
+.strip svg{display:block; min-width:600px; width:100%}
+
+/* ---- charts ---- */
+.two{display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:24px}
+.chart{width:100%; overflow-x:auto}
+.chart svg{display:block; width:100%; min-width:280px}
+.doors{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+  border-radius:9px; overflow:hidden; background:var(--line)}
+.doors div{flex:1 1 190px; background:var(--panel); padding:11px 14px}
+.doors .n{font-size:13px; font-weight:600}
+.doors .m{font-size:12px; color:var(--ink-2); margin-top:2px}
+.doors .warn{color:var(--fault); font-weight:600}
+.routine{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line);
+  border-radius:9px; overflow:hidden; background:var(--line)}
+.routine div{flex:1 1 130px; background:var(--panel); padding:11px 14px}
+.routine .k{font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+  color:var(--ink-3); font-weight:600}
+.routine .v{font-size:18px; font-weight:600; margin-top:1px; letter-spacing:-.01em}
+
+/* ---- table ---- */
+.tablewrap{overflow-x:auto; overflow-y:auto; max-height:420px}
+.tablewrap thead th{position:sticky; top:0; background:var(--panel); z-index:1}
+table{border-collapse:collapse; width:100%; font-size:13px; min-width:560px}
+th{text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--ink-3); font-weight:600; padding:0 12px 8px; border-bottom:1px solid var(--line)}
+td{padding:9px 12px; border-bottom:1px solid var(--line-2); vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tr:hover td{background:var(--sunk)}
+.pill{display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
+  padding:3px 9px 3px 7px; border-radius:99px; white-space:nowrap}
+.pill.in{background:var(--in-soft); color:var(--in)}
+.pill.out{background:var(--out-soft); color:var(--out)}
+.pill.fault{background:var(--fault-soft); color:var(--fault)}
+.pill.sys{background:var(--sunk); color:var(--ink-2)}
+.cam{font-size:12px; padding:4px 9px}
+.empty{padding:36px 18px; text-align:center; color:var(--ink-3); font-size:13.5px}
+
+/* ---- ingest ---- */
+.btn{font-size:13px;font-weight:500;color:var(--ink);background:var(--panel);
+  border:1px solid var(--line);border-radius:7px;padding:7px 12px;text-decoration:none;
+  display:inline-flex;align-items:center}
+.btn:hover{border-color:var(--ink-3)}
+textarea{width:100%; min-height:90px; margin-top:10px; padding:10px; border-radius:7px;
+  border:1px solid var(--line); background:var(--ground); color:var(--ink);
+  font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; resize:vertical}
+textarea:focus-visible{outline:2px solid var(--in); outline-offset:1px}
+
+/* ---- camera drawer ---- */
+.cams{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px}
+.camcard{border:1px solid var(--line); border-radius:8px; padding:12px; background:var(--sunk)}
+.camcard h3{margin:0 0 4px; font-size:13px; font-weight:600}
+.camcard p{margin:0; font-size:12px; color:var(--ink-2)}
+.camcard .side{font-size:10.5px; text-transform:uppercase; letter-spacing:.08em;
+  color:var(--ink-3); font-weight:600; margin-bottom:6px}
+.frame{aspect-ratio:16/9; max-width:100%; border-radius:6px; background:var(--night);
+  border:1px solid var(--line); display:grid; place-items:center; color:var(--ink-3);
+  font-size:11.5px; margin-bottom:9px; text-align:center; padding:8px}
+code{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11.5px;
+  background:var(--sunk); padding:1px 5px; border-radius:4px; border:1px solid var(--line-2)}
+.note{font-size:12.5px; color:var(--ink-2); margin:12px 0 0; line-height:1.5}
+footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
+@media (max-width:560px){ h1{font-size:21px} .stat .v{font-size:23px} }
+
+/* --- door status and config-change panels --- */
+.live{display:flex;flex-wrap:wrap;gap:6px;margin:7px 0 4px}
+.pill{font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:999px;
+  border:1px solid var(--line);color:var(--ink-2);background:var(--sunk)}
+.pill.in{background:var(--in-soft);border-color:var(--in);color:var(--in)}
+.pill.out{background:var(--out-soft);border-color:var(--out);color:var(--out)}
+.pill.lock{background:var(--fault-soft);border-color:var(--fault);color:var(--fault)}
+.mono{font-family:"IBM Plex Mono",ui-monospace,monospace;font-size:12.5px}
+.dim{color:var(--ink-3)}
+
+/* --- control panel ---
+   One accent, spent on the primary action. Everything else recedes in a
+   deliberate order: outline for the other real action, quiet for the ones that
+   move nothing. Six equally-coloured buttons say "pick one of these six"; this
+   says "you probably want Open". */
+/* The panel bodies were sitting flush to the card edge while their headers
+   were inset by 18px. Invisible while the content was buttons; obvious the
+   moment the buttons gained labels to misalign against. */
+#controls,#settings{padding:16px 18px}
+#controls .queued{margin-left:-4px;margin-right:-4px}
+.ctlgroups{display:flex;flex-wrap:wrap;gap:14px 26px;margin:2px 0}
+.schedrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;
+  border-bottom:1px solid var(--rule)}
+.schedrow:last-of-type{border-bottom:0}
+.schedwin{font-variant-numeric:tabular-nums;font-weight:600}
+.scheddays{color:var(--ink-2);font-size:.92em}
+.schedadd{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.schedadd input[type=time]{padding:5px 7px}
+.daypick{display:flex;gap:2px;flex-wrap:wrap}
+.daypick label{display:inline-flex;align-items:center;gap:3px;font-size:.86em;
+  padding:3px 6px;border:1px solid var(--rule);border-radius:5px;cursor:pointer}
+.daypick input{margin:0}
+.ctlgroup{display:flex;flex-direction:column;gap:7px}
+.glabel{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--ink-3);font-weight:600}
+.ctl{display:flex;flex-wrap:wrap;gap:8px}
+.ctl button{padding:9px 17px;font-size:13.5px;font-weight:500}
+button.b-primary{background:var(--in);border-color:var(--in);color:#fff;font-weight:600}
+button.b-primary:hover{border-color:var(--in);filter:brightness(1.08)}
+button.b-outline{border-color:var(--ink-3);color:var(--ink);font-weight:600}
+button.b-outline:hover{background:var(--night)}
+button.b-danger{border-color:var(--fault);color:var(--fault);font-weight:600}
+button.b-danger:hover{background:var(--fault-soft);border-color:var(--fault)}
+button.b-quiet{color:var(--ink-2)}
+button[disabled]{opacity:.45;cursor:default}
+button[disabled]:hover{border-color:var(--line);background:none;filter:none}
+
+/* --- the door facts, as a grid rather than five loose lines --- */
+.dgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));
+  gap:12px 20px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line-2)}
+.dgrid .k{display:block;font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.09em;color:var(--ink-3);font-weight:600;margin-bottom:2px}
+.dgrid .v{font-size:13px;color:var(--ink);font-variant-numeric:tabular-nums}
+
+.queued{margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--sunk);
+  border:1px solid var(--line-2);font-size:12.5px;color:var(--ink-2);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.queued .cmds{font-family:"IBM Plex Mono",ui-monospace,monospace;color:var(--ink)}
+.queued button{padding:4px 10px;font-size:12px;margin-left:auto}
+.said{margin-top:10px;font-size:12.5px}
+.said.bad{color:var(--fault)}
+.said.good{color:var(--in)}
+
+/* --- settings form --- */
+.setgrp{border-top:1px solid var(--line-2);padding-top:14px;margin-top:14px}
+.setgrp:first-child{border-top:0;padding-top:0;margin-top:0}
+.setgrp h3{font-size:10.5px;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--ink-3);margin:0 0 10px;font-weight:600}
+.srow{display:flex;flex-wrap:wrap;gap:9px;align-items:center;margin-bottom:11px}
+.srow .lab{flex:1 1 210px;min-width:170px;font-size:13px;line-height:1.35}
+.srow .lab small{display:block;color:var(--ink-3);font-size:11.5px;margin-top:1px}
+.srow input,.srow select{font:inherit;font-size:13px;
+  font-family:"IBM Plex Mono",ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  background:var(--sunk);color:var(--ink);border:1px solid var(--line);
+  border-radius:6px;padding:6px 8px;width:82px}
+.srow select{width:auto}
+.srow input:focus,.srow select:focus{outline:2px solid var(--in);outline-offset:1px}
+.srow button{padding:6px 13px;font-size:12.5px;flex:none}
+.srow .was{font-size:11px;color:var(--ink-3);font-family:"IBM Plex Mono",monospace}
+.noconf{padding:10px 12px;border-radius:8px;background:var(--out-soft);
+  border:1px solid var(--out);color:var(--ink-2);font-size:12.5px;margin-bottom:14px}
+/* --- tabs ---
+   The settings form is over a thousand pixels tall on a phone. As a section it
+   sat between the door and its charts and buried both; as a tab it is one tap
+   away and costs the Activity view nothing. */
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:-14px}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;
+  border-radius:0;padding:9px 14px;font-size:13.5px;font-weight:600;
+  color:var(--ink-3);cursor:pointer}
+.tabs button:hover{color:var(--ink-2)}
+.tabs button[aria-selected="true"]{color:var(--in);border-bottom-color:var(--in)}
+.tabs button:focus-visible{outline:2px solid var(--in);outline-offset:-2px}
+.tabpanel{display:flex;flex-direction:column;gap:24px}
+.tabpanel[hidden]{display:none}
+
+/* --- banner facts ---
+   Firmware, event count and when the door last called in. These used to be
+   scattered: the version in the door panel, the count in the subtitle, the
+   check-in time halfway down. They are the three things you look for first, so
+   they belong beside the name. */
+/* A stat strip, not a row of pills. Label above value, thin rules between:
+   reads as instrumentation rather than decoration, and lets the one fact that
+   can go wrong (the check-in) change colour without four others competing. */
+/* Row two of the masthead. Everything you would otherwise go looking for —
+   which door, what it runs, how much it has said, whether it is still
+   talking — on one line under the name, rather than in a card below it. */
+.bmeta{display:flex;flex-wrap:wrap;gap:0 18px;align-items:stretch;
+  padding-top:12px;border-top:1px solid var(--line);margin-top:-8px}
+.hstate{display:flex;flex-wrap:wrap;gap:6px;align-items:center;flex:1 1 auto}
+.fact{display:flex;flex-direction:column;justify-content:center;gap:1px;
+  padding-left:20px;border-left:1px solid var(--line)}
+.fact:first-child{padding-left:0;border-left:0}
+.fact .k{font-size:9.5px;text-transform:uppercase;letter-spacing:.09em;
+  color:var(--ink-3);font-weight:600;white-space:nowrap}
+.fact .v{font-size:13px;font-weight:600;color:var(--ink);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
+.fact.stale .v{color:var(--out)}
+.fact.stale .k{color:var(--out)}
+
+/* --- second-level menu inside a tab --- */
+.subnav{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:-10px}
+.subnav .lead{font-size:12.5px;color:var(--ink-3);margin-right:2px}
+
+@media (max-width:560px){
+  /* The dividers between facts are drawn as a left border, which a wrapped
+     item carries to the start of its new line where it separates nothing.
+     Drop them once the strip stops being a strip. */
+  .fact{padding-left:0;border-left:0}
+  .bmeta{gap:10px 18px}
+  /* Give the label its own line so a row's inputs stay together instead of
+     splitting either side of a wrap. */
+  .srow .lab{flex-basis:100%}
+  .srow{gap:8px}
+  .fact.wide-only{display:none}
+}
