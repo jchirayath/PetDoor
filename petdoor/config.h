@@ -729,6 +729,23 @@
 #define SENSOR_FAULT_BEEP_MS 900000
 #endif
 
+// How long the door may sit at an end, at rest, with that end's switch NOT made
+// before the switch is called broken.
+//
+// Generous, because the cost of crying wolf here is a buzzer every quarter hour
+// and an email, and because a reed can legitimately open for a moment as the
+// door settles onto its stop or the structure cools. Two minutes is far longer
+// than any settling and far shorter than a night, which is the timescale that
+// matters: the point is to hear about it the same evening rather than on the
+// next actuation, which might be tomorrow.
+//
+// Only consulted when a switch is actually fitted at the believed end — a
+// single-switch build is legal and must not be nagged about the end it cannot
+// see.
+#ifndef REED_LOST_MS
+#define REED_LOST_MS 120000
+#endif
+
 // ---------------------------------------------------------------------------
 // Inferring a travel from vibration alone, when no limit switch can see one
 // ---------------------------------------------------------------------------

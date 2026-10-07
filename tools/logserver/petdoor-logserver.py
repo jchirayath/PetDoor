@@ -129,6 +129,24 @@ EVENT_LABEL = {
 
 # petdoor/eventlog.h : enum SensorFault. Each is diagnosed by cross-checking
 # one sensor against the other, so each names a PART rather than a symptom.
+def sensor_fault_evidence(detail, src):
+    """What the spare field means for this fault code, in words.
+
+    `src` is one integer shared by every event type, and SENSOR_FAULT does not
+    even use it consistently: for the vibration faults it is an edge count, but
+    for SF_REED_LOST (6) it is WHICH END the door was sitting at. Rendering it
+    as "1 vibration edges" is the kind of wrong that sends someone to inspect
+    the wrong sensor, so the meaning is decided in one place and used by both
+    the email and the table.
+    """
+    if not src:
+        return None
+    if detail == 6:
+        return {1: "the door was sitting OPEN", 2: "the door was sitting CLOSED"}.get(
+            src, f"end code {src}")
+    return f"{src} vibration edges"
+
+
 SENSOR_FAULT = {
     1: ("both limit switches made at once",
         "a shorted wire, a stuck switch, or a stray magnet"),
@@ -144,6 +162,12 @@ SENSOR_FAULT = {
     4: ("the door ran a full travel and never arrived",
         "the limit switch at that end is not making — most likely a magnet "
         "that has come off or drifted out of its narrow capture range"),
+    6: ("a limit switch at the end the door is sitting at is not making",
+        "the door has been at rest at that end for minutes and the switch "
+        "fitted there reports nothing — check the connector first, then the "
+        "magnet-to-reed gap with the door against its stop. Nothing else "
+        "notices this one: it takes neither both switches at once nor a "
+        "travel that fails, so it stays invisible until the next actuation"),
 }
 
 # What a door actuation's `detail` means: ActuationSource in petdoor/door.h.
@@ -1000,14 +1024,15 @@ def notify_events(device, rows):
         elif r["type"] == "SENSOR_FAULT":
             what, why_txt = SENSOR_FAULT.get(
                 r["detail"], (f"fault code {r['detail']}", "unrecognised"))
-            ev = r["src"] if "src" in r.keys() and r["src"] else None
+            ev = sensor_fault_evidence(
+                r["detail"], r["src"] if "src" in r.keys() else 0)
             ok, why = send_notification(
                 f"sensor fault on {device}",
                 title="A door sensor has stopped telling the truth",
                 lede=what.capitalize() + ".",
                 rows=[("door", device),
                       ("likely cause", why_txt),
-                      ("evidence", f"{ev} vibration edges" if ev else "n/a"),
+                      ("evidence", ev or "n/a"),
                       ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
                 note="This is worth looking at today. The door trusts these "
                      "sensors: a limit switch that stops making turns every "
@@ -1326,10 +1351,11 @@ def render():
         elif r["type"] == "SENSOR_FAULT":
             what, why = SENSOR_FAULT.get(
                 r["detail"], (f"fault {r['detail']}", "unrecognised code"))
-            ev = r["src"] if "src" in r.keys() and r["src"] else None
+            ev = sensor_fault_evidence(
+                r["detail"], r["src"] if "src" in r.keys() else 0)
             detail = ('<strong style="color:var(--bad)">' + html.escape(what)
                       + "</strong> — " + html.escape(why)
-                      + (f" ({ev} edges)" if ev else ""))
+                      + (" (" + html.escape(ev) + ")" if ev else ""))
         elif r["type"] == "BEACON_LOW":
             # The millivolts ride in the spare field; detail is the direction.
             mv = r["src"] if "src" in r.keys() and r["src"] else None

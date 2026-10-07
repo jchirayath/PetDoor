@@ -33,6 +33,7 @@ what the words in the log mean.
 | a travel that jammed | reported as success | `STALLED` — logged, sounded, and a close is **reversed** |
 | a press the controller swallowed | reported as success | `NO_MOVE` — and the door does not change what it believes |
 | the door moved by itself | invisible | `UNCOMMANDED` — logged and sounded, from a limit switch or from how long the movement lasted |
+| a limit switch stops making | the door keeps deciding on evidence that stopped arriving | `SENSOR_FAULT` 6 after `REED_LOST_MS` at rest — sounded, logged and emailed |
 | the "arrived" chime | a stopwatch expiring | an arrival |
 | travel time | something you measure with a stopwatch | measured per travel, and `calibrate` adopts it |
 

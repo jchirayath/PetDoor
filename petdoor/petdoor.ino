@@ -48,6 +48,7 @@
 #include "eventlog.h"
 #include "maintenance.h"
 #include "position.h"
+#include "sensor_verdict.h"
 #include "vibration.h"
 #include "proximity.h"
 #include "schedule.h"
@@ -83,6 +84,7 @@ uint32_t g_vibIdleSinceMs = 0;
 DoorState g_vibIdleEndAtStart = DOOR_UNKNOWN;
 bool g_vibIdleValid = false;
 uint32_t g_sensorFaultBeepMs = 0;     // when the reminder last sounded
+uint32_t g_reedLostSinceMs = 0;        // 0 = the believed end's switch is made
 
 // The last END the door was actually seen at, which is NOT the same as the last
 // thing observed. A door travelling between the two reeds reads UNKNOWN for the
@@ -569,6 +571,7 @@ void printStatus(uint32_t nowMs) {
         : g_sensorFault == SF_VIBRATION_NOISY ? "vibration firing with the door still"
         : g_sensorFault == SF_REED_MISSED ? "the door ran and no limit switch saw it arrive"
         : g_sensorFault == SF_VIBRATION_DEAD ? "the vibration sensor produced no edges at all"
+        : g_sensorFault == SF_REED_LOST ? "a limit switch at the door's own end is not making"
         : "unknown";
     Con.printf("  !! SENSOR    : fault %u — %s\r\n", g_sensorFault, what);
     Con.println(F("  !!             the door is deciding on evidence it can no"));
@@ -2143,6 +2146,81 @@ void clearSensorFault(uint8_t code) {
 // Watched over a window rather than instantaneously, because a single knock —
 // a bird landing, someone closing a gate — is not a fault. Only the door being
 // idle counts: during a travel the sensor is SUPPOSED to be firing.
+// Is the switch at the end we believe the door is sitting at actually made?
+//
+// Every other cross-check needs something to HAPPEN. SF_REEDS_CONTRADICT needs
+// both switches made at once. SF_REED_MISSED needs a commanded travel to run its
+// full duration and not arrive. A connector shaken loose, or a magnet drifted a
+// few millimetres, produces neither: the door sits at its end, the switch says
+// nothing, and the firmware goes on deciding as though it were still there —
+// until the next actuation, which might be tomorrow night.
+//
+// That state was watched for ten minutes on the reference door with a reed
+// unplugged, and nothing complained. This is the check that would have.
+//
+// Three gates, each excluding something real:
+//
+//   a switch is FITTED at that end — a single-switch build is legal, and
+//     nagging about the end it cannot see would punish a supported wiring.
+//   nothing is moving, and has not been for REED_LOST_MS — a reed opens for a
+//     moment as the door settles onto its stop.
+//   the belief is a known END — mid-travel, or after a stall, the believed
+//     state is UNKNOWN and there is no claim here to contradict.
+void updateReedAgreement(uint32_t nowMs) {
+  if (!Position::enabled() || Position::fault() || Actuator::busy()) {
+    g_reedLostSinceMs = 0;
+    return;
+  }
+  // A travel that just resolved may still be settling onto its stop.
+  if (g_lastTravelEndedMs != 0 &&
+      (nowMs - g_lastTravelEndedMs) < UNCOMMANDED_SETTLE_MS) {
+    g_reedLostSinceMs = 0;
+    return;
+  }
+
+  const DoorState believed = g_door.state();
+  if (believed == DOOR_UNKNOWN) {
+    // Nothing is being claimed, so nothing can be contradicted. Also the state
+    // an inferred OPEN deliberately leaves behind — see invariant 19.
+    g_reedLostSinceMs = 0;
+    clearSensorFault(SF_REED_LOST);
+    return;
+  }
+
+  const bool made = Position::madeAt(believed);
+  if (!made && g_reedLostSinceMs == 0) {
+    g_reedLostSinceMs = nowMs;
+    if (g_reedLostSinceMs == 0) g_reedLostSinceMs = 1;   // 0 means "agreeing"
+  }
+
+  const uint32_t forMs = (!made && g_reedLostSinceMs != 0)
+                             ? (nowMs - g_reedLostSinceMs) : 0;
+  const SensorVerdict verdict =
+      judgeReedAtRest(Position::fittedAt(believed), made, forMs, REED_LOST_MS,
+                      g_sensorFault == SF_REED_LOST);
+
+  if (verdict == SV_RAISE) {
+    Con.printf("[pos] !! the door is believed %s and has not moved for %lu s, "
+               "but the %s limit switch on GPIO %d is NOT MADE.\r\n",
+               DoorController::stateName(believed),
+               static_cast<unsigned long>(forMs / 1000UL),
+               believed == DOOR_OPEN ? "open" : "closed",
+               believed == DOOR_OPEN ? Position::openPin() : Position::closedPin());
+    Con.println(F("[pos] !! A switch that reports nothing is worse than none:"));
+    Con.println(F("[pos] !! the door keeps deciding, on evidence that stopped"));
+    Con.println(F("[pos] !! arriving. Check the connector first, then the gap"));
+    Con.println(F("[pos] !! between magnet and reed with the door at its stop."));
+    raiseSensorFault(SF_REED_LOST,
+                     static_cast<int16_t>(believed == DOOR_OPEN ? 1 : 2));
+  } else if (verdict == SV_CLEAR) {
+    Con.printf("[pos] the %s limit switch is making again\r\n",
+               believed == DOOR_OPEN ? "open" : "closed");
+    clearSensorFault(SF_REED_LOST);
+  }
+
+  if (made) g_reedLostSinceMs = 0;
+}
+
 void updateVibrationNoise(uint32_t nowMs) {
   if (!Vibration::enabled() || Actuator::busy()) {
     g_vibIdleValid = false;           // a travel invalidates the window
@@ -2161,34 +2239,16 @@ void updateVibrationNoise(uint32_t nowMs) {
 
   const uint32_t seen = Vibration::pulses() - g_vibIdleBaseline;
 
-  // If the door actually changed ends during the window, that vibration was a
-  // DOOR MOVING — someone pushing it shut, or the vendor controller acting on
-  // a mode of its own — and calling the sensor noisy would blame the one part
-  // that reported the truth. updatePosition() logs it as uncommanded movement,
-  // which is the right verdict; this one just gets out of the way.
-  if (g_lastKnownEnd != g_vibIdleEndAtStart) {
-    g_vibIdleBaseline = Vibration::pulses();
-    g_vibIdleSinceMs = nowMs;
-    g_vibIdleEndAtStart = g_lastKnownEnd;
-    g_vibRunsThisWindow = 0;
-    g_vibRunRanAway = false;
-    return;
-  }
+  // The whole decision — "is this a broken sensor or a moving door?" — is
+  // judgeIdleNoise(), in sensor_verdict.h, so that the three stand-downs it
+  // weighs can be walked exhaustively by a host test instead of being believed.
+  // Both of its mistakes are silent, which is why it is not written out here.
+  const SensorVerdict verdict =
+      judgeIdleNoise(seen, VIBRATION_IDLE_NOISE_PULSES,
+                     g_lastKnownEnd != g_vibIdleEndAtStart, g_vibRunsThisWindow,
+                     g_vibRunRanAway, g_sensorFault == SF_VIBRATION_NOISY);
 
-  // Discrete runs of movement are a DOOR, not a noisy sensor, even when no
-  // switch confirmed where it ended up and the end above therefore never
-  // changed. A sensor with its sensitivity screw wound in chatters more or less
-  // continuously; a door being handled produces bursts that start and stop. The
-  // run that ran past VIBRATION_RUN_MAX_MS is the exception — that one IS
-  // chatter, and it deliberately does not buy a stand-down.
-  if (g_vibRunsThisWindow > 0 && !g_vibRunRanAway) {
-    g_vibIdleBaseline = Vibration::pulses();
-    g_vibIdleSinceMs = nowMs;
-    g_vibRunsThisWindow = 0;
-    return;
-  }
-
-  if (seen >= VIBRATION_IDLE_NOISE_PULSES) {
+  if (verdict == SV_RAISE) {
     Con.printf("[sensor] !! vibration sensor felt %lu edges in %lu s with the "
                   "door STANDING STILL.\r\n",
                   static_cast<unsigned long>(seen),
@@ -2201,8 +2261,7 @@ void updateVibrationNoise(uint32_t nowMs) {
     Con.println(F("[sensor] !! sensor on the frame feels the world, not the door."));
     raiseSensorFault(SF_VIBRATION_NOISY,
                      static_cast<int16_t>(seen > 32767 ? 32767 : seen));
-  }
-  else {
+  } else if (verdict == SV_CLEAR) {
     // A WHOLE QUIET WINDOW. Let the fault go.
     //
     // This was the only sensor fault with no way back, and it is the one most
@@ -2220,21 +2279,21 @@ void updateVibrationNoise(uint32_t nowMs) {
     //
     // A full window at rest below the threshold is the same standard the fault
     // was raised on, so it is the right standard to drop it on.
-    if (g_sensorFault == SF_VIBRATION_NOISY) {
-      Con.println(F("[sensor] vibration quiet for a full window again — "
-                    "clearing the noise fault."));
-      clearSensorFault(SF_VIBRATION_NOISY);
+    Con.println(F("[sensor] vibration quiet for a full window again — "
+                  "clearing the noise fault."));
+    clearSensorFault(SF_VIBRATION_NOISY);
 #if PETDOOR_ENABLE_WIFI
-      publishStatusLines();
-      WifiLogger::requestFlushNow();
+    publishStatusLines();
+    WifiLogger::requestFlushNow();
 #endif
-    }
   }
 
-  // Re-arm either way, so a latched fault keeps being measured and a healthy
-  // door keeps being checked.
+  // Re-arm on every path, so a latched fault keeps being measured and a healthy
+  // door keeps being checked. The end comes along too: the window that just
+  // closed is finished with, and the next one asks "did it move SINCE NOW".
   g_vibIdleBaseline = Vibration::pulses();
   g_vibIdleSinceMs = nowMs;
+  g_vibIdleEndAtStart = g_lastKnownEnd;
   g_vibRunsThisWindow = 0;
   g_vibRunRanAway = false;
 }
@@ -3954,6 +4013,7 @@ void controlTask(void *) {
     // runs this counts.
     updateVibrationTravel(now);
     updateVibrationNoise(now);
+    updateReedAgreement(now);
     updateSensorFaultBeep(now);
     driveDoor(now);
     updateLed(now, scanHealthy);

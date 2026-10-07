@@ -450,6 +450,29 @@ be noticed on this door:
 If it says `no close travel time` instead, press `c` to calibrate — nothing can
 be inferred without a yardstick.
 
+### The switch that quietly stops making
+
+Every other cross-check needs something to *happen*. "Both switches made at
+once" needs a short. "Ran a full travel and never arrived" needs a **commanded**
+travel. A connector shaken loose, or a magnet that has drifted a few
+millimetres, produces neither — the door sits at its end, the switch says
+nothing, and the firmware keeps deciding as though it were still there, until
+the next actuation, which might be tomorrow night.
+
+So a door that has been **at rest at an end for `REED_LOST_MS`** (two minutes by
+default) with the switch *fitted* at that end **not made** raises
+`SENSOR_FAULT` detail `6`. The spare field says which end it was sitting at.
+
+Three gates, each excluding something real:
+
+| | Excludes |
+|---|---|
+| a switch is **fitted** at that end | a legal single-switch build, which would otherwise be nagged forever about the end it cannot see |
+| nothing has moved for `REED_LOST_MS` | a reed opening for a moment as the door settles onto its stop |
+| the believed position is a known **end** | mid-travel and post-stall, where the belief is `UNKNOWN` and there is no claim to contradict — including the `UNKNOWN` an inferred open deliberately leaves behind |
+
+It clears itself as soon as the switch makes again.
+
 ### How a broken sensor is told from a broken door
 
 Both sensors can fail quietly, and a quiet sensor is worse than none: the door

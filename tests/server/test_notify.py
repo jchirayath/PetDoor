@@ -184,6 +184,35 @@ def test_an_inferred_open_is_still_an_open():
     check("state 11" not in page, "detail 11 is decoded, not shown raw")
 
 
+def test_fault_evidence_is_read_according_to_its_fault():
+    """The spare field is one integer shared by every event type, and
+    SENSOR_FAULT does not use it consistently: an edge count for the vibration
+    faults, WHICH END for SF_REED_LOST. Labelling 1 as "1 vibration edges" would
+    send someone to inspect the wrong sensor."""
+    f = srv.sensor_fault_evidence
+    check(f(3, 9655) == "9655 vibration edges",
+          "a vibration fault's spare field is an edge count")
+    check(f(6, 1) == "the door was sitting OPEN",
+          "SF_REED_LOST detail 1 is read as the open end, not as one edge")
+    check(f(6, 2) == "the door was sitting CLOSED",
+          "SF_REED_LOST detail 2 is read as the closed end")
+    check("edge" not in (f(6, 2) or ""),
+          "a reed fault is never described in edges")
+    check(f(3, 0) is None and f(6, 0) is None,
+          "an absent spare field reads as nothing, not as zero edges")
+
+
+def test_a_lost_reed_is_rendered_and_explained():
+    seed_device("reed-door", int(time.time()))
+    seed_event("reed-door", 11, 100, "SENSOR_FAULT", 6, src=2)
+    page = srv.render()
+    check("a limit switch at the end the door is sitting at is not making" in page,
+          "fault 6 has a human description rather than a bare code")
+    check("the door was sitting CLOSED" in page,
+          "and says which end it was at")
+    check("fault 6" not in page, "fault 6 is not rendered as an unrecognised code")
+
+
 def main():
     srv.init_db()
     print("log server — alerting tests")
@@ -192,6 +221,8 @@ def main():
     test_stall_cooldown_but_gave_up_always()
     test_inferred_movement_never_renders_as_measured()
     test_an_inferred_open_is_still_an_open()
+    test_fault_evidence_is_read_according_to_its_fault()
+    test_a_lost_reed_is_rendered_and_explained()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 

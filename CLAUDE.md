@@ -309,6 +309,7 @@ the folder name and `petdoor.ino` in sync or Arduino IDE stops recognising it.
 | `console.*` | The console as a Stream, fanned out to the UART and a window-bounded network client |
 | `schedule.*` | Time windows in which the beacon may not open the door. Inert without a clock |
 | `vibration.*` | Optional sensor answering "did it START moving", by counting edges in an ISR |
+| `sensor_verdict.h` | The sensor-health decisions as pure functions, so they can be host-tested. No Arduino, no config.h, no globals |
 
 ## The bug this project exists to fix
 
@@ -419,6 +420,18 @@ comment above it explains why; keep the comment with the code.
     `kUncommandedInferred + state` (11, 12) when it was inferred, with the
     duration in the spare column. Same reason as invariant 17: a dashboard that
     renders the two identically turns one into the other.
+21. **The sensor-health decisions stay pure, in `sensor_verdict.h`.**
+    `judgeIdleNoise()` and `judgeReedAtRest()` take every threshold as an
+    argument and read no global and no clock, which is the only reason
+    `tests/host/test_sensor_verdict.cpp` can walk their decision tables at all.
+    Both fail silently in both directions: raised in error is a buzzer every
+    quarter hour for a working sensor, never raised is a door deciding on
+    evidence that stopped arriving. The clear path for `SF_VIBRATION_NOISY`
+    could not be demonstrated on hardware without first deliberately latching a
+    fault that the same change had made harder to latch — a live door is a bad
+    instrument for a decision table. Do not move a threshold back inside, and do
+    not re-test a condition the verdict already weighed: two sources of truth
+    for one question is how they drift.
 
 ## Conventions
 

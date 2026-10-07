@@ -20,6 +20,12 @@ echo "▸ unit: beacon.cpp"
 $CXX $FLAGS $SAN -o "$OUT/test_beacon" test_beacon.cpp "$REPO/petdoor/beacon.cpp"
 "$OUT/test_beacon" || status=1
 
+# Header-only and dependency-free, so this needs neither the Arduino shim nor
+# config.h. Both decisions fail silently in both directions — see the file.
+echo "▸ unit: sensor_verdict.h (noise and reed-at-rest decisions)"
+$CXX $FLAGS $SAN -o "$OUT/test_sensor_verdict" test_sensor_verdict.cpp
+"$OUT/test_sensor_verdict" || status=1
+
 echo "▸ fuzz: parsers against arbitrary advertisement bytes (TEST-10)"
 ITERS=200000
 if [ "${1:-}" = "--fuzz" ]; then ITERS="${2:-5000000}"; fi

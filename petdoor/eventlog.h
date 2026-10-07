@@ -128,6 +128,15 @@ enum SensorFault : uint8_t {
   // Found by unplugging one: it had been completely invisible, reading
   // identically to a door that did not move.
   SF_VIBRATION_DEAD = 5,
+  // The door is believed to be sitting at an end, nothing is moving, and the
+  // switch FITTED at that end is not made.
+  //
+  // The quiet failure every other check here misses. SF_REEDS_CONTRADICT needs
+  // both switches made at once; SF_REED_MISSED needs a commanded travel to run
+  // its full duration and not arrive. A connector shaken loose, or a magnet
+  // drifted a few millimetres, produces neither — the door just sits there with
+  // a switch that says nothing, and nothing complains until the next actuation.
+  SF_REED_LOST = 6,
 };
 
 // Flags packed into a LOG_OPEN / LOG_CLOSE entry's `reserved` field. The entry
