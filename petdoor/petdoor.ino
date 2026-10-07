@@ -2137,8 +2137,13 @@ void raiseSensorFault(uint8_t code, int16_t evidence) {
 }
 
 void clearSensorFault(uint8_t code) {
-  if (g_sensorFault != code) return;
+  if (g_sensorFault != code) return;   // fires exactly once per recovery
   g_sensorFault = 0;
+  // A recovery is history too. Without this the log shows faults arriving and
+  // never leaving, so a fault the door shrugged off is indistinguishable from
+  // one still live — and the only place the difference existed was the current
+  // status line, which says nothing about last Tuesday.
+  EventLog::record(LOG_SENSOR_CLEARED, code, g_tracker.filteredRssi());
 }
 
 // Vibration that accumulates while the door is standing still.

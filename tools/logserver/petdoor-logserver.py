@@ -125,6 +125,10 @@ EVENT_LABEL = {
     # the thing watching the door is lying, which is worse because a stall is
     # visible and a dead sensor is not.
     "SENSOR_FAULT": "sensor fault",
+    # The same sensor telling the truth again. Logged so the history does not
+    # show faults arriving and never leaving — read a week later, a fault the
+    # door shrugged off would otherwise look identical to one still live.
+    "SENSOR_OK": "sensor recovered",
 }
 
 # petdoor/eventlog.h : enum SensorFault. Each is diagnosed by cross-checking
@@ -955,6 +959,12 @@ def store(device, rows):
 NOTIFY_COOLDOWN_S = int(os.environ.get("PETDOOR_NOTIFY_COOLDOWN_S", "3600"))
 _notified_at = {}
 
+# (device, fault code) -> True once a fault email has actually gone out for it.
+# The recovery mail is sent only if this says somebody was told about the fault in
+# the first place, which is the same shape as _stale_alerted below. Without it, a
+# sensor that flaps sends a stream of good news nobody asked for.
+_fault_alerted = {}
+
 
 def notify_due(device, kind):
     """True if we have not mailed about this (door, kind) pair recently."""
@@ -1062,7 +1072,12 @@ def notify_events(device, rows):
                      "to know whether it did.",
                 cta_label="Open the dashboard",
                 accent="alert")
-            if not ok:
+            # Record that somebody WAS told, which is what entitles the
+            # recovery below to mail. A fault nobody heard about needs no
+            # all-clear.
+            if ok:
+                _fault_alerted[(device, r["detail"])] = True
+            else:
                 sys.stderr.write(f"  NOTIFY FAILED for sensor fault: {why}\n")
 
         # The door has STOPPED TRYING TO CLOSE and is standing open until a
@@ -1092,6 +1107,27 @@ def notify_events(device, rows):
                 accent="alert")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for abnormal boot: {why}\n")
+
+        # The same sensor telling the truth again. Only mailed if the fault
+        # itself was mailed: being told a door is broken and never told it
+        # recovered is how somebody drives out to a coop for nothing.
+        elif (r["type"] == "SENSOR_OK"
+              and _fault_alerted.pop((device, r["detail"]), False)):
+            what, _why = SENSOR_FAULT.get(
+                r["detail"], (f"fault code {r['detail']}", "unrecognised"))
+            ok, why = send_notification(
+                f"sensor recovered on {device}",
+                title="That door sensor is reporting again",
+                lede="It is no longer true that " + what + ".",
+                rows=[("door", device),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="Nothing needs doing. This is the counterpart to the fault "
+                     "mail you had earlier, sent so a door that fixed itself does "
+                     "not leave you assuming it is still broken. A sensor that "
+                     "recovers and fails repeatedly is worth a look even so.",
+                accent="calm")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
 
         elif r["type"] == "GAVE_UP":
             ok, why = send_notification(
@@ -1332,7 +1368,8 @@ def render():
 
     cls = {"OPEN": "i", "CLOSE": "o", "REFUSED": "b", "CONSOLE": "b",
            "NO_MOVE": "b", "STALLED": "b", "UNCOMMANDED": "b", "GAVE_UP": "b",
-           "RETRY": "b", "WAKE": "s", "BEACON_LOW": "b", "SENSOR_FAULT": "b"}
+           "RETRY": "b", "WAKE": "s", "BEACON_LOW": "b", "SENSOR_FAULT": "b",
+           "SENSOR_OK": "i"}
     out = []
     for r in rows:
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
@@ -1398,6 +1435,10 @@ def render():
             detail = ('<strong style="color:var(--bad)">' + html.escape(what)
                       + "</strong> — " + html.escape(why)
                       + (" (" + html.escape(ev) + ")" if ev else ""))
+        elif r["type"] == "SENSOR_OK":
+            what, _ = SENSOR_FAULT.get(r["detail"],
+                                       (f"fault {r['detail']}", "unrecognised code"))
+            detail = ("recovered — no longer true that " + html.escape(what))
         elif r["type"] == "BEACON_LOW":
             # The millivolts ride in the spare field; detail is the direction.
             mv = r["src"] if "src" in r.keys() and r["src"] else None

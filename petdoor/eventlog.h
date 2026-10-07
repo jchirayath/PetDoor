@@ -96,6 +96,15 @@ enum LogEventType : uint8_t {
   // was told. This says the thing watching the door is lying, which is worse:
   // a stall is visible, and a dead sensor is not.
   LOG_SENSOR_FAULT = 15,
+  // The same sensor telling the truth again. `detail` is the SensorFault code
+  // that was cleared.
+  //
+  // Logged because the alternative is a history that shows faults arriving and
+  // never leaving. Reading that log a week later, every fault the door ever
+  // recovered from still looks live, and the one that did not is
+  // indistinguishable from the rest. The status line carries the CURRENT state
+  // correctly, but a status line is not a history.
+  LOG_SENSOR_CLEARED = 16,
 };
 
 // Which sensor, and how it failed. Each is diagnosed by cross-checking against

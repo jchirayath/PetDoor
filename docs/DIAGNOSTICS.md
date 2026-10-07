@@ -354,6 +354,7 @@ What gets logged — deliberately only rare events, so the ring covers weeks:
 | `STALLED` | It started and never arrived. A stalled **close** is reversed |
 | `NO_MOVE` | Every press was swallowed, or the door is jammed solid. Nothing moved, so nothing is trapped |
 | `GAVE_UP` | Close attempts exhausted. `detail` is how many. **The door is staying open until a person deals with it** |
+| `SENSOR_OK` | The same sensor telling the truth again. `detail` is the fault code that cleared. Logged because a history that shows faults arriving and never leaving makes a fault the door shrugged off look identical to one still live. Emailed **only if the fault itself was emailed** — an all-clear nobody needed is noise, but being told a door is broken and never told it recovered is how somebody drives out to a coop for nothing |
 | `UNCOMMANDED` | The door reached an end that nothing commanded it to — **a hand, the wind, or the door's own controller**. `detail` is which end: `1`/`2` when a limit switch measured it, `11`/`12` when it was inferred from the duration of the movement. Logged, sounded and uploaded at once; not emailed, because most of them are you |
 | `RETRY` | A press was repeated because the previous one moved nothing. `detail` is which attempt |
 | `SENSOR_FAULT` | A sensor disagreed with the other one badly enough to be called broken. `detail` names which (see below); the spare field carries the evidence. **Emailed.** Distinct from `STALLED`/`NO_MOVE`, which say the *door* misbehaved — this says the thing *watching* the door is lying |

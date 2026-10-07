@@ -254,6 +254,42 @@ def test_a_crashed_door_emails_but_a_normal_restart_does_not():
         check(code in srv.RESET_REASON, f"reset {code} has a human name")
 
 
+def test_a_recovery_only_mails_if_the_fault_did():
+    """Being told a door is broken and never told it recovered is how somebody
+    drives out to a coop for nothing. But a sensor that flaps must not send a
+    stream of good news either, so the all-clear is gated on the alarm."""
+    SENT.clear()
+    srv._fault_alerted.clear()
+    seed_device("ok-door", int(time.time()))
+
+    def ev(kind, detail):
+        return {"type": kind, "detail": detail, "uptime": 10, "boot": 1,
+                "epoch": 0, "rssi": -60, "src": 0}
+
+    # A recovery with no preceding fault mail says nothing.
+    srv.notify_events("ok-door", [ev("SENSOR_OK", 3)])
+    check(len(SENT) == 0, "an unheralded recovery sends nothing")
+
+    srv.notify_events("ok-door", [ev("SENSOR_FAULT", 3)])
+    check(len(SENT) == 1, "the fault mails")
+    srv.notify_events("ok-door", [ev("SENSOR_OK", 3)])
+    check(len(SENT) == 2, "and now the recovery mails")
+    check("recovered" in SENT[-1][0], "the recovery subject says so")
+    check(SENT[-1][1].get("accent") == "calm",
+          "a recovery is calm, not an alert — it must not read as a new problem")
+
+    # The flag is consumed, so a second recovery for the same code is silent.
+    srv.notify_events("ok-door", [ev("SENSOR_OK", 3)])
+    check(len(SENT) == 2, "a repeated recovery does not re-mail")
+
+    # A different fault code is tracked separately.
+    srv.notify_events("ok-door", [ev("SENSOR_FAULT", 6)])
+    srv.notify_events("ok-door", [ev("SENSOR_OK", 3)])
+    check(len(SENT) == 3, "fault 6's mail does not entitle fault 3 to an all-clear")
+
+    check("SENSOR_OK" in srv.EVENT_LABEL, "SENSOR_OK has a human label")
+
+
 def main():
     srv.init_db()
     print("log server — alerting tests")
@@ -265,6 +301,7 @@ def main():
     test_fault_evidence_is_read_according_to_its_fault()
     test_a_lost_reed_is_rendered_and_explained()
     test_a_crashed_door_emails_but_a_normal_restart_does_not()
+    test_a_recovery_only_mails_if_the_fault_did()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 
