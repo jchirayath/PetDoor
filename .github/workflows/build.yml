@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     name: host tests (beacon, proximity, sensor verdicts, fuzz, server alerting)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Ubuntu's clang ships the libFuzzer runtime, so CI gets real
       # coverage-guided fuzzing where a Mac falls back to the deterministic
       # driver. run.sh picks whichever is available.
@@ -84,9 +84,9 @@ jobs:
     name: ${{ matrix.name }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: arduino/setup-arduino-cli@v2
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
 
       # NimBLE-Arduino is required even for the Bluedroid job: the matrix shares
       # one install step, and every other entry builds the default stack, which
@@ -194,9 +194,9 @@ jobs:
     name: ESP32 (NimBLE, default)
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: arduino/setup-arduino-cli@v2
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
 
       - name: Install ESP32 core 3.x and NimBLE-Arduino
         run: |
