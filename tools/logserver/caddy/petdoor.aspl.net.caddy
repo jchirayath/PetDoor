@@ -1,0 +1,187 @@
+# petdoor.aspl.net — pet door event log and dashboard.
+#
+# TWO CLASSES OF REQUEST, AND THEY MUST NOT BE CONFUSED
+#
+#   browser    the dashboard, the API it reads, the CSV export. Entra ID, same
+#              gate as the other private sites. Door events say when the house is
+#              empty, so this is not public.
+#
+#   door       /ingest — the ESP32. Authenticated by HMAC-SHA256 over a shared
+#              key AT THE APPLICATION, and it MUST bypass Entra entirely, for
+#              exactly the reason any machine client on this host does: oauth2-proxy answers
+#              a machine with an HTML sign-in redirect, which a microcontroller
+#              cannot satisfy and would retry forever.
+#
+#              The door does not speak TLS either. A handshake costs an ESP32
+#              1-3s of radio time that belongs to its Bluetooth scanning, so it
+#              signs instead of encrypting. Caddy still serves this host over
+#              HTTPS; the door simply posts to it over the same vhost and the
+#              signature is what makes the upload trustworthy.
+#
+# ── WHY ONE `route` BLOCK ────────────────────────────────────────────────────
+# Same reason as the other vhosts and the other private sites: Caddy sorts bare
+# directives into its own canonical order, so `request_header -X-...` written
+# before forward_auth would RUN AFTER it and delete the identity just
+# established. `route` preserves written order. Verify after any edit with:
+#
+#     docker compose exec caddy caddy adapt --config /etc/caddy/Caddyfile \
+#       | python3 -m json.tool
+petdoor.aspl.net {
+	route {
+		# Strip client-supplied identity first, before anything can authenticate.
+		request_header -X-MS-CLIENT-PRINCIPAL-NAME
+		request_header -X-MS-CLIENT-PRINCIPAL-ROLES
+		request_header -X-MS-CLIENT-PRINCIPAL-ID
+		request_header -X-MS-CLIENT-PRINCIPAL
+		request_header -X-Auth-Request-User
+		request_header -X-Auth-Request-Email
+		request_header -X-Forwarded-User
+		request_header -X-Forwarded-Email
+
+		@badpath path_regexp badpath (?i)(wp-login|wp-admin|wp-content|xmlrpc\.php|/\.env|/\.git|/\.aws|/\.ssh|phpmyadmin|/vendor/|/cgi-bin/|/actuator|/boaform)
+		respond @badpath 403
+		@badbots header_regexp User-Agent (?i)(nikto|sqlmap|nmap|masscan|zgrab|nuclei|dirbuster|gobuster|wpscan)
+		respond @badbots 403
+
+		# The door. No Entra — see the note above. Uploads are a few KB of CSV.
+		handle /ingest* {
+			reverse_proxy petdoor:8080
+		}
+
+		# Health, for uptime-kuma. No identity needed and nothing revealed.
+		handle /health {
+			reverse_proxy petdoor:8080
+		}
+
+		# ── PUBLIC ──────────────────────────────────────────────────────────
+		# The project page, the sample dashboard and the photographs it uses.
+		#
+		# None of these touch the event log. /demo carries synthetic data baked
+		# into the page and never calls /api/events, so it can be shown to
+		# anyone; that is the whole reason it exists, so that "look at my
+		# dashboard" does not mean exposing a household to say it.
+		#
+		# These are listed explicitly rather than by exclusion. Everything not
+		# named here falls through to Entra below, so a route added later is
+		# private by default and becomes public only on purpose.
+		handle / {
+			reverse_proxy petdoor:8080
+		}
+		handle /index.html {
+			reverse_proxy petdoor:8080
+		}
+		handle /demo* {
+			reverse_proxy petdoor:8080
+		}
+		handle /images/* {
+			reverse_proxy petdoor:8080
+		}
+
+		# WEB-9. Public on purpose, and listed here with the other public routes
+		# rather than left to fall through — everything below reaches Entra, and
+		# a security contact behind a sign-in page is not a security contact.
+		# Served by Caddy rather than the app so it cannot be broken by a deploy.
+		handle /.well-known/security.txt {
+			header Content-Type "text/plain; charset=utf-8"
+			respond `Contact: mailto:jacobjc@gmail.com
+Expires: 2027-10-06T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://petdoor.aspl.net/.well-known/security.txt
+Policy: https://github.com/jchirayath/PetDoor/blob/main/SECURITY.md
+` 200
+		}
+
+		# ── PRIVATE ─────────────────────────────────────────────────────────
+		# Everything else, which is the real log and everything derived from it:
+		# /dashboard, /api/events, /table, /export.csv.
+		#
+		# Trips per day, first out, last out and the rhythm strip together
+		# describe a household's routine precisely enough to tell a stranger
+		# when the house is reliably empty. That is what the gate is for.
+		#
+		# Check after any edit that the DATA is protected, not just the page:
+		#   curl -o /dev/null -w '%{http_code}\n' https://petdoor.aspl.net/api/events
+		# must be 302 to the identity provider, never 200.
+		@private path /*
+		import entra-auth @private
+		reverse_proxy petdoor:8080
+	}
+
+
+	# Security headers. The house pattern (the public sites, the other private sites), at
+	# othersite's stricter settings rather than the public sites': this dashboard
+	# shows when a house is empty, so it should not be framed and should not leak
+	# its URL to wherever a link points.
+	#
+	# Content-Security-Policy, ENFORCING.
+	#
+	# This was -Report-Only for one deploy, which is the prescribed order, and the
+	# work it identified is done: dashboard.html's and demo.html's <style> and
+	# <script> blocks were lifted into /dashboard.{css,js} and /demo.{css,js},
+	# byte for byte, so the policy below needs no 'unsafe-inline' for either.
+	#
+	# 'unsafe-inline' would have been the easy way to make a CSP "pass" and it
+	# permits every injected script as well, so the header would have been
+	# decorative. The two `.onclick =` assignments in the JS are property
+	# assignments, not inline HTML attributes, and need nothing.
+	#
+	# The font sources are real: the page loads IBM Plex from Google Fonts, so
+	# fonts.googleapis.com (the stylesheet) and fonts.gstatic.com (the font files)
+	# are two different directives and both are needed. Self-host the fonts and
+	# both can go, which is the tidier end state.
+	#
+	# IF THE DASHBOARD GOES BLANK AFTER AN EDIT TO IT, LOOK HERE FIRST. A CSP
+	# failure is silent in the page and loud only in the browser console, and it
+	# looks exactly like a server fault. Any new inline script, inline style
+	# attribute, or third-party asset needs a directive adding here, or moving
+	# into /dashboard.js — prefer the second.
+	#
+	# This vhost only. The http:// block below carries no HSTS on purpose: the
+	# ESP32 posts /ingest over plain HTTP because it cannot afford a TLS
+	# handshake, and HSTS is ignored on a plaintext response anyway.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options           "DENY"
+		X-Content-Type-Options    "nosniff"
+		Referrer-Policy           "no-referrer"
+		Permissions-Policy        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'; object-src 'none'"
+		# The upstream announces "PetDoorLog/1.0 Python/3.12.13", which tells a
+		# scanner precisely what to try.
+		-Server
+	}
+	log {
+		output file /var/log/caddy/petdoor.aspl.net.log
+		format json
+	}
+}
+
+# -----------------------------------------------------------------------------
+# http://petdoor.aspl.net — the door, and ONLY the door.
+#
+# Caddy redirects HTTP to HTTPS everywhere else, and should. This one exception
+# exists because the ESP32 cannot do TLS: measured on the device, a handshake
+# drove free heap from 80 KB down to 18 KB and the connection failed outright.
+# It is not a preference, it is the hardware budget.
+#
+# What protects this path instead: every upload carries an HMAC-SHA256
+# signature over the shared key and a timestamp, so events cannot be forged or
+# replayed, and the key itself never crosses the wire. What it does NOT get is
+# confidentiality — someone on the path can see that a door opened. That is the
+# accepted trade; the alternative is no telemetry at all.
+#
+# Everything else on :80 keeps redirecting to HTTPS.
+# -----------------------------------------------------------------------------
+http://petdoor.aspl.net {
+	@ingest path /ingest*
+	handle @ingest {
+		reverse_proxy petdoor:8080
+	}
+	handle {
+		redir https://{host}{uri} permanent
+	}
+	log {
+		output file /var/log/caddy/petdoor.aspl.net.log
+		format json
+	}
+}

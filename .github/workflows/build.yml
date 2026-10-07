@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     name: host tests (beacon, proximity, sensor verdicts, fuzz, server alerting)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Ubuntu's clang ships the libFuzzer runtime, so CI gets real
       # coverage-guided fuzzing where a Mac falls back to the deterministic
       # driver. run.sh picks whichever is available.
@@ -68,6 +68,17 @@ jobs:
           # Bluedroid is no longer the default, so this job has to ask for it
           # explicitly. Without the flag it would build NimBLE and the older
           # stack would go untested while the job still passed.
+          #
+          # THIS JOB IS DELIBERATELY NOT A REQUIRED STATUS CHECK on main, unlike
+          # the other three compile jobs. It sits at 94% of min_spiffs with about
+          # 114 KB spare and has been creeping — 123 KB two features ago — so it
+          # will eventually overflow, and when it does it must not block a merge
+          # for a configuration nobody runs. It still runs, and a red mark here is
+          # still the signal that the day has come.
+          #
+          # Do not "fix" the asymmetry by adding it back to the required list.
+          # The real decision — commit to Bluedroid or delete the stack adapter
+          # at the top of ble_scanner.cpp — is recorded in docs/PARKING_LOT.md.
           - fqbn: esp32:esp32:esp32
             name: ESP32 (Bluedroid)
             stackflags: >-
@@ -84,9 +95,9 @@ jobs:
     name: ${{ matrix.name }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: arduino/setup-arduino-cli@v2
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
 
       # NimBLE-Arduino is required even for the Bluedroid job: the matrix shares
       # one install step, and every other entry builds the default stack, which
@@ -194,9 +205,9 @@ jobs:
     name: ESP32 (NimBLE, default)
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: arduino/setup-arduino-cli@v2
+      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
 
       - name: Install ESP32 core 3.x and NimBLE-Arduino
         run: |

@@ -15,15 +15,63 @@ What to buy, and why.
 | Door motor + controller | Whatever your coop door already uses. |
 | 5 V supply | Sized for the ESP32 *and* both relay coils. 1 A minimum. |
 | LED + 220 Ω–1 kΩ resistor | Optional; many dev boards have one you can reuse. |
-| Buzzer | ~$1 | Optional. Ticks while the door travels, chimes when it should have arrived — the difference between "nothing is happening" and "it is working, wait". Many ESP32-relay boards already have one; [WIRING.md](WIRING.md#the-annunciator) shows how to find out which pin. |
 | Weatherproof enclosure | Not optional in a coop. |
+
+### The sensors — optional, and they change what the firmware can know
+
+Every one of these is optional and the door works without them. What they buy is
+not features, it is **the difference between the firmware believing something and
+knowing it**. Without them the door is open-loop: it pulses a relay and assumes.
+
+| Part | Cost | Pin on the reference build | What it buys |
+|---|---|---|---|
+| 2 × reed switch + magnet ([Cylewet N/O 10-pack](https://www.amazon.com/Cylewet-Normally-Magnetic-Induction-Electromagnetic/dp/B01NBPDU04), [DIYables door-sensor modules](https://www.amazon.com/DIYables-Magnetic-Arduino-ESP8266-Raspberry/dp/B0B3D7BM4K)) | ~$8 / pack | **32** open, **25** closed | "Did it *arrive*." Turns every assumption into a measurement: a stalled close is detected and reversed, a stale belief is corrected, and a door moved by hand is noticed |
+| Vibration sensor, SW-420 ([Hiletgo 5-pack](https://www.amazon.com/Hiletgo-SW-420-Vibration-Sensor-Arduino/dp/B00HJ6ACY2), [DIYables LM393](https://www.amazon.com/DIYables-Vibration-Normally-Digital-Raspberry/dp/B0H2915KFF)) | ~$7 / pack | **33** | "Did it *start*." Answers in about a second where a reed takes the full travel, which is what makes the swallowed wake press detectable rather than guessed at |
+| Passive piezo buzzer ([3-pin module](https://www.amazon.com/Passive-Buzzer-Arduino-3-3V-5V-Interface/dp/B07KNV8KVJ), [bare 9 × 4.2 mm](https://www.amazon.com/Passive-Buzzer-94-2mm-9x4-2mm-Buzzers/dp/B0BBR6TRYG)) | ~$1–8 | **27** | The only interface at the door. Ticks while travelling, chimes on arrival, and sounds a distinct pattern for a lockout, a schedule refusal and a failed sensor — the difference between "nothing is happening" and "it is working, wait" |
+
+Prices are indicative, as of **October 2026**, and all three are sold in
+multi-packs — you need two reeds, one vibration module and one buzzer, so one pack
+of each leaves spares. Links are to parts matching the reference build; any
+equivalent works and **none of the pins above are compiled in** — they are set at
+runtime with `sensors`, `vibration` and `buzzer` on the console and saved on the
+device.
+
+**Three specifications that actually matter:**
+
+**The reeds must CLOSE when the magnet is near** — normally-open, not
+normally-closed. The firmware drives them `INPUT_PULLUP` and reads active-LOW, so
+the switch pulls the pin to ground to say "the door is at this end". An N/C part
+reads exactly backwards and the door will believe it is open when it is shut. Many
+listings sell both in one pack; check which you wired.
+
+**The buzzer must be PASSIVE, not active.** A passive buzzer is a speaker and
+needs a driving square wave, which is what lets the firmware play different
+patterns for different events. An active buzzer contains its own oscillator and
+can only make one note, so every message sounds the same. `chime.cpp` detects
+which it is at runtime and degrades to single beeps on an active one, so a wrong
+part is not fatal — just mute in the way that matters.
+
+**Mount the vibration sensor ON THE DOOR, not on the controller board.** A sensor
+bolted beside the relay hears the *relay*, on every actuation, whether or not the
+door moved — which is precisely the signal it exists to distinguish from movement.
+There is a blanking window after each pulse, but blanking cannot rescue a sensor
+sitting on top of the thing making the noise. The SW-420's sensitivity screw also
+wants backing off until `s` reports **0 edges at rest**; the firmware raises a
+`SENSOR_FAULT` if it chatters, because a sensor firing at idle makes the wake probe
+suppress the real press.
+
+---
 
 **About $80 for a complete build** including a basic automatic door. The
 electronics alone — ESP32-with-relays board plus a USB-to-TTL adapter — come to
-roughly **$25–30**; the door is the rest.
+roughly **$25–30**; the full sensor suite adds about **$16** on top of that, and
+the door is the rest.
 
 Spending more is worth it on the door, not the electronics: $80–180 buys
-anti-pinch, which is the only obstruction protection in the system.
+anti-pinch, which is the only obstruction protection in the system. **The sensors
+are the next best value after that** — they cost about as much as a takeaway and
+they are what turn a door that assumes into a door that reports, including the one
+failure that matters most: a close that stalled on something soft.
 
 ---
 
@@ -65,10 +113,27 @@ not a requirement.
 
 ### Flash and partitions
 
-The firmware uses about **83% of the default partition scheme** (roughly 1.09 MB
-of 1.31 MB). That is comfortable but not roomy. A 4 MB board is the norm and is
-plenty; if you add substantial features, switch to a larger app partition rather
-than trimming existing ones.
+**The default partition scheme is not used, and will not fit.** With WiFi enabled
+the image does not come close — it needs about 136% of it. Build with
+**`min_spiffs`** (Arduino IDE: Tools → Partition Scheme → *Minimal SPIFFS (1.9MB
+APP with OTA/190KB SPIFFS)*); PlatformIO picks it up from `board_build.partitions`
+in `platformio.ini`.
+
+`min_spiffs` is required rather than merely roomier, for a second reason: it keeps
+a **second app slot**, which is what over-the-air updates need. A mounted door is
+updated over WiFi, so losing that slot would mean a ladder.
+
+Measured on a classic ESP32, 6 Oct 2026, of the 1.875 MB `min_spiffs` app
+partition:
+
+| Build | Flash | |
+|---|---|---|
+| default (NimBLE + WiFi) | **1,395,443** | **70%** |
+| `-DPETDOOR_USE_NIMBLE=0` (Bluedroid) | 1,852,523 | 94% |
+| `-DPETDOOR_ENABLE_WIFI=0` | 718,039 | 36% |
+
+A 4 MB board is the norm and is plenty. Bluedroid has only ~114 KB spare and is
+the configuration that will run out first.
 
 ---
 

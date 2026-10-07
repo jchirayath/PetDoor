@@ -56,9 +56,9 @@ Library Manager. That is the only dependency outside the ESP32 core.
 
 We used the core's own Bluedroid stack for most of this project's life and
 moved after a door panicked three times in a row: it had under 7 KB of free
-heap at its worst moment, where NimBLE leaves 80 KB. Flash went from 92% to
-69% too. Detection speed is identical — the beacon's advertising interval sets
-that, not the stack.
+heap at its worst moment, where NimBLE leaves 80 KB. Flash dropped too — the same
+firmware is 94% of `min_spiffs` on Bluedroid and 70% on NimBLE. Detection speed is
+identical; the beacon's advertising interval sets that, not the stack.
 
 Full primer:
 **[ESP32-PRIMER.md](https://github.com/jchirayath/PetDoor/blob/main/docs/ESP32-PRIMER.md)**

@@ -198,7 +198,7 @@ Layered on top, in `driveDoor()`:
   "absent". Without this rule, a dead battery would close the door and keep it
   shut.
 
-And in `DoorController::requestClose()`:
+And in `DoorController::check()`, which every actuation passes through:
 
 - No close during `BOOT_GRACE_MS`. After a power blip the door's real position
   is unknown, and the one outcome worth engineering against is slamming it on an

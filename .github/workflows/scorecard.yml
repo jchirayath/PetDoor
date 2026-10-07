@@ -1,0 +1,72 @@
+# VULN-6: repo security posture is measured rather than assumed.
+#
+# OpenSSF Scorecard checks the things that are easy to believe are true and are
+# not — whether CI is actually required, whether tokens are least-privilege,
+# whether dependencies are pinned. This repo has already been wrong about one of
+# those: CI looked healthy for days while main's build was red, because nothing
+# reported it anywhere a person would look.
+#
+# Runs weekly and on pushes to main. Results go to the Security tab.
+name: scorecard
+
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "41 5 * * 1"      # Mondays, off the hour to avoid the stampede
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Every action is pinned to a full commit SHA with the version in a comment.
+#
+# A tag is mutable and a BRANCH is worse — arduino/setup-arduino-cli@v2 turned out
+# to be a branch, not a tag, so "v2" was whatever had last been pushed to it. An
+# action runs with access to this repo's checkout, so an upstream account
+# compromise would otherwise execute here on the next run with nothing changed on
+# our side.
+#
+# The comment is what keeps this maintainable: Dependabot reads it and raises the
+# SHA and the comment together, so pinning does not mean going stale. Resolve a new
+# one with:
+#     gh api repos/<owner>/<repo>/commits/<tag> --jq .sha
+#
+# This is also one of the checks Scorecard itself runs (Pinned-Dependencies), so
+# an unpinned action here would have been this workflow failing its own audit.
+permissions: read-all
+
+jobs:
+  analysis:
+    name: Scorecard analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write   # to upload the SARIF result
+      id-token: write          # for the signed, publishable result
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@62b2cac7ed8198b15735ed49ab1e5cf35480ba46 # v2.4.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      # Kept even though the SARIF upload below also surfaces them: the artifact
+      # is readable without the Security tab, which matters when the thing you
+      # are debugging IS the Security tab.
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - name: Upload to code-scanning
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3
+        with:
+          sarif_file: results.sarif

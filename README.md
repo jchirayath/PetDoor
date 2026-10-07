@@ -372,7 +372,7 @@ firmware is built around the fixes:
 |---|---|
 | Only ever got one signal reading per device, so proximity never updated | Scan with duplicate reporting **on** — see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#the-duplicate-filter-trap) |
 | Signal spikes and dropouts from multipath | Median filter, then exponential smoothing — run twice, fast for opening and slow for closing |
-| Bluetooth stack eating over half the flash | NimBLE is the default — 92% → 69%, and eleven times the heap headroom — see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#ble-host-stack) |
+| Bluetooth stack eating over half the flash | NimBLE is the default — 94% → 70% of `min_spiffs`, and eleven times the heap headroom — see [docs/CONFIGURATION.md](docs/CONFIGURATION.md#ble-host-stack) |
 | Door flapping open/closed at the threshold | Two thresholds with a hysteresis band between them — see below |
 | Door closing during a brief signal dropout | 15-second dwell before closing; a stale signal can never *open* the door |
 | Bluetooth stack silently wedging | Watchdog restarts the scan if the radio goes quiet |
@@ -412,6 +412,24 @@ Then whatever you do not already have:
 | Power supply | $8–12 | Check the board's input range — many want 7–30 V DC, not 5 V |
 | Weatherproof enclosure | $10–15 | Not optional outdoors |
 | *Optional:* spare remote for the door | $10–15 | Enables the easiest wiring — [Pattern 1](docs/COOP-CONVERSION.md#pattern-1-tap-a-spare-remote-easiest) |
+
+### The sensors — about $16, and the best value after the door
+
+Optional, and the door works without them. What they buy is **the difference
+between the firmware believing something and knowing it.** Without them the door
+is open-loop: it pulses a relay and assumes.
+
+| Part | Cost | What it buys |
+|---|---|---|
+| 2 × reed switch + magnet | ~$8/pack | "Did it **arrive**." A stalled close is detected and reversed instead of leaving the door shut on something soft; a stale belief is corrected; a door moved by hand is noticed |
+| Vibration sensor (SW-420) | ~$7/pack | "Did it **start**." Answers in about a second where a reed takes the full travel — which is what makes a swallowed press detectable rather than guessed at |
+| Passive piezo buzzer | ~$1–8 | The only interface at the door. Distinct patterns for arrival, a stall, a lockout, a schedule refusal and a failed sensor |
+
+All three are sold in multi-packs, so one of each leaves spares.
+[HARDWARE.md](docs/HARDWARE.md#the-sensors--optional-and-they-change-what-the-firmware-can-know)
+has links and the three specifications that matter — the reeds must be
+**normally-open**, the buzzer must be **passive**, and the vibration sensor goes
+**on the door, not beside the relay**.
 
 For comparison, a commercial microchip-reading pet door is **$150–250** — and
 still requires the animal to push through a flap, which is the thing this was
@@ -576,20 +594,29 @@ motor. See [docs/WIRING.md](docs/WIRING.md) and [docs/SAFETY.md](docs/SAFETY.md)
 
 | Key | Action |
 |---|---|
-| `h` | Help |
-| `s` | Status — presence, door state, signal, radio health, free heap |
+| `h` or `?` | Help |
+| `s` | Status — presence, door state, signal, radio health, heap and stack margins |
 | `d` | Toggle discovery mode |
 | `c` | Toggle the live calibration stream |
 | `r` | Reset the proximity filter |
 | `m` | Edit the beacon MAC list — saved on the device, no reflash needed |
 | `t` | Edit the open/close thresholds — `here` calibrates from where the beacon sits |
+| `n` | Edit the scheduled lockout windows — e.g. locked overnight |
 | `!` | Reboot into flash mode (ESP32-S3/C3/C6 only; the original ESP32 has no such flag) |
-| `o` | Pulse the OPEN relay now (bypasses proximity logic) |
-| `x` | Pulse the CLOSE relay now (bypasses proximity logic) |
+| `o` | **Open the door now** — one full attempt: wake press, start detection, arrival verification. Bypasses the proximity logic, the lockout and a gave-up state |
+| `x` | **Close the door now** — the same, and the only thing it cannot override is the boot grace |
 | `O` | Clear a manual hold, handing control back to the collar |
 | `k` / `K` | Lock / unlock — stop the collar opening the door at all |
+| `M` | Maintenance window — the door reports but will not move, for a bounded period, and opens the console over WiFi |
+| `C` | Calibrate the travel time, both directions (needs limit switches and `M` first) |
+| `l` / `L` | Show the event log / dump it as CSV |
+| `u` | Upload the log over WiFi now |
+| `p` / `P` | Open / close a firmware update window — flash over WiFi, no buttons |
 | `f` | Edit the RSSI filters (the open path and the close path separately) |
 | `w` | Dwell, relay and hardware settings — see below |
+
+[DIAGNOSTICS.md](docs/DIAGNOSTICS.md#the-serial-console) has the full table, what
+each submenu contains, and how to read the output.
 
 Behind `w`: `pulse`, `presses`, `gap`, `travel`, `buzzer`, `beep`, `sensors`,
 `upload`, and the dwell times. Everything there is saved on the device and

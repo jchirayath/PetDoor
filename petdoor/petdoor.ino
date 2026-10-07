@@ -410,14 +410,16 @@ void printBanner() {
 
 void printHelp() {
   Con.println(F("commands:"));
-  Con.println(F("  h  this help"));
+  Con.println(F("  h  this help (or '?')"));
   Con.println(F("  s  status"));
   Con.println(F("  d  toggle discovery mode (list every BLE device in range)"));
   Con.println(F("  c  toggle calibration stream (live RSSI + distance)"));
   Con.println(F("  r  reset the proximity filter"));
   Con.println(F("  l  show the event log (what the door actually did)"));
+  Con.println(F("  L  dump the event log as CSV, for a spreadsheet"));
   Con.println(F("  u  upload the log now over WiFi (if configured)"));
   Con.println(F("  p  open a firmware update window (OTA, no buttons)"));
+  Con.println(F("  P  close the update window early"));
   Con.println(F("  m  edit the beacon MAC list (saved on the device)"));
   Con.println(F("  t  edit the open/close thresholds (saved on the device)"));
   Con.println(F("  n  edit the scheduled lockout windows (e.g. locked overnight)"));
@@ -461,7 +463,19 @@ void printHelp() {
   Con.println(F("    5 fast      it STALLED partway. A stalled close is REVERSED"));
   Con.println(F("    long . .    GAVE UP closing; staying open"));
   Con.println(F("    . pause .   the door moved and NOTHING commanded it"));
-  Con.println(F("    one long    refused (locked, or a schedule window)"));
+  Con.println(F("  refusals, which sound different because the fix differs:"));
+  Con.println(F("    one long       refused: LOCKED. 'K' unlocks it"));
+  Con.println(F("    long..  long   refused: a SCHEDULE window. Wait, or edit with 'n'"));
+  Con.println(F("  acknowledgements, for commands that change a setting rather than"));
+  Con.println(F("  moving the door — worth hearing, because a remote command can sit"));
+  Con.println(F("  for up to five minutes before the door collects it:"));
+  Con.println(F("    . .         locked"));
+  Con.println(F("    -           unlocked"));
+  Con.println(F("    .           setting applied"));
+  Con.println(F("  and the one tune that REPEATS, every 15 min until it clears:"));
+  Con.println(F("    . . .       a SENSOR is not telling the truth. 's' says which."));
+  Con.println(F("                Three low blips: the door clearing its throat, not"));
+  Con.println(F("                an alarm. An alarm gets unplugged."));
 }
 
 void printStatus(uint32_t nowMs) {
@@ -2254,6 +2268,23 @@ void updateVibrationNoise(uint32_t nowMs) {
                      g_vibRunRanAway, g_sensorFault == SF_VIBRATION_NOISY);
 
   if (verdict == SV_RAISE) {
+    // The explanation once, the measurement every window.
+    //
+    // This verdict is reached on EVERY noisy window, not just the first — the
+    // window keeps being measured on purpose, so a latched fault is still being
+    // tested and can clear. raiseSensorFault() dedupes the event, but the console
+    // text did not, so a genuinely noisy sensor reprinted the same six-line
+    // explanation every minute for as long as it was wrong. That is how a console
+    // becomes unreadable at exactly the moment you need to read it.
+    //
+    // The edge count still prints every window, because that is the live feedback
+    // you want while turning the sensitivity screw down.
+    if (g_sensorFault == SF_VIBRATION_NOISY) {
+      Con.printf("[sensor] !! still noisy: %lu edges this window\r\n",
+                 static_cast<unsigned long>(seen));
+      raiseSensorFault(SF_VIBRATION_NOISY,
+                       static_cast<int16_t>(seen > 32767 ? 32767 : seen));
+    } else {
     Con.printf("[sensor] !! vibration sensor felt %lu edges in %lu s with the "
                   "door STANDING STILL.\r\n",
                   static_cast<unsigned long>(seen),
@@ -2266,6 +2297,7 @@ void updateVibrationNoise(uint32_t nowMs) {
     Con.println(F("[sensor] !! sensor on the frame feels the world, not the door."));
     raiseSensorFault(SF_VIBRATION_NOISY,
                      static_cast<int16_t>(seen > 32767 ? 32767 : seen));
+    }
   } else if (verdict == SV_CLEAR) {
     // A WHOLE QUIET WINDOW. Let the fault go.
     //
