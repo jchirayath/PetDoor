@@ -595,6 +595,9 @@ being read:
 | `docs/PARKING_LOT.md` | work blocked on an external event, and what would unblock it | anything that can be worked on now |
 | `docs/STANDARD_EXCEPTIONS.md` | rules the repo does not meet, each with an owner and an **expiry** | anything blocked (that is the parking lot) |
 | `SECURITY.md` | how to report a vulnerability, and the scope — including that a door refusing to open outranks any confidentiality issue | per-chapter evidence |
+| `docs/SAFETY.md` | the **engineering** safety analysis: what the firmware protects against, what it does not, commissioning | warranty or support language — that is the disclaimer |
+| `docs/DISCLAIMER.md` | who is **responsible**: no warranty, no support, what this is not, what the installer owns | anything about *how* to make it safe — that is SAFETY.md |
+| `docs/PRIVACY.md` | what data exists and where: the event ring, the server's tables, and that a door log is an occupancy log | how to secure the dashboard — that is WEB-DASHBOARD.md |
 | `mappings/ASVS-5.0.md` | the per-chapter ASVS position with the mechanism named for each | the generated 345-row matrix, which is the standard's own |
 | `tools/logserver/caddy/` | the **live** vhost, verbatim, because it used to exist only on one VM | a generic example — that is `docs/WEB-DASHBOARD.md` |
 
