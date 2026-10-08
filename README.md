@@ -359,6 +359,8 @@ for the step-by-step, including photos of the internals.
 | have a door to convert | [docs/COOP-CONVERSION.md](docs/COOP-CONVERSION.md) |
 | are about to wire a motor | [docs/SAFETY.md](docs/SAFETY.md) |
 | want to know how it works | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| want to know what you are taking on | [docs/DISCLAIMER.md](docs/DISCLAIMER.md) — no warranty, no support |
+| want to know what data it handles | [docs/PRIVACY.md](docs/PRIVACY.md) — no telemetry; the log server is yours |
 
 ---
 
@@ -618,7 +620,7 @@ motor. See [docs/WIRING.md](docs/WIRING.md) and [docs/SAFETY.md](docs/SAFETY.md)
 | `f` | Edit the RSSI filters (the open path and the close path separately) |
 | `w` | Dwell, relay and hardware settings — see below |
 
-[DIAGNOSTICS.md](docs/DIAGNOSTICS.md#the-serial-console) has the full table, what
+[DIAGNOSTICS.md](docs/DIAGNOSTICS.md#commands) has the full table, what
 each submenu contains, and how to read the output.
 
 Behind `w`: `pulse`, `presses`, `gap`, `travel`, `buzzer`, `beep`, `sensors`,
