@@ -11,6 +11,7 @@ No framework and no network: send_notification is replaced with a recorder, and
 the database is a throwaway file. Run with  tests/server/run.sh
 """
 import os
+import re
 import sys
 import tempfile
 import time
@@ -184,6 +185,64 @@ def test_an_inferred_open_is_still_an_open():
     check("state 11" not in page, "detail 11 is decoded, not shown raw")
 
 
+def test_a_door_movement_says_what_asked_for_it():
+    """OPEN and CLOSE spend `detail` on the ActuationSource, and nothing read it.
+
+    The Detail column was blank for every door movement, so a log full of
+    correctly attributed beacon travels looked as though nothing had attributed
+    them at all — the rows were right and the page still looked plausible, which
+    is the worst way for this to fail. Reported from a live door whose beacon
+    opens were all present in the database and all untagged on the page.
+    """
+    seed_device("src-door", int(time.time()))
+    seed_event("src-door", 11, 100, "OPEN", 0)    # SRC_BEACON
+    seed_event("src-door", 11, 200, "CLOSE", 1)   # SRC_MANUAL, the console
+    seed_event("src-door", 11, 300, "OPEN", 2)    # SRC_REMOTE, a queued command
+    page = srv.render()
+
+    # Match the cell, not the word: "beacon" alone also appears in
+    # "beacon battery" and "beacon found" elsewhere on the page.
+    check(">beacon</td>" in page, "a beacon-driven open is tagged as the beacon")
+    check(">console</td>" in page, "a console-driven close is tagged as the console")
+    check(">network</td>" in page, "a queued remote command is tagged as the network")
+    check("source 0" not in page, "the source is decoded, not shown as a raw number")
+
+
+def test_a_failsafe_reversal_is_not_rendered_as_an_ordinary_open():
+    """SRC_FAILSAFE means a close STALLED and the firmware reversed itself.
+
+    Same reasoning as invariant 20: it arrives as an OPEN like any other, and
+    rendering it identically to a beacon open hides the only visible trace that
+    a close did not complete.
+    """
+    seed_device("failsafe-door", int(time.time()))
+    seed_event("failsafe-door", 12, 100, "OPEN", 3)
+    page = srv.render()
+    check("fail-safe reversal" in page,
+          "detail 3 names itself a fail-safe reversal, not a plain open")
+    check('var(--bad)">fail-safe reversal' in page,
+          "and is rendered loudly, because it means a close stalled")
+
+
+def test_act_source_covers_every_source_the_firmware_can_send():
+    """ACT_SOURCE must stay in step with ActuationSource in petdoor/door.h.
+
+    The bug this guards is additive: someone adds SRC_SCHEDULE to the firmware,
+    the door starts sending it, and the dashboard quietly renders "source 4"
+    forever. Parsing the header rather than restating it is the point — a copy
+    of the enum here could drift exactly as the renderer did.
+    """
+    hdr = os.path.join(HERE, "..", "..", "petdoor", "door.h")
+    with open(hdr, encoding="utf-8") as fh:
+        found = {int(m.group(2)): m.group(1)
+                 for m in re.finditer(r"\bSRC_([A-Z]+)\s*=\s*(\d+)", fh.read())}
+    check(len(found) >= 4,
+          f"found the ActuationSource enum in door.h (got {sorted(found)})")
+    missing = sorted(v for v in found if v not in srv.ACT_SOURCE)
+    check(not missing,
+          f"ACT_SOURCE covers every SRC_* value (missing {missing})")
+
+
 def test_fault_evidence_is_read_according_to_its_fault():
     """The spare field is one integer shared by every event type, and
     SENSOR_FAULT does not use it consistently: an edge count for the vibration
@@ -298,6 +357,9 @@ def main():
     test_stall_cooldown_but_gave_up_always()
     test_inferred_movement_never_renders_as_measured()
     test_an_inferred_open_is_still_an_open()
+    test_a_door_movement_says_what_asked_for_it()
+    test_a_failsafe_reversal_is_not_rendered_as_an_ordinary_open()
+    test_act_source_covers_every_source_the_firmware_can_send()
     test_fault_evidence_is_read_according_to_its_fault()
     test_a_lost_reed_is_rendered_and_explained()
     test_a_crashed_door_emails_but_a_normal_restart_does_not()
