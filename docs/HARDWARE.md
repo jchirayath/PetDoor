@@ -6,6 +6,12 @@ What to buy, and why.
 
 ## Bill of materials
 
+<p>
+  <img src="../images/part-esp32-relay.svg" width="240" alt="ESP32 board with two relays, a screw terminal block and pin headers">
+  <img src="../images/part-beacon.svg" width="240" alt="BLE beacon tag for the collar">
+  <img src="../images/part-usb-ttl.svg" width="240" alt="USB-to-serial adapter with a CP2102 chip and a six-pin header">
+</p>
+
 | Part | Cost | Notes |
 |---|---|---|
 | ESP32 board with 2 relays on-board | $15–20 | **Simplest option.** Relays and ESP32 on one PCB, no inter-wiring, polarity already correct. Usually has no USB socket. [Wiring diagram](WIRING.md#the-all-in-one-board-the-reference-build) |
@@ -19,14 +25,20 @@ What to buy, and why.
 
 ### The sensors — optional, and they change what the firmware can know
 
+<p>
+  <img src="../images/part-reed.svg" width="240" alt="Reed switch in a plastic sleeve with long leads, and disc magnets">
+  <img src="../images/part-sw420.svg" width="240" alt="SW-420 vibration sensor module with a trimmer and a three-pin header">
+  <img src="../images/part-buzzer.svg" width="240" alt="Wired piezo buzzer with red and black leads">
+</p>
+
 Every one of these is optional and the door works without them. What they buy is
 not features, it is **the difference between the firmware believing something and
 knowing it**. Without them the door is open-loop: it pulses a relay and assumes.
 
 | Part | Cost | Pin on the reference build | What it buys |
 |---|---|---|---|
-| 2 × reed switch + magnet ([Cylewet N/O 10-pack](https://www.amazon.com/Cylewet-Normally-Magnetic-Induction-Electromagnetic/dp/B01NBPDU04), [DIYables door-sensor modules](https://www.amazon.com/DIYables-Magnetic-Arduino-ESP8266-Raspberry/dp/B0B3D7BM4K)) | ~$8 / pack | **32** open, **25** closed | "Did it *arrive*." Turns every assumption into a measurement: a stalled close is detected and reversed, a stale belief is corrected, and a door moved by hand is noticed |
-| Vibration sensor, SW-420 ([Hiletgo 5-pack](https://www.amazon.com/Hiletgo-SW-420-Vibration-Sensor-Arduino/dp/B00HJ6ACY2), [DIYables LM393](https://www.amazon.com/DIYables-Vibration-Normally-Digital-Raspberry/dp/B0H2915KFF)) | ~$7 / pack | **33** | "Did it *start*." Answers in about a second where a reed takes the full travel, which is what makes the swallowed wake press detectable rather than guessed at |
+| 2 × reed switch + magnet ([WOWOONE 5-pack with magnets](https://www.amazon.com/dp/B08K36VLZ2) — on the reference door, [Cylewet N/O 10-pack](https://www.amazon.com/Cylewet-Normally-Magnetic-Induction-Electromagnetic/dp/B01NBPDU04), [DIYables door-sensor modules](https://www.amazon.com/DIYables-Magnetic-Arduino-ESP8266-Raspberry/dp/B0B3D7BM4K)) | ~$8 / pack | **32** open, **25** closed | "Did it *arrive*." Turns every assumption into a measurement: a stalled close is detected and reversed, a stale belief is corrected, and a door moved by hand is noticed |
+| Vibration sensor, SW-420 ([5-pack](https://www.amazon.com/dp/B0FC5PW8CK) — on the reference door, [Hiletgo 5-pack](https://www.amazon.com/Hiletgo-SW-420-Vibration-Sensor-Arduino/dp/B00HJ6ACY2), [DIYables LM393](https://www.amazon.com/DIYables-Vibration-Normally-Digital-Raspberry/dp/B0H2915KFF)) | ~$7 / pack | **33** | "Did it *start*." Answers in about a second where a reed takes the full travel, which is what makes the swallowed wake press detectable rather than guessed at |
 | Passive piezo buzzer ([3-pin module](https://www.amazon.com/Passive-Buzzer-Arduino-3-3V-5V-Interface/dp/B07KNV8KVJ), [bare 9 × 4.2 mm](https://www.amazon.com/Passive-Buzzer-94-2mm-9x4-2mm-Buzzers/dp/B0BBR6TRYG)) | ~$1–8 | **27** | The only interface at the door. Ticks while travelling, chimes on arrival, and sounds a distinct pattern for a lockout, a schedule refusal and a failed sensor — the difference between "nothing is happening" and "it is working, wait" |
 
 Prices are indicative, as of **October 2026**, and all three are sold in

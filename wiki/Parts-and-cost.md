@@ -2,6 +2,12 @@
 
 About **$80 all in**, and the door is most of it.
 
+<p>
+  <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-esp32-relay.svg" width="240" alt="ESP32 board with two relays">
+  <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-beacon.svg" width="240" alt="BLE beacon tag for the collar">
+  <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-usb-ttl.svg" width="240" alt="USB-to-serial adapter">
+</p>
+
 | | Cost | Notes |
 |---|---|---|
 | **Automatic pet or coop door** | $50–60 | The big one. Any door with a motor and buttons. |
@@ -12,16 +18,23 @@ About **$80 all in**, and the door is most of it.
 **Already own a motorised door?** Then it is the board and the beacon — around
 **$30** to make a door you already have open for one specific animal.
 
-### Two optional pounds well spent
+### Three optional sensors, well spent
 
-Neither is needed to make the door work, and the firmware ships with both
-switched off. Add them whenever you like — they are turned on with one command,
+None is needed to make the door work, and the firmware ships with all of them
+switched off. Add them whenever you like — each is turned on with one command,
 not a reflash.
+
+<p>
+  <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-reed.svg" width="240" alt="Reed switch and disc magnets">
+  <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-sw420.svg" width="240" alt="SW-420 vibration sensor module">
+  <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-buzzer.svg" width="240" alt="Wired piezo buzzer">
+</p>
 
 | | Cost | What it buys |
 |---|---|---|
-| **Piezo buzzer** | ~$1 | The door stops being silent. A tick while it moves, a chime when it should have arrived, a low buzz when a locked door refuses the collar, and a distinct beep per command so you know one landed |
-| **Two reed switches + magnets** | ~$2 | The door stops *guessing*. Its reported position becomes measured, the arrival chime becomes an actual arrival, and a button press the controller swallowed becomes visible instead of silent |
+| **[Passive piezo buzzer](https://www.amazon.com/dp/B07KNV8KVJ)** | ~$1 | The door stops being silent. A tick while it moves, a chime when it should have arrived, a low buzz when a locked door refuses the collar, and a distinct beep per command so you know one landed |
+| **[Two reed switches + magnets](https://www.amazon.com/dp/B08K36VLZ2)** | ~$2 | The door stops *guessing*. Its reported position becomes measured, the arrival chime becomes an actual arrival, and a button press the controller swallowed becomes visible instead of silent |
+| **[SW-420 vibration sensor](https://www.amazon.com/dp/B0FC5PW8CK)** | ~$7 / 5-pack | The door knows within a second that it *started* moving, so a press the controller swallowed is caught at once rather than at the end of the travel. On a door with no reed switches, it is also how a door moved by hand gets noticed |
 
 The reed switches are the better value of the two. Everything this project
 cannot currently promise — that the door arrived, that it is where it says it

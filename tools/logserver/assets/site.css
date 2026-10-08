@@ -144,6 +144,17 @@ code{font-family:var(--f-mono); font-size:.9em; background:var(--sunk);
 .steps p{margin:0; color:var(--ink-2); font-size:14.5px}
 .steps .fig{font-family:var(--f-mono); font-size:13px; color:var(--ink); white-space:nowrap}
 
+/* The kit: what each part looks like, above the table that says what it does.
+   The images are decorative here (alt=""): the name beside each says it all. */
+.kit{list-style:none; margin:0; padding:0; display:grid; gap:14px;
+     grid-template-columns:repeat(3,minmax(0,1fr))}
+.kit li{display:flex; flex-direction:column; font-size:14.5px}
+.kit img{display:block; width:100%; height:auto; border-radius:var(--r-m);
+         border:1px solid var(--line); margin-bottom:8px}
+.kit b{font-weight:600}
+.kit span{color:var(--ink-2); font-size:13.5px}
+@media (max-width:640px){ .kit{grid-template-columns:repeat(2,minmax(0,1fr))} }
+
 /* Parts — a table, because it is one. */
 .parts{width:100%; border-collapse:collapse; font-size:14.5px; background:var(--panel);
        border:1px solid var(--line); border-radius:var(--r-l); overflow:hidden}

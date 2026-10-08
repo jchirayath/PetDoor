@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="ESP32 board with two relays: an ESP32 module, two blue relay cubes, a screw terminal block and pin headers">
+  <rect width="240" height="160" rx="14" fill="#EEF3F3"/>
+  <ellipse cx="120" cy="140" rx="100" ry="7" fill="#14222B" opacity=".12"/>
+  <rect x="20" y="26" width="200" height="108" rx="5" fill="#1F5FA8"/>
+  <circle cx="30" cy="36" r="4" fill="#EEF3F3"/><circle cx="210" cy="36" r="4" fill="#EEF3F3"/>
+  <circle cx="30" cy="124" r="4" fill="#EEF3F3"/><circle cx="210" cy="124" r="4" fill="#EEF3F3"/>
+  <rect x="64" y="32" width="54" height="62" rx="3" fill="#20262B"/>
+  <rect x="68" y="36" width="46" height="14" fill="#2B3238"/>
+  <path d="M71 40 h6 v6 h6 v-6 h6 v6 h6 v-6 h6 v6 h6" fill="none" stroke="#C9A646" stroke-width="1.5"/>
+  <rect x="70" y="54" width="42" height="34" rx="2" fill="#C2C9CF"/>
+  <g fill="#1B1F23"><rect x="34" y="40" width="8" height="74" rx="1"/><rect x="46" y="40" width="8" height="74" rx="1"/></g>
+  <g fill="#C9A646"><circle cx="38" cy="46" r="1.6"/><circle cx="38" cy="56" r="1.6"/><circle cx="38" cy="66" r="1.6"/><circle cx="38" cy="76" r="1.6"/><circle cx="38" cy="86" r="1.6"/><circle cx="38" cy="96" r="1.6"/><circle cx="38" cy="106" r="1.6"/>
+    <circle cx="50" cy="46" r="1.6"/><circle cx="50" cy="56" r="1.6"/><circle cx="50" cy="66" r="1.6"/><circle cx="50" cy="76" r="1.6"/><circle cx="50" cy="86" r="1.6"/><circle cx="50" cy="96" r="1.6"/><circle cx="50" cy="106" r="1.6"/></g>
+  <rect x="128" y="56" width="38" height="44" rx="3" fill="#2A63C9"/><rect x="128" y="56" width="38" height="9" rx="3" fill="#4C83E0"/>
+  <rect x="172" y="56" width="38" height="44" rx="3" fill="#2A63C9"/><rect x="172" y="56" width="38" height="9" rx="3" fill="#4C83E0"/>
+  <rect x="126" y="30" width="74" height="20" rx="2" fill="#2E9C5A"/>
+  <g fill="#B8C0C6"><circle cx="136" cy="40" r="5"/><circle cx="149" cy="40" r="5"/><circle cx="162" cy="40" r="5"/><circle cx="175" cy="40" r="5"/><circle cx="188" cy="40" r="5"/></g>
+  <g stroke="#6E777E" stroke-width="1.6"><path d="M133 40 h6 M146 40 h6 M159 40 h6 M172 40 h6 M185 40 h6"/></g>
+  <rect x="70" y="104" width="12" height="12" rx="2" fill="#2B3238"/><circle cx="76" cy="110" r="3.5" fill="#B8C0C6"/>
+  <rect x="88" y="104" width="12" height="12" rx="2" fill="#2B3238"/><circle cx="94" cy="110" r="3.5" fill="#B8C0C6"/>
+  <circle cx="140" cy="112" r="3" fill="#E2463B"/><circle cx="184" cy="112" r="3" fill="#E2463B"/>
+</svg>

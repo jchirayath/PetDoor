@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="Wired piezo buzzer: a small black cylinder with red and black leads">
+  <rect width="240" height="160" rx="14" fill="#EEF3F3"/>
+  <ellipse cx="88" cy="126" rx="50" ry="9" fill="#14222B" opacity=".12"/>
+  <path d="M48 64 V108 A40 14 0 0 0 128 108 V64 Z" fill="#1E2429"/>
+  <ellipse cx="88" cy="64" rx="40" ry="14" fill="#353D44"/>
+  <ellipse cx="88" cy="64" rx="31" ry="10" fill="none" stroke="#4A535B" stroke-width="1.5"/>
+  <ellipse cx="88" cy="64" rx="5" ry="2.2" fill="#0B0E10"/>
+  <path d="M124 96 C160 96 170 64 206 62" fill="none" stroke="#C8372D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M126 104 C164 104 174 80 206 80" fill="none" stroke="#22282D" stroke-width="4" stroke-linecap="round"/>
+  <path d="M206 62 H220 M206 80 H220" stroke="#B8C0C6" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
