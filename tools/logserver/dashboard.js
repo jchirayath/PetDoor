@@ -5,7 +5,10 @@
 const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost",STALLED:"did not complete its travel",
   UNCOMMANDED:"moved, not by PetDoor",RETRY:"pressed again",GAVE_UP:"gave up closing",WAKE:"woke the controller",NO_MOVE:"did not move at all",
   MAINT:"maintenance mode",CONSOLE:"network console",BEACON_LOW:"beacon battery",SENSOR_FAULT:"sensor fault",SENSOR_OK:"sensor recovered"};
-const evLabel=t=>EV[t]||t;
+// The fallback is the type string as uploaded, so it is escaped: it reaches
+// innerHTML, and a signed upload is still not a reason to trust its markup.
+const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const evLabel=t=>EV[t]||escHtml(t);
 // UNCOMMANDED's detail is where the door ended up: 1/2 when a limit switch
 // MEASURED it, 11/12 (kUncommandedInferred + state) when it was INFERRED from
 // how long the vibration sensor felt it move, with that duration in src.
@@ -988,25 +991,36 @@ async function cancelQueued(){
    each they belong beside the panel that produced them. */
 const CONTROL_VERBS=new Set(["door","lock","unlock","beep","scan","resetstats","reboot","ota"]);
 
-function renderLog(hostId,keep,empty){
+// withMoves: also list the door moving when nothing here asked it to — a hand on
+// the flap, the controller's own panel or timer. Without them the Controls log
+// reads as a complete record of the door's movements and is not one: the door
+// logged and uploaded both, and this page simply had nowhere to put them.
+function renderLog(hostId,keep,empty,withMoves){
   const host=$(hostId);
   if(!host) return;
-  const rows=commands.filter(c=>c.delivered)
-    .filter(c=>keep(String(c.command||"").split(" ")[0].toLowerCase()));
-  if(!rows.length){ host.innerHTML=`<div class="empty">${empty}</div>`; return; }
   const esc=t=>String(t==null?"":t).replace(/[<>&]/g,"");
+  const rows=commands.filter(c=>c.delivered)
+    .filter(c=>keep(String(c.command||"").split(" ")[0].toLowerCase()))
+    .map(c=>({t:c.delivered||c.queued,cmd:c}));
+  if(withMoves)
+    for(const e of events) if(e.type==="UNCOMMANDED"&&e.epoch) rows.push({t:e.epoch,ev:e});
+  rows.sort((a,b)=>b.t-a.t);
+  if(!rows.length){ host.innerHTML=`<div class="empty">${empty}</div>`; return; }
+  const stamp=t=>{const w=new Date(t*1000);return `${fmtDate(t)} ${pad(w.getHours())}:${pad(w.getMinutes())}`;};
   host.innerHTML='<table><thead><tr><th>When</th><th>Command</th><th>Result</th></tr></thead><tbody>'
-    +rows.slice(0,20).map(c=>{
-      const when=new Date((c.delivered||c.queued)*1000);
+    +rows.slice(0,20).map(r=>{
+      if(r.ev) return `<tr><td class="mono">${stamp(r.t)}</td>`
+        +`<td data-u="c-ink2">not from here</td><td>${uncommandedDetail(r.ev)}</td></tr>`;
+      const c=r.cmd;
       const ok=c.ack && !/refus|reject|unknown/i.test(c.ack);
-      return `<tr><td class="mono">${fmtDate(c.delivered||c.queued)} ${pad(when.getHours())}:${pad(when.getMinutes())}</td>`
+      return `<tr><td class="mono">${stamp(r.t)}</td>`
         +`<td class="mono">${esc(c.command)}</td>`
         +`<td class="${c.ack?(ok?"":"warn"):"dim"}">${c.ack?esc(c.ack):"awaiting the door's next upload"}</td></tr>`;
     }).join("")+"</tbody></table>";
 }
 
 function renderChanges(){
-  renderLog("ctllog", v=>CONTROL_VERBS.has(v),  "Nothing has been asked of the door yet.");
+  renderLog("ctllog", v=>CONTROL_VERBS.has(v),  "Nothing has been asked of the door yet.", true);
   renderLog("setlog", v=>!CONTROL_VERBS.has(v), "No settings have been changed remotely.");
 }
 

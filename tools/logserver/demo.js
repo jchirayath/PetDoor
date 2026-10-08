@@ -5,7 +5,10 @@
 const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost",STALLED:"did not complete its travel",
   UNCOMMANDED:"moved, not by PetDoor",RETRY:"pressed again",GAVE_UP:"gave up closing",WAKE:"woke the controller",NO_MOVE:"did not move at all",
   MAINT:"maintenance mode",CONSOLE:"network console",BEACON_LOW:"beacon battery",SENSOR_FAULT:"sensor fault",SENSOR_OK:"sensor recovered"};
-const evLabel=t=>EV[t]||t;
+// The fallback is the type string as uploaded, so it is escaped: it reaches
+// innerHTML, and a signed upload is still not a reason to trust its markup.
+const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const evLabel=t=>EV[t]||escHtml(t);
 // UNCOMMANDED's detail is where the door ended up: 1/2 when a limit switch
 // MEASURED it, 11/12 (kUncommandedInferred + state) when it was INFERRED from
 // how long the vibration sensor felt it move, with that duration in src.
