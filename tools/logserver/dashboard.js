@@ -933,7 +933,7 @@ function renderControl(){
     // not say so invites somebody to leave it on.
     +group("Maintenance",
         (maintLeft>0
-          ? `<button class="b-danger" data-cmd="maint off">End maintenance (${Math.ceil(maintLeft/60)} min left)</button>`
+          ? `<button class="b-danger" data-cmd="maint off" data-confirm="End the maintenance window now? The collar goes back to opening and closing the door immediately.">End maintenance (${Math.ceil(maintLeft/60)} min left)</button>`
             // Where to point a console. Shown only while a window is open,
             // because that is the only time anything is listening there.
             +(st.ip&&st.ip!=="-"?`<span class="glabel" data-u="self-c">console: ${esc(st.ip)}:23</span>`:"")
