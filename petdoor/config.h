@@ -849,6 +849,23 @@
 #endif
 #ifndef MAINT_MAX_MS
 #define MAINT_MAX_MS 1728000000UL    // 480 hours (20 days)
+#endif
+
+// How long the NETWORK CONSOLE may listen inside a maintenance window.
+//
+// Separate from MAINT_MAX_MS on purpose. A window makes the door inert, which
+// is a safety property; the console it carries is the full console and can
+// OPEN THE DOOR (invariant 12), which is a security one. Those two wanted
+// different ceilings the moment the window could run for twenty days: nobody
+// calibrating needs a console on the eighteenth day, but leaving one listening
+// that long is a door-opening service exposed on the LAN for a fortnight.
+//
+// 4 hours because that was MAINT_MAX_MS before the window was lengthened, so
+// the console's maximum exposure is UNCHANGED by that change. Every window
+// that was possible before behaves exactly as it did; only the new, longer
+// ones close the console early and keep running.
+#ifndef CONSOLE_MAX_MS
+#define CONSOLE_MAX_MS 14400000UL    // 4 hours
 //
 // WHY 480 AND NOT MORE. The window is an absolute deadline compared with a
 // SIGNED delta — `(int32_t)(nowMs - endsAtMs) >= 0` in maintenance.cpp — which
