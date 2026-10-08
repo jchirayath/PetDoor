@@ -267,9 +267,10 @@ they are set at runtime and saved on the device.
 | | |
 |---|---|
 | travel CONFIGURED | open **11,366 ms**, close **11,000 ms** |
-| `calibrate`, five passes | open **11,366 ms** mean, close **9,105 ms** mean |
-| real close after 4 h idle | **10,912 ms** — 1.8 s slower than ANY warm pass |
-| repeatability, warm | open spread **78 ms**, close spread **175 ms** (n=5) |
+| UPRIGHT, `calibrate`, five passes | open **11,366 ms** mean, close **9,105 ms** mean |
+| UPRIGHT repeatability | open spread **78 ms**, close spread **175 ms** (n=5) |
+| FLAT, 20 cycles over an hour | open **10,222 ms** mean, close **10,934 ms** mean |
+| FLAT repeatability | 602 ms range in each direction (n=20) |
 | travel, closed BY HAND | **12,500 ms** — measured as vibration, not reeds |
 | relay pulse | **1,500 ms** stored on the device (500 ms is swallowed) |
 | vibration while moving | ~2,900 edges/s; **0** at rest |
@@ -283,19 +284,33 @@ wrong in sign: it gives the open leg ~1.2 s less than it needs while handing the
 close ~2.1 s of slack it does not. Re-calibrate after any change in mounting
 angle, and do not interpolate between the two sets.
 
-**`calibrate` runs the door WARM, and it under-reports the close.** The five
-passes ran back to back over about ten minutes and measured 9,034–9,209 ms. The
-first real close afterwards — beacon leaving, door open four hours, evening —
-took **10,912 ms**, which is 1.8 s outside the entire calibration range and left
-only 1,193 ms of the 3,000 ms grace. A close that misses its deadline is
-declared STALLED and **fails open**, retries, and eventually stays open and says
-so, so a close time calibrated warm buys false stalls on a cold door. The
-configured close is therefore **11,000 ms**, taken from the cold measurement and
-not from the calibration mean. Treat `calibrate` as a floor for the close, and
-confirm it against a real cold travel before trusting it. Weak corroboration
-that the cold figure is the representative one: at 11,000 ms the hand-close
-figure below sits at 114% of the vibration band, almost exactly the 111% it had
-flat, where the warm 9,105 ms put it at a thin 137%.
+**A close of 10,912 ms was once blamed on the door being COLD. That was wrong —
+it was ORIENTATION.** The reasoning looked sound at the time: five `calibrate`
+passes upright had measured 9,034–9,209 ms, and the next real close took
+10,912 ms, 1.8 s outside the whole range, so "calibrate runs the door warm and
+under-reports" was adopted and the configured close raised to 11,000 ms.
+
+Then the door was laid flat and cycled twenty times: closes came in at
+10,714–11,316 ms, **mean 10,934 ms**. That brackets the supposedly-cold 10,912 ms
+exactly, while every upright close was ~1.7 s faster. The door had simply been
+laid flat (or was being handled) when that close was logged. It is the same
+gravity argument as the crossover above, applied to the right variable —
+reached for temperature when orientation was in plain sight.
+
+**The consequence to act on: 11,000 ms is right for FLAT and ~1.9 s too generous
+for UPRIGHT.** Per the `DOOR_TRAVEL_MS` comment's own argument that is two
+seconds of slack added to every upright stall decision. It is not dangerous — a
+stalled close fails open — but it blunts detection. **When this door goes back
+upright, re-calibrate and expect close ≈ 9.1–9.5 s.** Note the vibration band
+moves with it: at the flat 11,000 ms the hand-close figure below sits at 114%,
+and at an upright 9,105 ms it sits at a thinner 137%.
+
+**What DID show up over twenty cycles is a mild upward drift**: closes rose from
+a 10,814 ms mean over the first five to 11,095 ms over the last five, +280 ms,
+with opens up +180 ms. Plausibly thermal and bounded; the 3,000 ms
+`TRAVEL_GRACE_MS` absorbs it with ~2.7 s to spare, which is the grace doing
+exactly the job it exists for. Re-measure after the door has cooled before
+reading anything more into it.
 
 Within the warm passes the close was **bimodal rather than noisy**: two at
 9,209/9,204 ms and three at 9,034/9,034/9,044 ms, each cluster tight to ~10 ms.

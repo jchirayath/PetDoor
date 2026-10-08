@@ -225,15 +225,20 @@ reporting stalls:
 variation. Raising the travel time is the fix for a door that has genuinely
 slowed; raising the grace is the fix for one that varies.
 
-**`calibrate` measures a WARM door, and the close is where that shows.** It
-drives the door several times in a few minutes, so the mechanism never gets
-cold. On the reference door five passes gave 9,034–9,209 ms, and the first real
-close afterwards — four hours idle, in the evening — took **10,912 ms**: 1.8 s
-outside the whole calibration range, leaving barely a second of the 3 s grace.
-Since a close that misses its deadline is declared STALLED and **fails open**,
-that is a door that reverses perfectly good closes and eventually parks itself
-open. So treat the calibrated close as a **floor**, check the first cold close
-in `last verified`, and raise the configured figure to match it.
+**Check `last verified` against the configured pair, and if they disagree, suspect
+the ORIENTATION before anything else.** On the reference door five upright passes
+gave closes of 9,034–9,209 ms, and a later close measured **10,912 ms** — 1.8 s
+outside the whole range. That was initially blamed on a cold mechanism and the
+configured close was raised to match. It was simply the door lying flat: twenty
+flat cycles afterwards averaged **10,934 ms**, bracketing the odd reading exactly.
+
+The lesson is the cheap one: a travel time is only valid for the orientation it
+was measured in, and `last verified` drifting a second or two from `configured`
+is usually the door having been moved, not the mechanism changing. Re-calibrate
+rather than re-theorise.
+
+Repeated cycling does drift the figure slightly — twenty cycles in an hour added
+~280 ms to the close — but `TRAVEL_GRACE_MS` is sized for exactly that.
 
 ---
 
