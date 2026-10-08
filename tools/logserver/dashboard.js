@@ -29,6 +29,14 @@ const REFUSE={1:"already there",2:"too soon after last move",3:"boot grace perio
 // an ordinary beacon open, and those mean very different things: see CLAUDE.md
 // invariant 20 on why two different facts must not look the same here.
 const SRC={0:"beacon",1:"console",2:"network",3:"fail-safe reversal"};
+// Maintenance window durations offered on the dashboard, in minutes. The
+// firmware accepts any value up to MAINT_MAX_MS (4 h) and REFUSES anything
+// longer rather than shortening it (maintenance.cpp: "Silently shortening a
+// window somebody asked for" is the thing it avoids). So 240 is the last entry
+// that works, and offering 480 here would just produce a refusal in the
+// acknowledgement.
+const MAINT_CHOICES=[15,30,60,120,240];
+const maintLabel=m=>m<60?`${m} min`:(m%60?`${(m/60).toFixed(1)} h`:`${m/60} h`);
 let events=[], commands=[], selected=null;
 let pending=[], controlOn=false, devices=[], busy=false;
 
@@ -907,7 +915,17 @@ function renderControl(){
             // Where to point a console. Shown only while a window is open,
             // because that is the only time anything is listening there.
             +(st.ip&&st.ip!=="-"?`<span class="glabel" data-u="self-c">console: ${esc(st.ip)}:23</span>`:"")
-          : `<button class="b-quiet" data-cmd="maint 30" data-confirm="Start a 30-minute maintenance window? The collar will NOT open or close the door until it expires, and the console opens over WiFi. The window ends by itself.">Maintenance (30 min)</button>`))
+            // One button per duration rather than a free-text box, on purpose.
+            // The firmware takes any number of minutes up to MAINT_MAX_MS (4 h),
+            // but the comment above is the reason not to offer a bare field: the
+            // safety property is that the window ENDS BY ITSELF, and a control
+            // that does not state its own duration invites leaving it on. A
+            // button that says "4 h" cannot be misread; a box showing "240"
+            // can.
+          : MAINT_CHOICES.map(m=>
+              `<button class="b-quiet" data-cmd="maint ${m}"`
+              +` data-confirm="Start a ${maintLabel(m)} maintenance window? The collar will NOT open or close the door until it expires, and the console opens over WiFi. The window ends by itself.">`
+              +`${maintLabel(m)}</button>`).join("")))
     +'</div>';
 
   let queue="";
