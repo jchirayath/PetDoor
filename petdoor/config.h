@@ -1032,14 +1032,32 @@
 // with a close that means reversing a door that was closing perfectly well.
 //
 // OPEN AND CLOSE ARE SEPARATE, and on a mounted door they are not equal.
-// Gravity assists one direction and opposes the other, and mounted upright the
-// two diverge further. Measure both.
+// Gravity assists one direction and opposes the other. Mounted upright the two
+// do not merely diverge — on the reference door they SWAP OVER, because gravity
+// opposes the lift and assists the drop. Measure both, in the orientation the
+// door will actually run in; a flat-bench pair is wrong in sign once upright.
 //
 // TWO DIFFERENT NUMBERS GET CALLED "THE TRAVEL TIME", and this setting wants the
-// second one. On the reference door, flat:
+// second one. On the reference door:
 //
+//   flat:
 //     stopwatch, press to physical stop     open 12,180 ms   close 12,704 ms
 //     reed to reed, what the firmware sees  open 10,203 ms   close 11,229 ms
+//   upright, 5 calibrate passes:
+//     reed to reed, what the firmware sees  open 11,366 ms   close  9,105 ms
+//   flat, 20 cycles over an hour:
+//     reed to reed, what the firmware sees  open 10,222 ms   close 10,934 ms
+//
+// ORIENTATION, NOT TEMPERATURE, is what separates those closes. A single close
+// of 10,912 ms was once blamed on a cold mechanism and the configured close was
+// raised to 11,000 ms to match it. Twenty flat cycles later averaged 10,934 ms,
+// bracketing that figure exactly, while every upright close was ~1.7 s faster:
+// the door had been laid flat, not left to cool. So re-calibrate on any change
+// of mounting angle and do not reach for temperature first.
+//
+// Twenty cycles in an hour DID drift upward ~280 ms on the close (and ~180 ms on
+// the open), which TRAVEL_GRACE_MS absorbs with seconds to spare. That is the
+// grace earning its keep; it is not a reason to pad this number.
 //
 // Reed-to-reed is shorter, and correctly so: a reed makes before the door reaches
 // its stop. It is also the number the arrival deadline wants, because the arrival

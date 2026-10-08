@@ -337,7 +337,7 @@ not. The reasoning behind each is in
 | Setting | Default | Description |
 |---|---|---|
 | `DOOR_TRAVEL_MS` | `0` | How long the door takes to travel, ms. `0` = "not measured", which disables both announcement and verification. Deliberately not a guess: a travel time set too short reads every good travel as a stall, and for a close that means reversing a door that was closing perfectly well. |
-| `DOOR_TRAVEL_OPEN_MS` | `DOOR_TRAVEL_MS` | Per-direction override. On a **mounted** door these are not equal — gravity assists the close and opposes the open. Measured flat, the reference door took 12,180 ms to open and 12,704 ms to close; upright they diverge further. |
+| `DOOR_TRAVEL_OPEN_MS` | `DOOR_TRAVEL_MS` | Per-direction override. On a **mounted** door these are not equal — gravity assists the close and opposes the open. On the reference door the two **swap over** once upright: flat it read open 10,203 ms / close 11,229 ms (reed to reed), upright open 11,366 ms / close 9,105 ms. Measure both in the orientation the door will run in. |
 | `DOOR_TRAVEL_CLOSE_MS` | `DOOR_TRAVEL_MS` | As above. Set both with `w` → `travel 12200 12700`, or let `calibrate` measure them. |
 | `TRAVEL_GRACE_MS` | `3000` | How much longer than the travel time to wait before calling it a stall. A door is slower in January and slower as it wears; keeping the margin separate keeps the travel time an honest measurement. |
 | `ARRIVAL_WAIT_MAX_MS` | `60000` | The arrival deadline when switches are fitted but no travel time is known. With a switch at the destination the door does not need a travel time to know it arrived — this only bounds the wait, and the duration becomes the measurement. |

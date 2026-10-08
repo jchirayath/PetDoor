@@ -146,9 +146,13 @@ reasons:
 - `MIN_ACTUATION_INTERVAL_MS` has to exceed it, or a reversal can land
   mid-travel, which most controllers read as STOP.
 
-**Open and close are not the same number.** Gravity assists one and opposes the
-other. Measured with the reference door lying flat they were 12,180 ms and
-12,704 ms; mounted upright they diverge further. Measure both.
+**Open and close are not the same number**, and on the reference door they
+**swap over** once it is upright. Lying flat, reed to reed, it read open
+10,203 ms / close 11,229 ms — closing was the slow leg. Mounted upright it reads
+open 11,366 ms / close 9,105 ms — *opening* is now the slow leg, by over two
+seconds, because gravity opposes the lift and assists the drop. Measure both, in
+the orientation the door will run in. A pair measured flat is not merely
+imprecise once the door is upright; it is wrong in sign.
 
 ### With limit switches: `calibrate`
 
@@ -182,7 +186,7 @@ After the quiet period it drives the door to one end and back, timing each leg
 from the press, and adopts and saves both figures:
 
 ```
-[cal] measured open 12184 ms, close 12702 ms — adopted and saved
+[cal] measured open 11392 ms, close 9209 ms — adopted and saved
 ```
 
 ### Without limit switches: a stopwatch
@@ -203,8 +207,8 @@ With switches fitted, `s` reports the duration of the last verified travel in
 each direction beside the configured pair:
 
 ```
-  door travel  : open 12200 ms, close 12700 ms configured
-  last verified: open 12184 ms, close 12702 ms (measured, this boot)
+  door travel  : open 11366 ms, close 11000 ms configured
+  last verified: open 11409 ms, close 10912 ms (measured, this boot)
 ```
 
 That comparison is the whole of travel-time maintenance. A measured figure
@@ -213,13 +217,28 @@ or a mechanism starting to bind — and the firmware says so before it starts
 reporting stalls:
 
 ```
-[door] !! that is within a second of the 15700 ms deadline — raise it with
+[door] !! that is within a second of the 14000 ms deadline — raise it with
 [door] !! 'w' then 'travel', or run 'calibrate'
 ```
 
 `TRAVEL_GRACE_MS` (3 s by default) is the margin that absorbs the ordinary
 variation. Raising the travel time is the fix for a door that has genuinely
 slowed; raising the grace is the fix for one that varies.
+
+**Check `last verified` against the configured pair, and if they disagree, suspect
+the ORIENTATION before anything else.** On the reference door five upright passes
+gave closes of 9,034–9,209 ms, and a later close measured **10,912 ms** — 1.8 s
+outside the whole range. That was initially blamed on a cold mechanism and the
+configured close was raised to match. It was simply the door lying flat: twenty
+flat cycles afterwards averaged **10,934 ms**, bracketing the odd reading exactly.
+
+The lesson is the cheap one: a travel time is only valid for the orientation it
+was measured in, and `last verified` drifting a second or two from `configured`
+is usually the door having been moved, not the mechanism changing. Re-calibrate
+rather than re-theorise.
+
+Repeated cycling does drift the figure slightly — twenty cycles in an hour added
+~280 ms to the close — but `TRAVEL_GRACE_MS` is sized for exactly that.
 
 ---
 

@@ -30,7 +30,9 @@ build/
 .idea/
 .DS_Store
 
-# Claude Code local settings (shared settings.json IS committed)
+# Claude Code settings. Not committed: they carry machine-specific permissions
+# (host aliases, local paths) that mean nothing on anyone else's checkout.
+.claude/settings.json
 .claude/settings.local.json
 
 # Playwright MCP scratch output (screenshots are curated into docs/assets)

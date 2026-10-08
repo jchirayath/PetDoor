@@ -200,6 +200,31 @@ reads (`min 200`) makes every read block until the port speaks again, which
 hangs the capture the moment the output ends. If a long dump arrives truncated,
 add iterations — do not raise `min`.
 
+**But iterations are not seconds, so pace a TIMED operation by the clock.** A
+`dd` that finds data returns immediately; only a silent read burns its full
+`time N`. This console emits `[wifi]`/`[cmd]` lines every few seconds, so a
+135-iteration loop elapsed well under 135 s — which desynchronised a run of five
+`calibrate` passes, got one `C` refused with `[cal] the door is already
+travelling`, and lost one verdict that printed after the descriptor closed. For
+anything with a known duration — a travel, a ~115 s calibration pass — use a
+deadline inside the one held descriptor:
+
+```bash
+END=$(( $(date +%s) + 150 ))
+while [ $(date +%s) -lt $END ]; do dd bs=8192 count=1 <&3 2>/dev/null; done
+```
+
+A verdict lost to a closed descriptor is still recoverable: `s` reports both the
+`configured` and the `last verified` pair, so the device remembers what the
+missed `[cal]` line said.
+
+**Send a submenu key with NO carriage return.** `printf 'w\r'` does not open the
+timing menu, it opens and immediately exits it — the CR *is* the empty line that
+cancels, and the reply is `[mac] cancelled, nothing changed.` Everything typed
+next is then interpreted as top-level keystrokes, which is how a `travel ...`
+line became `t` plus a thresholds-menu buffer. Send the bare key, grep the reply
+for the menu header, and only then send the line.
+
 **Output printed while no descriptor is open is gone** — there is no flow
 control. Capture across a whole operation in one connection rather than
 reconnecting between steps, or verdicts that print during the gap are lost.
@@ -231,29 +256,80 @@ seconds apart — that is the wake press, not a fault.
 
 ## The reference door, as measured
 
-Flat, controller and motor connected, both reeds + vibration + buzzer fitted.
-Pins: relays 16/17 **active HIGH**, LED 23, reeds **32**/**25**, buzzer **27**
+Controller and motor connected, both reeds + vibration + buzzer fitted. Pins:
+relays 16/17 **active HIGH**, LED 23, reeds **32**/**25**, buzzer **27**
 (passive), vibration **33**. None of the sensor pins are compiled-in defaults —
 they are set at runtime and saved on the device.
 
+**Mounted UPRIGHT, which is the configuration in service.** Measured
+2026-10-07:
+
 | | |
 |---|---|
-| travel, reed to reed | open **10,203 ms**, close **11,229 ms** |
-| repeatability | within ~220 ms across separate travels |
+| travel CONFIGURED | open **11,366 ms**, close **11,000 ms** |
+| UPRIGHT, `calibrate`, five passes | open **11,366 ms** mean, close **9,105 ms** mean |
+| UPRIGHT repeatability | open spread **78 ms**, close spread **175 ms** (n=5) |
+| FLAT, 20 cycles over an hour | open **10,222 ms** mean, close **10,934 ms** mean |
+| FLAT repeatability | 602 ms range in each direction (n=20) |
 | travel, closed BY HAND | **12,500 ms** — measured as vibration, not reeds |
 | relay pulse | **1,500 ms** stored on the device (500 ms is swallowed) |
 | vibration while moving | ~2,900 edges/s; **0** at rest |
+
+**Upright REVERSES which direction is slower, and that is the whole reason to
+re-measure after mounting.** Lying flat the same door read open 10,203 ms /
+close 11,229 ms, so closing was the slow leg by ~1.0 s. Upright, *opening* is
+the slow leg by ~2.3 s — gravity opposes the lift and assists the drop. A travel
+time carried over from a flat bench is therefore wrong in both directions and
+wrong in sign: it gives the open leg ~1.2 s less than it needs while handing the
+close ~2.1 s of slack it does not. Re-calibrate after any change in mounting
+angle, and do not interpolate between the two sets.
+
+**A close of 10,912 ms was once blamed on the door being COLD. That was wrong —
+it was ORIENTATION.** The reasoning looked sound at the time: five `calibrate`
+passes upright had measured 9,034–9,209 ms, and the next real close took
+10,912 ms, 1.8 s outside the whole range, so "calibrate runs the door warm and
+under-reports" was adopted and the configured close raised to 11,000 ms.
+
+Then the door was laid flat and cycled twenty times: closes came in at
+10,714–11,316 ms, **mean 10,934 ms**. That brackets the supposedly-cold 10,912 ms
+exactly, while every upright close was ~1.7 s faster. The door had simply been
+laid flat (or was being handled) when that close was logged. It is the same
+gravity argument as the crossover above, applied to the right variable —
+reached for temperature when orientation was in plain sight.
+
+**The consequence to act on: 11,000 ms is right for FLAT and ~1.9 s too generous
+for UPRIGHT.** Per the `DOOR_TRAVEL_MS` comment's own argument that is two
+seconds of slack added to every upright stall decision. It is not dangerous — a
+stalled close fails open — but it blunts detection. **When this door goes back
+upright, re-calibrate and expect close ≈ 9.1–9.5 s.** Note the vibration band
+moves with it: at the flat 11,000 ms the hand-close figure below sits at 114%,
+and at an upright 9,105 ms it sits at a thinner 137%.
+
+**What DID show up over twenty cycles is a mild upward drift**: closes rose from
+a 10,814 ms mean over the first five to 11,095 ms over the last five, +280 ms,
+with opens up +180 ms. Plausibly thermal and bounded; the 3,000 ms
+`TRAVEL_GRACE_MS` absorbs it with ~2.7 s to spare, which is the grace doing
+exactly the job it exists for. Re-measure after the door has cooled before
+reading anything more into it.
+
+Within the warm passes the close was **bimodal rather than noisy**: two at
+9,209/9,204 ms and three at 9,034/9,034/9,044 ms, each cluster tight to ~10 ms.
+The 9,105 ms mean is a value the door never actually produced — do not quote it
+as a typical travel, and do not chase the 175 ms as drift.
 
 Reed-to-reed is shorter than the stopwatch figures in `docs/REQUIREMENTS.md`
 §1, and correctly so: a reed makes before the door reaches its physical stop.
 It is also the number the arrival deadline wants.
 
 A hand is slower than the motor, which is why `VIBRATION_TRAVEL_MAX_PCT` is the
-loose end of the band: 12.5 s against a motorised 11.2 s is 111%, comfortably
-inside, and the inference in `concludeVibrationRun()` was verified on this door
-with the closed reed unplugged. Do not tighten that bound to flatter the
-motorised figure — the travels this code exists to notice are the hand-driven
-ones.
+loose end of the band: 12.5 s by hand against the configured **11.0 s** is
+**114%**, comfortably inside, and close to the 111% it read flat. The inference
+in `concludeVibrationRun()` was verified on this door with the closed reed
+unplugged. Do not tighten that bound to flatter the motorised figure — the
+travels this code exists to notice are the hand-driven ones. Note that the band
+is a percentage of the CLOSE travel, so it moves whenever that does: at the warm
+9,105 ms it would have put the same hand close at 137%, within ~17% of falling
+outside the band and not being inferred at all.
 
 **Free heap is not monotonic, so two samples cannot show a leak.** The figure in
 the uploaded status line is captured with the WiFi and TLS stack resident, and
@@ -268,18 +344,27 @@ apart. That is not a fault.
 
 ## secrets.h
 
-Git-ignored, and denied in `.claude/settings.json`, because this is a public
+Git-ignored, and denied in the local (uncommitted) `.claude/settings.json`, because this is a public
 repo. It typically carries `BEACON_MAC`, `RSSI_ENTER_DBM`, `RSSI_EXIT_DBM`,
 `RELAY_ACTIVE_LOW`, `OTA_PASSWORD`, `CONSOLE_PASSWORD` and the log-server
 credentials.
 
 **The deny is a guardrail, not a sandbox — do not treat it as a guarantee.**
-`Read(./petdoor/secrets.h)` genuinely stops the Read tool, and a dozen
-`Bash(<tool>:*secrets.h*)` rules stop the obvious shell equivalents. But those
-match the COMMAND TEXT, not the file, so anything that reaches the file without
-spelling its name walks straight through — `grep -r PASSWORD petdoor/` is
-allowed by `Bash(grep:*)` and prints the line. That one cannot be closed by a
-substring rule without banning recursive grep altogether.
+`Read(./petdoor/secrets.h)` genuinely stops the Read tool. The
+`Bash(<tool>:*secrets.h*)` rules that used to stop the obvious shell
+equivalents were removed on 2026-10-07; what remains in the deny list is the
+`Read` rule and the two bare-`upload` rules. Where those substring rules existed
+they matched the COMMAND TEXT, not the file, so anything reaching the file
+without spelling its name walked straight through — `grep -r PASSWORD petdoor/`
+is allowed by `Bash(grep:*)` and prints the line, and that could not be closed
+by a substring rule without banning recursive grep altogether.
+
+**`settings.json` is not the only gate, and it is not the binding one.** With
+every `*secrets.h*` Bash rule removed, `grep -c <marker> petdoor/secrets.h` was
+still refused — the auto-mode classifier judges these independently and
+overrides the allow list. So do not reason about what is reachable from the
+permission file: it under-states the restriction in one direction and
+over-states it in the other. Try, and if it is refused, hand the command over.
 
 So the rule that actually protects these values is a behavioural one:
 
@@ -292,6 +377,24 @@ the expected behaviour, and it came from judgement rather than from the config.
 **Ask rather than theorise.** `RELAY_ACTIVE_LOW` was a leading hypothesis for
 over an hour of one session for want of a question that would have taken one
 exchange.
+
+**An `#ifndef`-guarded block appended TWICE is a silent trap: the FIRST copy
+wins.** Every override here is `#ifndef`-guarded, which is what makes appending
+safe — and also what makes a revised value lose to the stale one already above
+it. A block was appended, revised, and appended again; fourteen values matched
+so nothing complained, and the fifteenth — `DOOR_TRAVEL_CLOSE_MS` — compiled in
+the superseded figure. Nothing warns, because `#ifndef` is doing exactly what it
+promises. Re-appending is idempotent only when the values have not changed, so
+after any revision check for duplicates (`grep -c` the block's marker comment)
+rather than appending again.
+
+**Prove a compiled-in default by clearing the stored one.** These values usually
+sit in NVS as well, so the console reporting the right number proves nothing
+about the fallback. `clear` in the timing menu reverts to the compiled values and
+is exactly what a remote `defaults` does — which makes it both the test and a
+rehearsal of the recovery. It is how the duplicate above was caught, and it
+should be run while a cable is still attached, because it writes those compiled
+values straight back into NVS.
 
 
 ## Layout

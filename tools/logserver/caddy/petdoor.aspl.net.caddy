@@ -3,12 +3,12 @@
 # TWO CLASSES OF REQUEST, AND THEY MUST NOT BE CONFUSED
 #
 #   browser    the dashboard, the API it reads, the CSV export. Entra ID, same
-#              gate as the other private sites. Door events say when the house is
+#              gate as the web host's other private sites. Door events say when the house is
 #              empty, so this is not public.
 #
 #   door       /ingest — the ESP32. Authenticated by HMAC-SHA256 over a shared
 #              key AT THE APPLICATION, and it MUST bypass Entra entirely, for
-#              exactly the reason any machine client on this host does: oauth2-proxy answers
+#              the same reason as any machine client on this host: oauth2-proxy answers
 #              a machine with an HTML sign-in redirect, which a microcontroller
 #              cannot satisfy and would retry forever.
 #
@@ -19,7 +19,7 @@
 #              signature is what makes the upload trustworthy.
 #
 # ── WHY ONE `route` BLOCK ────────────────────────────────────────────────────
-# Same reason as the other vhosts and the other private sites: Caddy sorts bare
+# Same reason as the other vhosts on this web host: Caddy sorts bare
 # directives into its own canonical order, so `request_header -X-...` written
 # before forward_auth would RUN AFTER it and delete the identity just
 # established. `route` preserves written order. Verify after any edit with:
@@ -108,8 +108,8 @@ Policy: https://github.com/jchirayath/PetDoor/blob/main/SECURITY.md
 	}
 
 
-	# Security headers. The house pattern (the public sites, the other private sites), at
-	# othersite's stricter settings rather than the public sites': this dashboard
+	# Security headers. The web host's house pattern, at its private sites'
+	# stricter settings rather than the public sites': this dashboard
 	# shows when a house is empty, so it should not be framed and should not leak
 	# its URL to wherever a link points.
 	#
