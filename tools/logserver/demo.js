@@ -1,4 +1,22 @@
-const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost"};
+// Every event the door can log, labelled as the server's /table labels it
+// (petdoor-logserver.py EVENT_LABEL). An event missing here used to render as
+// "undefined" — which is how a door moved by hand vanished from this page while
+// sitting correctly in the database.
+const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost",STALLED:"did not complete its travel",
+  UNCOMMANDED:"moved, not by PetDoor",RETRY:"pressed again",GAVE_UP:"gave up closing",WAKE:"woke the controller",NO_MOVE:"did not move at all",
+  MAINT:"maintenance mode",CONSOLE:"network console",BEACON_LOW:"beacon battery",SENSOR_FAULT:"sensor fault",SENSOR_OK:"sensor recovered"};
+const evLabel=t=>EV[t]||t;
+// UNCOMMANDED's detail is where the door ended up: 1/2 when a limit switch
+// MEASURED it, 11/12 (kUncommandedInferred + state) when it was INFERRED from
+// how long the vibration sensor felt it move, with that duration in src.
+// Shown differently on purpose — see CLAUDE.md invariant 20.
+function uncommandedDetail(e){
+  const inferred=e.detail>=10, st=inferred?e.detail-10:e.detail;
+  const where=st===1?"open":st===2?"closed":"state "+st;
+  const how=inferred?(e.src?`inferred from ${(e.src/1000).toFixed(1)} s of movement`:"inferred from the movement")
+                    :"a limit switch saw it";
+  return `<strong data-u="c-fault">moved to ${where}, nothing commanded it</strong> <span data-u="c-ink3">(${how})</span>`;
+}
 const RESET={1:"power-on",3:"software",4:"panic",5:"interrupt watchdog",6:"task watchdog",7:"watchdog",9:"brownout",};
 const REFUSE={1:"already there",2:"too soon after last move",3:"boot grace period"};
 let events=[], commands=[], selected=null;
@@ -237,6 +255,8 @@ function renderStrip(){
       const cx=x(secsIntoDay(e.epoch));
       if(e.type==="CLOSE") g+=`<circle cx="${cx}" cy="${y}" r="5" fill="var(--out)" stroke="var(--panel)" stroke-width="2"><title>Went out ${fmtClock(e.epoch)}</title></circle>`;
       else if(e.type==="OPEN") g+=`<circle cx="${cx}" cy="${y}" r="5" fill="var(--in)" stroke="var(--panel)" stroke-width="2"><title>Came in ${fmtClock(e.epoch)}</title></circle>`;
+      else if(e.type==="UNCOMMANDED"){const st=e.detail>=10?e.detail-10:e.detail;
+        g+=`<rect x="${cx-4.5}" y="${y-4.5}" width="9" height="9" transform="rotate(45 ${cx} ${y})" fill="var(--panel)" stroke="var(--fault)" stroke-width="2"><title>Moved to ${st===1?"open":st===2?"closed":"?"} with nothing commanding it ${fmtClock(e.epoch)}</title></rect>`;}
       else if(e.type==="BOOT") g+=`<rect x="${cx-2}" y="${y-9}" width="4" height="18" rx="1.5" fill="${e.detail===9?"var(--fault)":"var(--ink-3)"}"><title>${e.detail===9?"Brownout":"Restart"} ${fmtClock(e.epoch)}</title></rect>`;
     }
   });
@@ -248,7 +268,7 @@ function renderTable(){
   if(!events.length){host.innerHTML='<div class="empty">Nothing imported yet. Load the example, or drop in a CSV from the door.</div>';$("evhint").textContent="";return;}
   const rows=events.slice().reverse().slice(0,60);
   $("evhint").textContent=events.length+" events"+(events.length>60?" · newest 60, scroll for more":"");
-  const cls=t=>t==="OPEN"?"in":t==="CLOSE"?"out":t==="REFUSED"?"fault":"sys";
+  const cls=t=>t==="OPEN"?"in":t==="CLOSE"?"out":(t==="REFUSED"||t==="UNCOMMANDED"||t==="GAVE_UP"||t==="SENSOR_FAULT")?"fault":"sys";
   host.innerHTML="<table><thead><tr><th>When</th><th>Event</th><th>Detail</th><th>Signal</th><th></th></tr></thead><tbody>"
    +rows.map((e,i)=>{
      const when=e.epoch?`<span class="mono">${fmtDate(e.epoch)}</span> <span class="mono" data-u="c-ink2">${fmtClock(e.epoch)}</span>`
@@ -256,8 +276,9 @@ function renderTable(){
      let d="";
      if(e.type==="BOOT") d=RESET[e.detail]||("reset "+e.detail);
      else if(e.type==="REFUSED") d=REFUSE[e.detail]||("reason "+e.detail);
+     else if(e.type==="UNCOMMANDED") d=uncommandedDetail(e);
      if(e.type==="BOOT"&&e.detail===9) d=`<strong data-u="c-fault">${d}</strong>`;
-     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" data-u="bg-current"></i>${EV[e.type]}</span></td>`
+     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" data-u="bg-current"></i>${evLabel(e.type)}</span></td>`
       +`<td data-u="c-ink2">${d}</td><td class="mono" data-u="c-ink2">${e.rssi?e.rssi+" dBm":""}</td>`
       +`<td data-u="ta-r">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
    }).join("")+"</tbody></table>";
@@ -374,7 +395,7 @@ async function load(){
        /api/events, which is the private route, so it can be public. */
     const j=window.__PETDOOR_SAMPLE__;
     events=(j.events||[]).map(e=>({epoch:+e.epoch||0,uptime:+e.uptime||0,boot:+e.boot||0,
-      type:e.type,detail:+e.detail||0,rssi:+e.rssi||0,device:e.device||""}));
+      type:e.type,detail:+e.detail||0,rssi:+e.rssi||0,src:+e.src||0,device:e.device||""}));
     events.sort((a,b)=>(a.epoch||0)-(b.epoch||0)||a.boot-b.boot||a.uptime-b.uptime);
     commands=(j.commands||[]);
     renderDoors(j.devices||[]);
