@@ -170,6 +170,7 @@ entirely.
 flowchart LR
     P["/"] --> PD["Project page<br/><i>public — no data</i>"]
     I["/images/*"] --> ID["Photographs<br/><i>public</i>"]
+    S["/assets/*"] --> SD["Theme, page CSS and JS<br/><i>public — code, no data</i>"]
     H["/health"] --> HD["Uptime check<br/><i>public</i>"]
     R["/dashboard"] --> RD["Analytics<br/><b>private</b>"]
     A["/api/events"] --> AD["JSON log<br/><b>private</b>"]
@@ -179,6 +180,7 @@ flowchart LR
 
     style PD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
     style ID fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
+    style SD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
     style HD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
     style RD fill:#2A9D8F,stroke:#21867A,color:#ffffff
     style AD fill:#2A9D8F,stroke:#21867A,color:#ffffff
@@ -199,7 +201,7 @@ proxy can. See [protecting the private routes](#protecting-the-private-routes).
 ### The public page
 
 <p align="center">
-  <img src="assets/screenshot-public.jpg" alt="The public project page: what PetDoor is, photographs of the build, how it works, and a sign-in link to the analytics" width="760">
+  <img src="assets/screenshot-public.jpg" alt="The public project page: the headline, a chart of the collar signal crossing the open and close thresholds, and the site bar with links to the sample dashboard and sign-in" width="760">
 </p>
 
 Served at `/`. It explains what the door is, shows the build, and links to the
@@ -547,7 +549,7 @@ Whatever you use, the rule is the same shape:
 
 | Path | Who |
 |---|---|
-| `/`, `/images/*`, `/health` | anyone |
+| `/`, `/demo*`, `/images/*`, `/assets/*`, `/health` | anyone — `/assets/*` must be public or `/` renders unstyled |
 | `/dashboard`, `/api/*`, `/table`, `/export.csv` | you — `/api/*` **includes `/api/command`, which opens the door** |
 | `/ingest` | the door — POST only, HMAC-signed, **never** behind the login |
 

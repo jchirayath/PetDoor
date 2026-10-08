@@ -76,6 +76,13 @@ petdoor.aspl.net {
 		handle /images/* {
 			reverse_proxy petdoor:8080
 		}
+		# The shared theme and the project page's stylesheet, script and
+		# diagrams. Public because / needs them before sign-in: without this
+		# route they fall to Entra below, return a 302, and the page renders
+		# unstyled. Code only — the same files are in the public repo.
+		handle /assets/* {
+			reverse_proxy petdoor:8080
+		}
 
 		# WEB-9. Public on purpose, and listed here with the other public routes
 		# rather than left to fall through — everything below reaches Entra, and

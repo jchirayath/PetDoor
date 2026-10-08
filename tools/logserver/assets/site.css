@@ -1,0 +1,232 @@
+/* The project page. Colours, fonts and the site bar come from theme.css,
+   linked first; this file is layout and the page's own components.
+
+   The page reads like a hardware datasheet: quiet paper, a section name in the
+   margin, tables where the content is a table. Its one loud element is the
+   solder-mask green the schematics are drawn on — the masthead chart and the
+   architecture diagram — and nothing else on the page competes with them. */
+
+.page{max-width:1160px; margin:0 auto; padding:0 20px}
+
+/* ── Masthead ──────────────────────────────────────────────────────────── */
+.mast{
+  display:grid; grid-template-columns:minmax(0,5fr) minmax(0,6fr);
+  gap:48px; align-items:center; padding:64px 0 72px;
+}
+.mast h1{
+  font-family:var(--f-cond); font-weight:600;
+  font-size:clamp(38px,5.4vw,62px); line-height:1.02; letter-spacing:-.025em;
+  margin:0 0 22px; max-width:14ch;
+}
+.mast .intro{font-size:clamp(17px,1.9vw,19.5px); color:var(--ink-2); margin:0 0 14px; max-width:46ch}
+.mast .intro strong{color:var(--ink); font-weight:600}
+.actions{display:flex; flex-wrap:wrap; gap:10px; margin-top:28px}
+.btn{
+  display:inline-flex; align-items:center; gap:9px; text-decoration:none;
+  font-weight:600; font-size:15px; line-height:1; padding:13px 18px;
+  border-radius:var(--r-m); border:1px solid var(--line);
+  background:var(--panel); color:var(--ink);
+}
+.btn:hover{border-color:var(--ink-3)}
+.btn.primary{background:var(--in); border-color:var(--in); color:var(--on-in)}
+.btn.primary:hover{background:color-mix(in srgb,var(--in) 88%,#000)}
+.btn svg{width:17px; height:17px; flex:0 0 auto}
+
+/* ── The board: the solder-mask panel the schematics sit on ─────────────── */
+.board{
+  margin:0;
+  background:var(--pcb); color:var(--silk); border-radius:var(--r-l);
+  position:relative; overflow:hidden;
+  box-shadow:inset 0 0 0 1px var(--pcb-line), var(--shadow);
+}
+.board figcaption{
+  font-size:13.5px; color:var(--silk-2); padding:0 22px 18px; max-width:68ch;
+}
+.board figcaption b{color:var(--silk); font-weight:600}
+
+/* Silkscreen drawing. Every schematic on the page uses these classes, so the
+   diagrams match each other and follow the theme into dark mode. */
+.sk text{font-family:var(--f-sans); fill:var(--silk)}
+.sk .t{font-size:15px; font-weight:600}
+.sk .s{font-size:12px; fill:var(--silk-2)}
+.sk .k{font-family:var(--f-mono); font-size:11.5px; fill:var(--silk-2)}
+.sk .zone-l{font-family:var(--f-cond); font-size:14px; font-weight:600; fill:var(--silk-2)}
+.sk .grid{stroke:var(--pcb-line); stroke-width:1}
+.sk .box{fill:var(--pcb-2); stroke:var(--silk-2); stroke-width:1.2}
+.sk .box.door{stroke:var(--in); stroke-width:1.6}
+.sk .box.radio{stroke:var(--out); stroke-width:1.6}
+.sk .zone{fill:none; stroke:var(--pcb-line); stroke-width:1.4; stroke-dasharray:6 5}
+.sk .zone.solid{stroke-dasharray:none}
+.sk .wire{fill:none; stroke:var(--silk-2); stroke-width:1.5}
+.sk .wire.fb{stroke-dasharray:4 4}
+.sk .wire.in{stroke:var(--in)}
+.sk .wire.out{stroke:var(--out)}
+.sk .head{fill:var(--silk-2)}
+.sk .head.in{fill:var(--in)}
+.sk .head.out{fill:var(--out)}
+.sk .arc{fill:none; stroke:var(--out); stroke-width:2.4; stroke-linecap:round}
+.sk .dot-out{fill:var(--out)}
+
+/* The masthead chart */
+.signal svg{display:block; width:100%; height:auto}
+.signal .band{fill:var(--silk); opacity:.06}
+.signal .th{stroke:var(--silk-2); stroke-width:1.2; stroke-dasharray:5 5}
+.signal .trace{fill:none; stroke:var(--out); stroke-width:2.6; stroke-linejoin:round; stroke-linecap:round}
+.signal .mk{stroke-width:1.6}
+.signal .mk.open{stroke:var(--in)}
+.signal .mk.close{stroke:var(--silk)}
+.signal .tag-open{fill:var(--in)}
+.signal .tag-close{fill:var(--silk)}
+.signal .tag-txt{font-family:var(--f-sans); font-size:12.5px; font-weight:600; fill:var(--pcb)}
+
+/* The one orchestrated moment on the page: the trace draws itself as an
+   animal walks up and away, and each door event appears as the trace reaches
+   it. Reduced motion shows the finished drawing at once — not merely sped up,
+   because a delay still hides the door events until it elapses. */
+.signal .trace{stroke-dasharray:1; stroke-dashoffset:1; animation:draw 3.4s cubic-bezier(.45,.05,.4,1) .3s forwards}
+.signal .ev{opacity:0; animation:appear .35s ease-out forwards}
+.signal .ev.open{animation-delay:1.25s}
+.signal .ev.close{animation-delay:3.3s}
+@keyframes draw{to{stroke-dashoffset:0}}
+@keyframes appear{to{opacity:1}}
+@media (prefers-reduced-motion:reduce){
+  .signal .trace{animation:none; stroke-dashoffset:0}
+  .signal .ev{animation:none; opacity:1}
+}
+
+/* ── Sections: the datasheet layout ────────────────────────────────────────
+   A section name and one line in the margin, the content beside it. On a
+   phone the margin stacks on top. */
+.sheet{
+  display:grid; grid-template-columns:240px minmax(0,1fr); gap:48px;
+  padding:64px 0; border-top:1px solid var(--line);
+}
+.sheet > *{min-width:0}  /* or a wide diagram widens the whole page */
+.mast > *{min-width:0}
+.sheet > header{position:sticky; top:84px; align-self:start}
+.sheet h2{
+  font-family:var(--f-cond); font-weight:600; font-size:28px; line-height:1.1;
+  letter-spacing:-.015em; margin:0 0 10px;
+}
+.sheet > header p{margin:0; color:var(--ink-2); font-size:15px}
+.body p{max-width:68ch; margin:0}
+.body h3{font-size:17px; margin:0; letter-spacing:-.005em}
+/* Specific enough to beat `.body p` and `.body h3`: the rhythm between blocks
+   is set here and only here. */
+.body > :not(:first-child){margin-top:20px}
+.body > p + p:not(:first-child){margin-top:14px}
+.body > h3:not(:first-child){margin-top:40px}
+.body > h3 + *:not(:first-child){margin-top:12px}
+
+/* A section whose content needs the full width — a diagram that would be
+   illegible squeezed into the right-hand column. Its name sits above it. */
+.sheet.stack{grid-template-columns:1fr; gap:26px}
+.sheet.stack > header{position:static; max-width:62ch}
+.muted{color:var(--ink-2)}
+code{font-family:var(--f-mono); font-size:.9em; background:var(--sunk);
+     border:1px solid var(--line); border-radius:5px; padding:1px 5px}
+
+.wide{margin-top:28px}
+.scroll-x{overflow-x:auto; -webkit-overflow-scrolling:touch}
+.scroll-x svg{display:block; min-width:860px; width:100%; height:auto}
+
+/* How it works — a real sequence, so it is numbered. */
+.steps{list-style:none; padding:0; margin:0; display:grid; gap:0;
+       grid-template-columns:repeat(4,minmax(0,1fr)); counter-reset:s;
+       border:1px solid var(--line); border-radius:var(--r-l); background:var(--panel)}
+.steps li{padding:22px 22px 24px; counter-increment:s; position:relative}
+.steps li + li{border-left:1px solid var(--line)}
+.steps li::before{
+  content:counter(s); display:block; font-family:var(--f-cond); font-weight:600;
+  font-size:34px; line-height:1; color:var(--in); margin-bottom:12px;
+}
+.steps h3{margin:0 0 6px; font-size:16.5px}
+.steps p{margin:0; color:var(--ink-2); font-size:14.5px}
+.steps .fig{font-family:var(--f-mono); font-size:13px; color:var(--ink); white-space:nowrap}
+
+/* Parts — a table, because it is one. */
+.parts{width:100%; border-collapse:collapse; font-size:14.5px; background:var(--panel);
+       border:1px solid var(--line); border-radius:var(--r-l); overflow:hidden}
+.parts th,.parts td{text-align:left; padding:11px 14px; vertical-align:top; border-top:1px solid var(--line-2)}
+.parts thead th.num{font-family:var(--f-sans)}
+.parts thead th{border-top:0; background:var(--sunk); font-weight:600; font-size:13px; color:var(--ink-2)}
+.parts tbody th{font-weight:600; min-width:13ch}
+.parts td{color:var(--ink-2)}
+.parts .num{font-family:var(--f-mono); font-size:13px; color:var(--ink); white-space:nowrap; text-align:right}
+.parts .pin{font-family:var(--f-mono); font-size:13px; color:var(--ink); white-space:nowrap}
+.parts tr.group th{background:var(--panel); padding-top:18px; font-family:var(--f-cond);
+                   font-size:15.5px; color:var(--ink); border-top:1px solid var(--line)}
+.parts tr.group th span{font-family:var(--f-sans); font-weight:400; font-size:13.5px; color:var(--ink-2); margin-left:8px}
+.parts tfoot td,.parts tfoot th{background:var(--sunk); color:var(--ink); font-weight:600; border-top:1px solid var(--line)}
+@media (max-width:640px){
+  .parts thead{display:none}
+  .parts tr{display:grid; grid-template-columns:1fr auto; padding:10px 14px; border-top:1px solid var(--line-2)}
+  .parts th,.parts td{border:0; padding:2px 0}
+  .parts td.what{grid-column:1 / -1}
+  .parts tr.group{padding-top:16px}
+  .parts td.pin:empty,.parts tfoot td:empty{display:none}
+  .parts tfoot .num{grid-column:2}
+}
+
+/* Photographs and screenshots */
+.photos{display:grid; gap:14px; grid-template-columns:repeat(3,minmax(0,1fr))}
+.photos.two{grid-template-columns:repeat(2,minmax(0,1fr))}
+.photo{margin:0}
+.photo img{display:block; width:100%; height:auto; border-radius:var(--r-m);
+           border:1px solid var(--line); background:var(--sunk)}
+.photo.crop img{aspect-ratio:4/3; object-fit:cover}
+.photo figcaption{font-size:13.5px; color:var(--ink-2); margin-top:8px}
+.photo figcaption b{color:var(--ink); font-weight:600}
+.diagram{margin:0; background:#fff; border:1px solid var(--line); border-radius:var(--r-l); padding:14px}
+.diagram img{display:block; width:100%; height:auto}
+.diagram figcaption{font-size:13.5px; color:#465864; margin-top:10px}
+
+/* What it will never do — the safety list. Two columns of plain statements;
+   the teal rule says these are promises the code keeps. */
+.never{list-style:none; margin:0; padding:0; display:grid; gap:0 36px;
+       grid-template-columns:repeat(2,minmax(0,1fr))}
+.never li{padding:14px 0 14px 18px; border-top:1px solid var(--line); position:relative; font-size:15px}
+.never li::before{content:""; position:absolute; left:0; top:20px; bottom:20px; width:3px;
+                  border-radius:2px; background:var(--in)}
+.never b{font-weight:600}
+.never span{display:block; color:var(--ink-2); font-size:14px; margin-top:2px}
+
+/* Figures in a row, for cost */
+.figures{display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line); border-radius:var(--r-l);
+         background:var(--panel)}
+.figures div{flex:1 1 170px; padding:18px 20px}
+.figures div + div{border-left:1px solid var(--line)}
+.figures .n{font-family:var(--f-cond); font-weight:600; font-size:30px; line-height:1.1; letter-spacing:-.01em}
+.figures .l{color:var(--ink-2); font-size:14px; margin-top:4px}
+
+.limits{display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:28px 36px}
+.limits h3{margin:0 0 6px; font-size:16.5px}
+.limits p{color:var(--ink-2); font-size:15px}
+
+/* Footer */
+.foot{border-top:1px solid var(--line); padding:40px 0 64px; color:var(--ink-2); font-size:14.5px;
+      display:grid; grid-template-columns:240px minmax(0,1fr); gap:48px}
+.foot ul{list-style:none; margin:0 0 18px; padding:0; display:flex; flex-wrap:wrap; gap:6px 22px}
+.foot a{color:var(--ink)}
+.foot p{margin:0 0 8px; max-width:68ch}
+.foot .mark{font-size:17px}
+
+/* ── Narrower screens ──────────────────────────────────────────────────── */
+@media (max-width:980px){
+  .mast{grid-template-columns:1fr; gap:36px; padding:44px 0 52px}
+  .mast h1{max-width:18ch}
+  .sheet,.foot{grid-template-columns:1fr; gap:22px; padding-top:48px}
+  .sheet > header{position:static}
+  .steps{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .steps li:nth-child(3){border-left:0}
+  .steps li:nth-child(n+3){border-top:1px solid var(--line)}
+}
+@media (max-width:640px){
+  .steps{grid-template-columns:1fr}
+  .steps li + li{border-left:0; border-top:1px solid var(--line)}
+  .photos,.photos.two,.never,.limits{grid-template-columns:1fr}
+  .figures div{flex-basis:50%}
+  .figures div + div{border-left:0}
+  .figures div:nth-child(even){border-left:1px solid var(--line)}
+  .figures div:nth-child(n+3){border-top:1px solid var(--line)}
+}

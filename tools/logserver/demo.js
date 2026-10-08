@@ -172,7 +172,7 @@ function renderSignal(){
   const early=median(vals.slice(0,half)), late=median(vals.slice(half));
   const drop=early-late;
   $("signote").innerHTML = drop>=6
-    ? `<strong style="color:var(--fault)">Signal has dropped ${drop} dBm</strong> across this window. That usually means the beacon battery is going — or it has moved further from the door. Worth checking before it starts missing.`
+    ? `<strong data-u="c-fault">Signal has dropped ${drop} dBm</strong> across this window. That usually means the beacon battery is going — or it has moved further from the door. Worth checking before it starts missing.`
     : `Steady within ${Math.abs(drop)} dBm, so the beacon is holding up. A sustained drop of 6 dBm or more is the early warning for a flat battery.`;
 }
 
@@ -251,15 +251,15 @@ function renderTable(){
   const cls=t=>t==="OPEN"?"in":t==="CLOSE"?"out":t==="REFUSED"?"fault":"sys";
   host.innerHTML="<table><thead><tr><th>When</th><th>Event</th><th>Detail</th><th>Signal</th><th></th></tr></thead><tbody>"
    +rows.map((e,i)=>{
-     const when=e.epoch?`<span class="mono">${fmtDate(e.epoch)}</span> <span class="mono" style="color:var(--ink-2)">${fmtClock(e.epoch)}</span>`
-                       :`<span class="mono" style="color:var(--ink-3)">boot ${e.boot} · +${e.uptime}s</span>`;
+     const when=e.epoch?`<span class="mono">${fmtDate(e.epoch)}</span> <span class="mono" data-u="c-ink2">${fmtClock(e.epoch)}</span>`
+                       :`<span class="mono" data-u="c-ink3">boot ${e.boot} · +${e.uptime}s</span>`;
      let d="";
      if(e.type==="BOOT") d=RESET[e.detail]||("reset "+e.detail);
      else if(e.type==="REFUSED") d=REFUSE[e.detail]||("reason "+e.detail);
-     if(e.type==="BOOT"&&e.detail===9) d=`<strong style="color:var(--fault)">${d}</strong>`;
-     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" style="background:currentColor"></i>${EV[e.type]}</span></td>`
-      +`<td style="color:var(--ink-2)">${d}</td><td class="mono" style="color:var(--ink-2)">${e.rssi?e.rssi+" dBm":""}</td>`
-      +`<td style="text-align:right">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
+     if(e.type==="BOOT"&&e.detail===9) d=`<strong data-u="c-fault">${d}</strong>`;
+     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" data-u="bg-current"></i>${EV[e.type]}</span></td>`
+      +`<td data-u="c-ink2">${d}</td><td class="mono" data-u="c-ink2">${e.rssi?e.rssi+" dBm":""}</td>`
+      +`<td data-u="ta-r">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
    }).join("")+"</tbody></table>";
   host.querySelectorAll("button[data-ep]").forEach(b=>b.onclick=()=>selectEvent(+b.dataset.ep));
 }
@@ -268,8 +268,8 @@ function selectEvent(ep){
   selected=ep;
   const stamp=fmtDate(ep)+" "+fmtClock(ep)+"Z";
   for(const id of ["camOut","camIn"]){
-    $(id).innerHTML=`<div><div class="mono" style="font-size:15px;color:var(--ink);font-weight:600">${stamp}</div>
-      <div style="margin-top:4px">scrub here</div></div>`;
+    $(id).innerHTML=`<div><div class="mono" data-u="lead-strong">${stamp}</div>
+      <div data-u="mt4">scrub here</div></div>`;
   }
   $("camsec").scrollIntoView({behavior:"matchMedia" in window && matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"nearest"});
 }
