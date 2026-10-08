@@ -82,6 +82,13 @@ void storeDirectionGap(uint32_t ms);
 bool loadStoredLock();
 void storeLock(bool locked);
 
+// The POSITION hold, which is a different thing from the lock above: the
+// lock stops the beacon OPENING the door, while this pins the door to a
+// state and makes the automatic path inert in both directions. 0 = off,
+// 1 = held open, 2 = held closed. Stored, so it survives a brownout.
+uint8_t loadStoredHold();
+void storeHold(uint8_t hold);
+
 uint32_t loadStoredPulseMs();
 void storePulseTrain(uint8_t count, uint32_t gapMs);
 bool loadStoredPulseTrain(uint8_t &count, uint32_t &gapMs);

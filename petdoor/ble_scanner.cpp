@@ -747,6 +747,24 @@ void storeLock(bool locked) {
   prefs.end();
 }
 
+uint8_t loadStoredHold() {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return 0;
+  const uint8_t h = prefs.getUChar("hold", 0);
+  prefs.end();
+  // Anything unrecognised reads as OFF. A corrupt byte here must not be able to
+  // leave a door inert: the failure direction is "it decides for itself again",
+  // never "it stays shut and nothing can tell it otherwise".
+  return (h == 1 || h == 2) ? h : 0;
+}
+
+void storeHold(uint8_t hold) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putUChar("hold", hold);
+  prefs.end();
+}
+
 uint32_t loadStoredPulseMs() {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return 0;

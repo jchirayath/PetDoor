@@ -101,6 +101,8 @@ Everything the serial console can set, and nothing else.
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
 | `door open\|close\|auto` | Actuate now, or clear a manual hold |
 | `lock` / `unlock` | Stop the beacon opening the door — see below |
+| `lock open` | **Pin the door OPEN.** Opens it now, then nothing automatic closes it — not the collar, not the close dwell, not the schedule. Does **not** expire and survives a reboot. `unlock` releases it |
+| `lock close` | **Pin the door CLOSED. An animal outside cannot get in.** Same properties: no expiry, survives a power cut. Emails on arrival and keeps reminding you while it is set. Only `unlock` releases it |
 | `schedule add 22:00-06:00 [days]` | Add a scheduled lockout window |
 | `schedule del 22:00-06:00` | Remove one **by its times**. Order-independent — prefer this |
 | `schedule del <n>` | Remove one by its number from `list`. **Deleting several this way only works highest-number first**: removing a window renumbers the rest, so `del 0` then `del 1` deletes one and refuses the other, and over this channel the refusal is heard only as a tone. Use the times form, or `clear` |
