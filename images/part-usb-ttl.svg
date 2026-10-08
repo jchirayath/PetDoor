@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="USB-to-serial adapter: a small board with a USB-A plug, a CP2102 chip and a six-pin header">
+  <rect width="240" height="160" rx="14" fill="#EEF3F3"/>
+  <ellipse cx="124" cy="118" rx="94" ry="7" fill="#14222B" opacity=".12"/>
+  <rect x="26" y="58" width="56" height="44" rx="3" fill="#C2C9CF"/>
+  <rect x="26" y="58" width="56" height="10" rx="3" fill="#DCE1E4"/>
+  <rect x="36" y="74" width="12" height="6" fill="#8A949B"/><rect x="58" y="74" width="12" height="6" fill="#8A949B"/>
+  <rect x="80" y="52" width="110" height="56" rx="4" fill="#B3262D"/>
+  <rect x="112" y="66" width="28" height="28" rx="2" fill="#1B1F23"/>
+  <g stroke="#B8C0C6" stroke-width="1.6"><path d="M116 66 v-4 M122 66 v-4 M128 66 v-4 M134 66 v-4 M116 94 v4 M122 94 v4 M128 94 v4 M134 94 v4"/></g>
+  <circle cx="156" cy="64" r="3" fill="#3DBE5C"/><circle cx="156" cy="76" r="3" fill="#E2463B"/>
+  <rect x="170" y="56" width="12" height="48" rx="2" fill="#1B1F23"/>
+  <g stroke="#C9A646" stroke-width="3" stroke-linecap="round"><path d="M182 60 H214 M182 68 H214 M182 76 H214 M182 84 H214 M182 92 H214 M182 100 H214"/></g>
+</svg>

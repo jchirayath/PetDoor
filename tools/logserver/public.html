@@ -295,6 +295,14 @@
          button" into "the door moved".</p>
     </header>
     <div class="body">
+      <ul class="kit">
+        <li><img src="/images/part-esp32-relay.svg" alt="" loading="lazy"><b>ESP32 relay board</b><span>the brain and both buttons</span></li>
+        <li><img src="/images/part-beacon.svg" alt="" loading="lazy"><b>BLE beacon</b><span>on the collar</span></li>
+        <li><img src="/images/part-usb-ttl.svg" alt="" loading="lazy"><b>USB-to-serial adapter</b><span>for the first flash</span></li>
+        <li><img src="/images/part-reed.svg" alt="" loading="lazy"><b>Reed switch and magnet</b><span>optional, one per end</span></li>
+        <li><img src="/images/part-sw420.svg" alt="" loading="lazy"><b>SW-420 vibration sensor</b><span>optional, on the door</span></li>
+        <li><img src="/images/part-buzzer.svg" alt="" loading="lazy"><b>Passive piezo buzzer</b><span>optional, the door's voice</span></li>
+      </ul>
       <table class="parts">
         <thead>
           <tr><th scope="col">Part</th><th scope="col">What it does</th><th scope="col">Pin</th><th scope="col" class="num">Price</th></tr>
@@ -308,9 +316,9 @@
           <tr><th scope="row">Weatherproof box</th><td class="what">Not optional in a coop.</td><td class="pin"></td><td class="num">$10–15</td></tr>
           <tr><th scope="row">USB-to-serial adapter</th><td class="what">For the first flash. Later updates go over WiFi. You buy one, once.</td><td class="pin"></td><td class="num">$8–10</td></tr>
           <tr class="group"><th colspan="4" scope="colgroup">Optional <span>all off by default, pins set from the console</span></th></tr>
-          <tr><th scope="row">Two reed switches</th><td class="what">One at each end of travel. Confirms the door arrived, catches a stalled close, notices a door moved by hand.</td><td class="pin">32, 25</td><td class="num">~$8</td></tr>
-          <tr><th scope="row">SW-420 vibration sensor</th><td class="what">On the door itself. Confirms within a second that it started moving.</td><td class="pin">33</td><td class="num">~$7</td></tr>
-          <tr><th scope="row">Passive buzzer</th><td class="what">Ticks while moving, chimes on arrival, and has a distinct pattern for each fault.</td><td class="pin">27</td><td class="num">~$1</td></tr>
+          <tr><th scope="row"><a href="https://www.amazon.com/dp/B08K36VLZ2" rel="noopener noreferrer">Two reed switches</a></th><td class="what">One at each end of travel. Confirms the door arrived, catches a stalled close, notices a door moved by hand.</td><td class="pin">32, 25</td><td class="num">~$8</td></tr>
+          <tr><th scope="row"><a href="https://www.amazon.com/dp/B0FC5PW8CK" rel="noopener noreferrer">SW-420 vibration sensor</a></th><td class="what">On the door itself. Confirms within a second that it started moving.</td><td class="pin">33</td><td class="num">~$7</td></tr>
+          <tr><th scope="row"><a href="https://www.amazon.com/dp/B07KNV8KVJ" rel="noopener noreferrer">Passive buzzer</a></th><td class="what">Ticks while moving, chimes on arrival, and has a distinct pattern for each fault.</td><td class="pin">27</td><td class="num">~$1</td></tr>
           <tr><th scope="row">Status LED</th><td class="what">Shows what the door believes at a glance.</td><td class="pin">23</td><td class="num"></td></tr>
         </tbody>
         <tfoot>

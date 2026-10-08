@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 160" role="img" aria-label="Reed switch in a black plastic sleeve with long leads, and a stack of disc magnets">
+  <rect width="240" height="160" rx="14" fill="#EEF3F3"/>
+  <line x1="18" y1="56" x2="222" y2="56" stroke="#C9A646" stroke-width="3" stroke-linecap="round"/>
+  <rect x="76" y="44" width="88" height="24" rx="5" fill="#1E2429"/>
+  <rect x="82" y="48" width="76" height="5" rx="2.5" fill="#3A434B"/>
+  <ellipse cx="120" cy="134" rx="56" ry="7" fill="#14222B" opacity=".12"/>
+  <g>
+    <rect x="70" y="100" width="100" height="30" rx="6" fill="#B9C1C7"/>
+    <rect x="70" y="100" width="100" height="10" rx="5" fill="#D9DEE2"/>
+    <g stroke="#97A0A7" stroke-width="1.5">
+      <line x1="86.7" y1="101" x2="86.7" y2="129"/><line x1="103.3" y1="101" x2="103.3" y2="129"/>
+      <line x1="120" y1="101" x2="120" y2="129"/><line x1="136.7" y1="101" x2="136.7" y2="129"/>
+      <line x1="153.3" y1="101" x2="153.3" y2="129"/>
+    </g>
+  </g>
+</svg>
