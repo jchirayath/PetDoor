@@ -335,12 +335,21 @@ repo. It typically carries `BEACON_MAC`, `RSSI_ENTER_DBM`, `RSSI_EXIT_DBM`,
 credentials.
 
 **The deny is a guardrail, not a sandbox — do not treat it as a guarantee.**
-`Read(./petdoor/secrets.h)` genuinely stops the Read tool, and a dozen
-`Bash(<tool>:*secrets.h*)` rules stop the obvious shell equivalents. But those
-match the COMMAND TEXT, not the file, so anything that reaches the file without
-spelling its name walks straight through — `grep -r PASSWORD petdoor/` is
-allowed by `Bash(grep:*)` and prints the line. That one cannot be closed by a
-substring rule without banning recursive grep altogether.
+`Read(./petdoor/secrets.h)` genuinely stops the Read tool. The
+`Bash(<tool>:*secrets.h*)` rules that used to stop the obvious shell
+equivalents were removed on 2026-10-07; what remains in the deny list is the
+`Read` rule and the two bare-`upload` rules. Where those substring rules existed
+they matched the COMMAND TEXT, not the file, so anything reaching the file
+without spelling its name walked straight through — `grep -r PASSWORD petdoor/`
+is allowed by `Bash(grep:*)` and prints the line, and that could not be closed
+by a substring rule without banning recursive grep altogether.
+
+**`settings.json` is not the only gate, and it is not the binding one.** With
+every `*secrets.h*` Bash rule removed, `grep -c <marker> petdoor/secrets.h` was
+still refused — the auto-mode classifier judges these independently and
+overrides the allow list. So do not reason about what is reachable from the
+permission file: it under-states the restriction in one direction and
+over-states it in the other. Try, and if it is refused, hand the command over.
 
 So the rule that actually protects these values is a behavioural one:
 
@@ -353,6 +362,24 @@ the expected behaviour, and it came from judgement rather than from the config.
 **Ask rather than theorise.** `RELAY_ACTIVE_LOW` was a leading hypothesis for
 over an hour of one session for want of a question that would have taken one
 exchange.
+
+**An `#ifndef`-guarded block appended TWICE is a silent trap: the FIRST copy
+wins.** Every override here is `#ifndef`-guarded, which is what makes appending
+safe — and also what makes a revised value lose to the stale one already above
+it. A block was appended, revised, and appended again; fourteen values matched
+so nothing complained, and the fifteenth — `DOOR_TRAVEL_CLOSE_MS` — compiled in
+the superseded figure. Nothing warns, because `#ifndef` is doing exactly what it
+promises. Re-appending is idempotent only when the values have not changed, so
+after any revision check for duplicates (`grep -c` the block's marker comment)
+rather than appending again.
+
+**Prove a compiled-in default by clearing the stored one.** These values usually
+sit in NVS as well, so the console reporting the right number proves nothing
+about the fallback. `clear` in the timing menu reverts to the compiled values and
+is exactly what a remote `defaults` does — which makes it both the test and a
+rehearsal of the recovery. It is how the duplicate above was caught, and it
+should be run while a cable is still attached, because it writes those compiled
+values straight back into NVS.
 
 
 ## Layout
