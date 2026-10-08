@@ -483,7 +483,14 @@ comment above it explains why; keep the comment with the code.
     never a reason to permit: the manual lock stays absolute.
 12. **The network console never listens outside a maintenance window**, and
     never without `CONSOLE_PASSWORD`. It is the full console, so it can open the
-    door. Do not start it at boot.
+    door. Do not start it at boot. **It is also bounded SEPARATELY from the
+    window, by `CONSOLE_MAX_MS`** — a window may run for 480 hours, and a
+    door-opening service has no business listening on the LAN for twenty days
+    merely because the door is inert. The console closes; the window carries on.
+    `CONSOLE_MAX_MS` is 4 h, which was `MAINT_MAX_MS` before the window was
+    lengthened, so the console's maximum exposure did not change when the
+    window's did. Keep those two ceilings separate: a safety bound and a
+    security bound only looked like one number while they happened to be equal.
 13. **A repeat press is never sent while a travel is in flight.** Same
     direction mid-travel reads as STOP on this hardware and parks the door
     halfway. The *opposite* direction always supersedes, and `request()` drops
