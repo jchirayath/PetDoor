@@ -109,7 +109,7 @@ EVENT_LABEL = {
     # The door's own controller has modes of its own and has been watched
     # driving the door with nothing commanding it. Only visible once limit
     # switches are fitted, which is why this event is newer than the rest.
-    "UNCOMMANDED": "moved by itself",
+    "UNCOMMANDED": "moved, not by PetDoor",
     "RETRY": "pressed again",
     # The one entry here that is a request rather than a record: close attempts
     # are exhausted and the door is staying open until a person deals with it.
@@ -1627,7 +1627,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._send(404, "not found")
         if path.startswith("/api/events"):
             with db() as conn:
-                rows = conn.execute("SELECT device,epoch,uptime,boot,type,detail,rssi "
+                # src carries an inferred UNCOMMANDED's duration (ms), which the
+                # dashboard needs to show an inference as one. See invariant 20.
+                rows = conn.execute("SELECT device,epoch,uptime,boot,type,detail,rssi,src "
                                     "FROM events ORDER BY epoch, boot, uptime").fetchall()
                 devs = conn.execute("SELECT * FROM devices").fetchall()
             with db() as conn:
