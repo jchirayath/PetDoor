@@ -1,8 +1,30 @@
 <title>PetDoor Dashboard &mdash; sample</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/assets/theme.css">
 <link rel="stylesheet" href="/demo.css">
+
+<nav class="sitebar" aria-label="Site">
+  <div class="sitebar-in">
+    <a class="mark" href="/">
+      <svg class="logo" viewBox="0 0 256 256" aria-hidden="true">
+        <rect class="lg-frame" x="38" y="26" width="180" height="204" rx="18"/>
+        <path class="lg-flap" d="M64 52 L150 74 L150 182 L64 204 Z"/>
+        <path class="lg-edge" d="M64 52 L150 74 L150 182 L64 204"/>
+        <circle class="lg-tag" cx="40" cy="128" r="13"/>
+      </svg>
+      PetDoor
+    </a>
+    <div class="sitenav">
+      <a class="wide-only" href="/#how">How it works</a>
+      <a class="wide-only" href="/#hardware">Hardware</a>
+      <a href="/demo" aria-current="page"><span class="wide-only">Sample dashboard</span><span class="narrow-only">Demo</span></a>
+      <a class="wide-only" href="https://github.com/jchirayath/PetDoor">GitHub</a>
+      <a class="go" href="/dashboard">Sign in</a>
+    </div>
+  </div>
+</nav>
 <div class="sample-bar">
   <b>This is a demonstration.</b> Every figure below comes from synthetic data &mdash;
   no real household appears here. The dashboard is an <b>optional separate module</b>
@@ -14,15 +36,6 @@
 <div class="wrap">
 <header>
   <div class="brand">
-    <svg viewBox="0 0 256 256" aria-hidden="true">
-      <rect x="38" y="26" width="180" height="204" rx="18" fill="none" stroke="var(--in)" stroke-width="14"/>
-      <path d="M64 52 L150 74 L150 182 L64 204 Z" fill="var(--in)" opacity="0.26"/>
-      <path d="M64 52 L150 74 L150 182 L64 204" fill="none" stroke="var(--in)" stroke-width="7" stroke-linejoin="round" stroke-linecap="round"/>
-      <circle cx="30" cy="196" r="12" fill="var(--out)"/>
-      <g fill="none" stroke="var(--out)" stroke-width="7" stroke-linecap="round">
-        <path d="M52 172 a34 34 0 0 1 0 48"/><path d="M70 156 a58 58 0 0 1 0 80" opacity="0.6"/>
-      </g>
-    </svg>
     <div>
       <h1>Door Log <span class="sample-chip">sample</span></h1>
       <p class="sub" id="sub">Loading from the log server…</p>
@@ -43,10 +56,10 @@
   <div class="head">
     <div><h2>Daily rhythm</h2></div>
     <div class="legend">
-      <span><i class="dot" style="background:var(--out)"></i>went out</span>
-      <span><i class="dot" style="background:var(--in)"></i>came in</span>
-      <span><i class="swatch" style="background:var(--out-soft);border:1px solid var(--out)"></i>outside</span>
-      <span><i class="swatch" style="background:var(--night);border:1px solid var(--line)"></i>night</span>
+      <span><i class="dot bg-out"></i>went out</span>
+      <span><i class="dot bg-in"></i>came in</span>
+      <span><i class="swatch sw-out"></i>outside</span>
+      <span><i class="swatch sw-night"></i>night</span>
     </div>
   </div>
   <div class="body"><div class="strip" id="strip"></div></div>

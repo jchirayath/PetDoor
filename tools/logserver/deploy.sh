@@ -48,14 +48,26 @@ echo "ok — $(ssh "$TARGET" 'python3 -V; echo "as $(whoami) on $(hostname)"' | 
 
 say "Copying files to $REMOTE_DIR"
 ssh "$TARGET" "sudo mkdir -p $REMOTE_DIR && sudo chown \$(whoami) $REMOTE_DIR"
+# The pages' CSS and JS are separate files so the Content-Security-Policy can
+# forbid inline code. Leave one out and the deploy "succeeds" while the page
+# it belongs to renders unstyled or dead — so the list is explicit, and the
+# shared theme in assets/ goes across whole.
 scp -q "$here/petdoor-logserver.py" "$here/dashboard.html" "$here/public.html" \
-       "$here/demo.html" "$TARGET:$REMOTE_DIR/"
+       "$here/demo.html" "$here/dashboard.css" "$here/dashboard.js" \
+       "$here/demo.css" "$here/demo.js" "$TARGET:$REMOTE_DIR/"
+ssh "$TARGET" "mkdir -p $REMOTE_DIR/assets"
+scp -q "$here"/assets/* "$TARGET:$REMOTE_DIR/assets/"
 
-# The public page shows photographs of the build. They live at the repo root,
-# so copy them across if they are there; the page degrades to text without them.
+# The public page shows photographs of the build and the wiring diagrams. They
+# live at the repo root, so copy them across if they are there; the page
+# degrades to text without them.
 if [ -d "$here/../../images" ]; then
   ssh "$TARGET" "mkdir -p $REMOTE_DIR/images"
-  scp -q "$here"/../../images/*.jpeg "$TARGET:$REMOTE_DIR/images/" 2>/dev/null || true
+  scp -q "$here"/../../images/*.jpeg "$here"/../../images/*.jpg \
+         "$here"/../../images/*.png "$here"/../../images/*.svg \
+         "$TARGET:$REMOTE_DIR/images/" 2>/dev/null || true
+  # The project page shows the wiring diagram, which lives with the docs.
+  scp -q "$here"/../../docs/assets/wiring-esp32-2relay.svg "$TARGET:$REMOTE_DIR/images/" 2>/dev/null || true
 fi
 ssh "$TARGET" "chmod +x $REMOTE_DIR/petdoor-logserver.py"
 

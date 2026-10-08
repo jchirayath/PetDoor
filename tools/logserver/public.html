@@ -4,417 +4,474 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PetDoor</title>
-<meta name="description" content="Open a pet door when your animal walks up to it, and close it again once they have gone. Open source, ESP32, no subscription. Optional self-hosted control from anywhere.">
+<meta name="description" content="Open a pet or coop door when your animal walks up to it, and close it once they have gone. An ESP32 and a Bluetooth beacon on the collar. Open source, no subscription, no vendor account.">
+<meta name="theme-color" content="#0D3532">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<style>
-  :root{
-    --ground:#FAFBFC; --panel:#FFFFFF; --sunk:#F1F4F7;
-    --ink:#17212B; --muted:#5C6B7A; --line:#DFE5EB;
-    --in:#2A9D8F; --in-soft:#2A9D8F1A; --out:#E9A23B;
-    --shadow:0 1px 2px #17212B0F, 0 8px 24px -12px #17212B24;
-    --radius:14px;
-  }
-  @media (prefers-color-scheme: dark){
-    :root:not([data-theme="light"]){
-      --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
-      --ink:#E6EDF3; --muted:#93A4B4; --line:#26313C;
-      --in:#26937F; --in-soft:#26937F2B; --out:#BE8129;
-      --shadow:0 1px 2px #0008, 0 10px 30px -14px #000A;
-    }
-  }
-  :root[data-theme="dark"]{
-    --ground:#0F151B; --panel:#161E26; --sunk:#121A21;
-    --ink:#E6EDF3; --muted:#93A4B4; --line:#26313C;
-    --in:#26937F; --in-soft:#26937F2B; --out:#BE8129;
-    --shadow:0 1px 2px #0008, 0 10px 30px -14px #000A;
-  }
-
-  *{box-sizing:border-box}
-  body{
-    margin:0; background:var(--ground); color:var(--ink);
-    font-family:"IBM Plex Sans",ui-sans-serif,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
-    line-height:1.6; -webkit-font-smoothing:antialiased;
-  }
-  .wrap{max-width:1020px; margin:0 auto; padding-inline:20px; padding-block:0}
-  a{color:var(--in)}
-
-  /* A soft wash behind the masthead so the page opens on something rather than
-     starting flat. Teal for the door, amber for the radio — the same two
-     colours the rest of the page uses to mean those things, so the gradient is
-     the palette rather than decoration borrowed from elsewhere. */
-  header{position:relative; padding-block:64px 44px; border-bottom:1px solid var(--line)}
-  header::before{
-    content:""; position:absolute; inset:-120px -40% auto -40%; height:460px; z-index:-1;
-    background:
-      radial-gradient(52% 58% at 22% 32%, var(--in-soft), transparent 68%),
-      radial-gradient(44% 52% at 74% 16%, #E9A23B1F, transparent 66%);
-    pointer-events:none;
-  }
-  body{position:relative}
-
-  /* The logo earns a plinth: it is the only mark this project has. */
-  .brand{align-items:center}
-  .brand svg{
-    padding:9px; border-radius:15px; background:var(--panel);
-    border:1px solid var(--line); box-shadow:var(--shadow);
-  }
-  .brand h1{background:linear-gradient(180deg,var(--ink),color-mix(in srgb,var(--ink) 74%,var(--in)));
-    -webkit-background-clip:text; background-clip:text; color:transparent}
-  @supports not (color:color-mix(in srgb,red,blue)){ .brand h1{color:var(--ink)} }
-
-  .btn{transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease}
-  .btn:hover{transform:translateY(-1px); box-shadow:0 2px 4px #17212B14, 0 12px 28px -14px #17212B33}
-  .btn.quiet:hover{transform:none; box-shadow:none}
-  @media (prefers-reduced-motion:reduce){ .btn{transition:none} .btn:hover{transform:none} }
-
-  figure img{transition:box-shadow .16s ease}
-  figure a:hover img{box-shadow:0 4px 10px #17212B1A, 0 18px 44px -20px #17212B45}
-  .brand{display:flex; align-items:center; gap:16px; margin-bottom:26px}
-  .brand svg{flex:0 0 auto}
-  .brand h1{margin:0; font-size:clamp(30px,6vw,44px); letter-spacing:-.02em; font-weight:700}
-  .tag{font-size:clamp(17px,2.4vw,21px); color:var(--muted); max-width:62ch; margin:0 0 26px}
-  .tag b{color:var(--ink); font-weight:600}
-
-  .cta{display:flex; flex-wrap:wrap; gap:12px}
-  .btn{
-    display:inline-flex; align-items:center; gap:9px; text-decoration:none;
-    padding:11px 18px; border-radius:10px; font-weight:600; font-size:15px;
-    border:1px solid var(--line); color:var(--ink); background:var(--panel);
-    box-shadow:var(--shadow);
-  }
-  .btn.primary{background:var(--in); border-color:var(--in); color:#fff}
-  .btn.quiet{background:transparent; box-shadow:none; color:var(--muted)}
-  .btn:focus-visible{outline:2px solid var(--in); outline-offset:2px}
-
-  section{padding-block:46px; border-bottom:1px solid var(--line)}
-  section:last-of-type{border-bottom:0}
-  h2{font-size:22px; margin:0 0 6px; letter-spacing:-.01em}
-  .lede{color:var(--muted); margin:0 0 26px; max-width:66ch}
-
-  .facts{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px}
-  .fact{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:18px}
-  .fact .n{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:25px; font-weight:500; color:var(--in)}
-  .fact .l{color:var(--muted); font-size:14px; margin-top:3px}
-
-  .shots{display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:16px}
-  /* Screenshots need room to be legible; two up on a desktop, stacked on a
-     phone, rather than the three-up the build photographs use. */
-  .shots.wide{grid-template-columns:repeat(auto-fit,minmax(330px,1fr)); gap:20px}
-  figure{margin:0; background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden}
-  figure img{display:block; width:100%; height:auto}
-  figcaption{padding:11px 14px; font-size:13.5px; color:var(--muted); border-top:1px solid var(--line)}
-  figcaption b{color:var(--ink); font-weight:600}
-
-  /* 215px, not 235: at the 1020px container four cards need (980-48)/4 = 233px
-     each, and a 235px minimum silently drops to three across, stranding the
-     fourth alone on its own row. */
-  .how{display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:16px; counter-reset:s}
-  .step{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:20px; position:relative}
-  .step::before{
-    counter-increment:s; content:counter(s);
-    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:12px; font-weight:500;
-    color:var(--in); background:var(--in-soft); border-radius:6px;
-    padding:2px 8px; display:inline-block; margin-bottom:9px;
-  }
-  .step h3{margin:0 0 5px; font-size:16px}
-  .step p{margin:0; color:var(--muted); font-size:14.5px}
-
-  .note{
-    background:var(--sunk); border:1px solid var(--line); border-left:3px solid var(--out);
-    border-radius:10px; padding:16px 18px; color:var(--muted); font-size:14.5px;
-  }
-  .note b{color:var(--ink)}
-
-  footer{padding-block:34px 52px; color:var(--muted); font-size:14px}
-  footer a{color:var(--muted)}
-  code{font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:.92em;
-       background:var(--sunk); border:1px solid var(--line); border-radius:5px; padding:1px 5px}
-  @media (max-width:520px){ header{padding-block:38px 30px} }
-</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<!-- No <style> and no style="" anywhere on this page: the Content-Security-Policy
+     forbids both, and a page that relies on them renders unstyled in
+     production while looking fine from a file. Everything is in /assets/. -->
+<link rel="stylesheet" href="/assets/theme.css">
+<link rel="stylesheet" href="/assets/site.css">
 </head>
 <body>
 
-<div class="wrap">
-
-  <header>
-    <div class="brand">
-      <svg width="52" height="52" viewBox="0 0 256 256" role="img" aria-label="PetDoor logo">
-        <rect x="38" y="26" width="180" height="204" rx="18" fill="none" stroke="var(--in)" stroke-width="14"/>
-        <rect x="64" y="52" width="128" height="152" rx="8" fill="var(--in)" opacity=".10"/>
-        <path d="M64 52 L150 74 L150 182 L64 204 Z" fill="var(--in)" opacity=".28"/>
-        <path d="M64 52 L150 74 L150 182 L64 204" fill="none" stroke="var(--in)" stroke-width="7"
-              stroke-linejoin="round" stroke-linecap="round"/>
-        <circle cx="40" cy="128" r="11" fill="var(--out)"/>
-        <path d="M62 104 a30 30 0 0 1 0 48" fill="none" stroke="var(--out)" stroke-width="7" stroke-linecap="round"/>
-        <path d="M78 92 a46 46 0 0 1 0 72" fill="none" stroke="var(--out)" stroke-width="7" stroke-linecap="round" opacity=".55"/>
+<nav class="sitebar" aria-label="Site">
+  <div class="sitebar-in">
+    <a class="mark" href="/">
+      <svg class="logo" viewBox="0 0 256 256" aria-hidden="true">
+        <rect class="lg-frame" x="38" y="26" width="180" height="204" rx="18"/>
+        <path class="lg-flap" d="M64 52 L150 74 L150 182 L64 204 Z"/>
+        <path class="lg-edge" d="M64 52 L150 74 L150 182 L64 204"/>
+        <circle class="lg-tag" cx="40" cy="128" r="13"/>
       </svg>
-      <h1>PetDoor</h1>
+      PetDoor
+    </a>
+    <div class="sitenav">
+      <a class="wide-only" href="#how">How it works</a>
+      <a class="wide-only" href="#architecture">Architecture</a>
+      <a class="wide-only" href="#hardware">Hardware</a>
+      <a class="wide-only" href="#safety">Safety</a>
+      <a href="/demo"><span class="wide-only">Sample dashboard</span><span class="narrow-only">Demo</span></a>
+      <a class="wide-only" href="https://github.com/jchirayath/PetDoor">GitHub</a>
+      <a class="go" href="/dashboard">Sign in</a>
     </div>
+  </div>
+</nav>
 
-    <p class="tag">
-      Opens a pet door when your animal walks up to it, and closes it again once
-      they have gone. <b>No subscription and no vendor account</b> — an ESP32 and
-      a Bluetooth beacon on the collar are the whole system.
-    </p>
-    <p class="tag" style="font-size:clamp(15px,2vw,17px); margin-bottom:30px">
-      Want to open it from your phone? Add <b>your own</b> server. That part is
-      optional, it runs on a Pi in a cupboard or a VM you rent, and the door
-      never listens on the network — it calls out, and the reply to its own
-      upload is the only way anything reaches it.
-    </p>
+<main class="page">
 
-    <div class="cta">
-      <a class="btn primary" href="/demo">See the dashboard &rarr;</a>
-      <a class="btn" href="https://github.com/jchirayath/PetDoor">
-        <svg width="17" height="17" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38
-            0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01
-            1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95
-            0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0
-            1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0
-            3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01
-            8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>
-        </svg>
-        Build it yourself
-      </a>
-      <a class="btn quiet" href="/dashboard">Sign in</a>
-    </div>
-  </header>
-
-  <section>
-    <h2>What it is</h2>
-    <p class="lede">
-      An ESP32 listens continuously for a Bluetooth beacon on your pet's collar.
-      When the beacon has been convincingly close for a moment it pulses an OPEN
-      relay; when it has been convincingly gone for a while it pulses a CLOSE
-      relay. The door's own controller still owns the motor and its travel limits.
-    </p>
-    <div class="facts">
-      <div class="fact"><div class="n">~$80</div><div class="l">all in — door, board and cable</div></div>
-      <div class="fact"><div class="n">MIT</div><div class="l">open source, build it yourself</div></div>
-      <div class="fact"><div class="n">0</div><div class="l">vendor accounts — any server is your own</div></div>
-      <div class="fact"><div class="n">~1&nbsp;m</div><div class="l">typical open range, tunable</div></div>
-    </div>
-  </section>
-
-  <section>
-    <h2>The build</h2>
-    <p class="lede">
-      A commercial pet door converted by wiring two relay contacts across the
-      controller's existing buttons. The original panel, its buttons and its
-      timer all still work — the conversion adds a second way to press them.
-    </p>
-    <div class="shots">
-      <figure>
-        <img src="/images/FinalDoorClosed.jpeg" alt="The pet door installed in a patio door, flap closed" loading="lazy">
-        <figcaption><b>Closed</b> — the resting state</figcaption>
-      </figure>
-      <figure>
-        <img src="/images/DoorClosing.jpeg" alt="The pet door part-way through its travel" loading="lazy">
-        <figcaption><b>Travelling</b> — about 15 s end to end</figcaption>
-      </figure>
-      <figure>
-        <img src="/images/FinalDoorOpen.jpeg" alt="The pet door with the flap fully open" loading="lazy">
-        <figcaption><b>Open</b> — beacon within range</figcaption>
-      </figure>
-    </div>
-  </section>
-
-  <section>
-    <h2>How it works</h2>
-    <p class="lede">Four stages, each fixing a different failure mode.</p>
-    <div class="how">
-      <div class="step">
-        <h3>Listen</h3>
-        <p>The radio reports every advertisement, not just the first — roughly two
-           readings a second from the collar beacon.</p>
-      </div>
-      <div class="step">
-        <h3>Filter</h3>
-        <p>A median filter kills multipath spikes, then smoothing removes what is
-           left. It runs twice: fast for opening, slow for closing.</p>
-      </div>
-      <div class="step">
-        <h3>Decide</h3>
-        <p>Two thresholds with a dead band between them, so the door never flaps
-           at the boundary, plus dwell timers in both directions.</p>
-      </div>
-      <div class="step">
-        <h3>Act</h3>
-        <p>A momentary relay pulse — the same as someone pressing the button. The
-           door's own controller runs the motor to its limits.</p>
+  <section class="mast">
+    <div>
+      <h1>A pet door that opens for one animal.</h1>
+      <p class="intro">
+        An ESP32 listens for the Bluetooth beacon on your animal's collar. When
+        it comes close, the door opens. When it has been gone a while, the door
+        closes.
+      </p>
+      <p class="intro">
+        It wires into the motorised door you already have, by pressing its own
+        buttons. <strong>No subscription, no vendor account</strong>, and about
+        $80 in parts.
+      </p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/jchirayath/PetDoor/blob/main/docs/COOP-CONVERSION.md">Read the build guide</a>
+        <a class="btn" href="https://github.com/jchirayath/PetDoor">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.42 7.42 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+          Source code
+        </a>
       </div>
     </div>
-  </section>
 
-  <section>
-    <h2>What the collar wears</h2>
-    <p class="lede">
-      A <b>Minew BLE beacon</b> — a coin-cell tag about the size of a large
-      button, roughly $12. Not an AirTag, and the reason matters.
-    </p>
-    <div class="facts">
-      <div class="fact"><div class="n">349&nbsp;ms</div><div class="l">typical gap between readings — Minew</div></div>
-      <div class="fact"><div class="n">5,140&nbsp;ms</div><div class="l">typical gap — AirTag, at two feet</div></div>
-      <div class="fact"><div class="n">4</div><div class="l">addresses one AirTag used in two hours</div></div>
-      <div class="fact"><div class="n">months</div><div class="l">battery life on a coin cell</div></div>
-    </div>
-    <p class="lede" style="margin-top:22px">
-      Consumer trackers rotate their Bluetooth address on purpose, so there is
-      nothing stable to match against, and they advertise far too slowly — the
-      AirTag's <i>typical</i> gap already exceeds the three seconds after which a
-      reading stops counting as live. A purpose-built beacon does the opposite:
-      a fixed address, printed on the case, ten readings a second.
-    </p>
-    <p class="lede">
-      <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/BEACON-MINEW.md">Full beacon guide &rarr;</a>
-    </p>
-  </section>
+    <figure class="board signal">
+      <svg class="sk" viewBox="0 0 560 352" role="img" aria-labelledby="sig-t sig-d">
+        <title id="sig-t">The collar signal as an animal walks up to the door and away</title>
+        <desc id="sig-d">Signal strength rises through the −65 dBm open threshold; the door opens 1.5 seconds later. It then falls through the −75 dBm close threshold; the door closes after 15 seconds of weak signal. Between the two thresholds is a dead band in which nothing changes.</desc>
+        <!-- −45 dBm at y=40, −95 at y=300: 5.2 px per dB. 8 px per second. -->
+        <g class="grid">
+          <line x1="50" y1="40" x2="530" y2="40"/>
+          <line x1="50" y1="300" x2="530" y2="300"/>
+        </g>
+        <rect class="band" x="50" y="144" width="480" height="52"/>
+        <line class="th" x1="50" y1="144" x2="530" y2="144"/>
+        <line class="th" x1="50" y1="196" x2="530" y2="196"/>
+        <!-- Labels sit left of x≈110: the trace is below the band there, so
+             nothing it draws can cross them. -->
+        <text class="k" x="58" y="137">−65 dBm</text>
+        <text class="k" x="58" y="213">−75 dBm</text>
+        <text class="s" x="58" y="175">dead band</text>
+        <text class="k" x="50" y="30">stronger</text>
+        <text class="k" x="50" y="322">weaker</text>
+        <text class="k" x="530" y="322" text-anchor="end">time →</text>
 
-  <section>
-    <h2>The log, and the optional dashboard</h2>
-    <p class="lede">
-      <b>The door keeps its own log.</b> Every open, close, boot and lost-signal
-      event is recorded in the ESP32's own memory — the last 128, rolling the
-      oldest out so it cannot fill up. Read them over USB whenever you like.
-      That happens on every build, with no network, no server and no setup.
-    </p>
-    <div class="how" style="margin-bottom:26px">
-      <div class="step" style="counter-increment:none">
-        <h3>The door <span style="color:var(--in)">— required</span></h3>
-        <p>An ESP32 and a beacon. Opens and closes the door, keeps its own
-           rolling log, works entirely offline. This is the project.</p>
-      </div>
-      <div class="step" style="counter-increment:none">
-        <h3>The dashboard <span style="color:var(--muted)">— optional</span></h3>
-        <p>A <b>separate small program you run yourself</b>, on a Raspberry Pi or
-           any spare machine. The door uploads its log to it over your network,
-           signed with a shared key, and it turns months of events into the
-           charts below.</p>
-      </div>
-    </div>
-    <p class="lede">
-      The dashboard is a single file of stdlib Python and a SQLite database.
-      Nothing is hosted for you and nothing phones home — <b>the address it
-      uploads to is one you set, pointing at a machine you own.</b> Leave it
-      unset and the door never opens a network connection at all.
-    </p>
-    <p class="lede">
-      What it adds: trip durations, daily rhythm, trips per day, and a beacon
-      battery trend that warns you weeks before the cell dies — and, if you turn
-      it on, the ability to <b>drive the door from a browser</b>.
-    </p>
+        <path class="trace" pathLength="1" d="M50 272 L66 268 L80 276 L94 262 L108 258 L122 240 L136 222 L150 196 L162 170 L172 146 L184 128 L196 116 L210 112 L224 104 L238 110 L252 106 L266 114 L280 108 L294 118 L308 130 L322 152 L334 172 L346 186 L358 200 L372 214 L386 228 L400 240 L416 250 L432 262 L448 258 L464 268 L480 264 L496 272 L512 268 L530 274"/>
 
-    <figure style="margin-bottom:26px">
-      <a href="/demo"><img src="/images/screenshot-activity.png" alt="The Activity tab: firmware, event count and last check-in across the top, then trips a day, typical trip, longest trip, and a two-week daily rhythm strip"></a>
-      <figcaption><b>Activity</b> — months of comings and goings, and what the door can see right now.
-        <a href="/demo">Open the live sample &rarr;</a></figcaption>
+        <g class="ev open">
+          <line class="mk open" x1="186" y1="56" x2="186" y2="300"/>
+          <rect class="tag-open" x="194" y="50" width="96" height="24" rx="4"/>
+          <text class="tag-txt" x="204" y="66">door opens</text>
+          <text class="s" x="194" y="92">after 1.5 s strong</text>
+        </g>
+        <g class="ev close">
+          <line class="mk close" x1="476" y1="56" x2="476" y2="300"/>
+          <rect class="tag-close" x="372" y="50" width="96" height="24" rx="4"/>
+          <text class="tag-txt" x="382" y="66">door closes</text>
+          <text class="s" x="468" y="92" text-anchor="end">after 15 s weak</text>
+        </g>
+      </svg>
+      <figcaption>
+        <b>What the door sees.</b> The collar's signal, filtered, as an animal
+        walks up and later leaves. Two thresholds with a gap between them stop the
+        door flapping when the animal sits at the edge of range.
+      </figcaption>
     </figure>
+  </section>
 
-    <div class="shots wide">
-      <figure>
-        <img src="/images/screenshot-controls.png" alt="The Controls tab: open, close, auto, lock, unlock and beep buttons, with a log of what was asked of the door and what it did" loading="lazy">
-        <figcaption><b>Controls</b> — open, close, lock and unlock, with the door's
-          own verdict on each. Nothing is instant: the door collects commands when
-          it next calls in, and until then you can cancel.</figcaption>
+  <section class="sheet" id="how">
+    <header>
+      <h2>How it works</h2>
+      <p>Four stages, each there to stop a different way of getting it wrong.</p>
+    </header>
+    <div class="body">
+      <ol class="steps">
+        <li>
+          <h3>Listen</h3>
+          <p>The radio passes on every advertisement from the collar, about
+             <span class="fig">2–3 a second</span>, not just the first one it hears.</p>
+        </li>
+        <li>
+          <h3>Filter</h3>
+          <p>A median removes the spikes reflections cause, then smoothing takes
+             out the rest. Fast for opening, slow for closing.</p>
+        </li>
+        <li>
+          <h3>Decide</h3>
+          <p>Open above <span class="fig">−65 dBm</span> held for 1.5 s. Close
+             below <span class="fig">−75 dBm</span> held for 15 s. A returning
+             animal cancels a close.</p>
+        </li>
+        <li>
+          <h3>Press, then check</h3>
+          <p>A relay presses the door's own button. Optional sensors confirm it
+             started and arrived; a close that stalls is reversed.</p>
+        </li>
+      </ol>
+      <p class="muted">
+        The door's own controller still runs the motor and stops it at its
+        limits. PetDoor only ever presses a button, the same as you would. The
+        original panel, its buttons and its timer all keep working.
+      </p>
+      <div class="photos">
+        <figure class="photo crop">
+          <img src="/images/FinalDoorClosed.jpeg" alt="The pet door fitted in a patio door, flap closed" loading="lazy">
+          <figcaption><b>Closed.</b> The resting state.</figcaption>
+        </figure>
+        <figure class="photo crop">
+          <img src="/images/DoorClosing.jpeg" alt="The pet door part-way through its travel" loading="lazy">
+          <figcaption><b>Moving.</b> About 9 s down and 11 s up on the reference door.</figcaption>
+        </figure>
+        <figure class="photo crop">
+          <img src="/images/FinalDoorOpen.jpeg" alt="The pet door with the flap fully open" loading="lazy">
+          <figcaption><b>Open.</b> The beacon is in range.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="sheet stack" id="architecture">
+    <header>
+      <h2>Architecture</h2>
+      <p>One board on the door does everything. The server is optional, and the
+         door never waits for it.</p>
+    </header>
+    <div class="body">
+      <figure class="board">
+        <div class="scroll-x">
+          <svg class="sk" viewBox="0 0 1130 500" role="img" aria-labelledby="arch-t arch-d">
+            <title id="arch-t">PetDoor architecture</title>
+            <desc id="arch-d">The collar beacon's advertisements reach the ESP32's Bluetooth scanner, which queues each reading for the control task. The control task filters the signal and decides; the actuator presses the OPEN or CLOSE relay, and the door's own controller runs the motor. Reed switches and a vibration sensor report back whether the door started and arrived. Every event goes into a log in flash. Optionally, an uploader sends that log to a server you run, signed, and any commands come back in the reply.</desc>
+            <defs>
+              <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0 L10 5 L0 10 Z"/></marker>
+              <marker id="ah-in" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head in" d="M0 0 L10 5 L0 10 Z"/></marker>
+            </defs>
+
+            <!-- the board -->
+            <rect class="zone solid" x="200" y="24" width="775" height="290" rx="10"/>
+            <text class="zone-l" x="218" y="48">ESP32 on the door</text>
+
+            <!-- the beacon, and its radio -->
+            <rect class="box radio" x="20" y="70" width="140" height="64" rx="8"/>
+            <text class="t" x="34" y="97">Collar beacon</text>
+            <text class="s" x="34" y="118">2–3 adverts a second</text>
+            <path class="arc" d="M172 90 a16 16 0 0 1 0 24"/>
+            <path class="arc" d="M184 82 a28 28 0 0 1 0 40"/>
+
+            <!-- row 1 -->
+            <rect class="box" x="220" y="70" width="150" height="64" rx="8"/>
+            <text class="t" x="234" y="97">BLE scan</text>
+            <text class="s" x="234" y="118">every advert</text>
+
+            <rect class="box" x="395" y="70" width="120" height="64" rx="8"/>
+            <text class="t" x="409" y="97">Queue</text>
+            <text class="s" x="409" y="118">32 readings</text>
+
+            <rect class="box" x="540" y="70" width="230" height="64" rx="8"/>
+            <text class="t" x="554" y="97">Control task</text>
+            <text class="s" x="554" y="118">filter, hysteresis, decide</text>
+
+            <rect class="box" x="795" y="70" width="160" height="64" rx="8"/>
+            <text class="t" x="809" y="97">Actuator</text>
+            <text class="s" x="809" y="118">press, verify, fail open</text>
+
+            <path class="wire" d="M370 102 H392" marker-end="url(#ah)"/>
+            <path class="wire" d="M515 102 H537" marker-end="url(#ah)"/>
+            <path class="wire" d="M770 102 H792" marker-end="url(#ah)"/>
+
+            <!-- row 2 -->
+            <rect class="box" x="220" y="200" width="150" height="64" rx="8"/>
+            <text class="t" x="234" y="227">Event log</text>
+            <text class="s" x="234" y="248">last 128, in flash</text>
+
+            <rect class="box" x="395" y="200" width="150" height="64" rx="8"/>
+            <text class="t" x="409" y="227">Uploader</text>
+            <text class="s" x="409" y="248">WiFi, optional</text>
+
+            <rect class="box" x="570" y="200" width="200" height="64" rx="8"/>
+            <text class="t" x="584" y="227">Reeds and vibration</text>
+            <text class="s" x="584" y="248">did it start, did it arrive</text>
+
+            <rect class="box door" x="795" y="200" width="160" height="64" rx="8"/>
+            <text class="t" x="809" y="227">Relays</text>
+            <text class="k" x="809" y="248">GPIO 16 / 17</text>
+
+            <rect class="box door" x="995" y="200" width="120" height="64" rx="8"/>
+            <text class="t" x="1009" y="227">Door</text>
+            <text class="s" x="1009" y="248">its own motor</text>
+
+            <path class="wire" d="M600 134 V166 H295 V197" marker-end="url(#ah)"/>
+            <path class="wire" d="M370 232 H392" marker-end="url(#ah)"/>
+            <path class="wire in" d="M875 134 V197" marker-end="url(#ah-in)"/>
+            <path class="wire in" d="M955 232 H992" marker-end="url(#ah-in)"/>
+            <path class="wire" d="M730 200 V170 H840 V137" marker-end="url(#ah)"/>
+            <path class="wire fb" d="M1055 264 V292 H670 V267" marker-end="url(#ah)"/>
+            <text class="s" x="1063" y="284">the door</text>
+            <text class="s" x="1063" y="298">moving</text>
+            <text class="s" x="884" y="164">OPEN or CLOSE</text>
+
+            <!-- the optional server -->
+            <rect class="zone" x="380" y="352" width="735" height="132" rx="10"/>
+            <text class="zone-l" x="650" y="376">A server you run, optional</text>
+
+            <rect class="box" x="400" y="396" width="200" height="64" rx="8"/>
+            <text class="t" x="414" y="423">Log server</text>
+            <text class="s" x="414" y="444">one Python file and SQLite</text>
+
+            <rect class="box" x="650" y="396" width="200" height="64" rx="8"/>
+            <text class="t" x="664" y="423">Dashboard</text>
+            <text class="s" x="664" y="444">behind your own sign-in</text>
+
+            <path class="wire" d="M445 264 V393" marker-end="url(#ah)"/>
+            <path class="wire" d="M495 393 V267" marker-end="url(#ah)"/>
+            <text class="s" x="437" y="336" text-anchor="end">signed upload</text>
+            <text class="s" x="503" y="336">commands, in the reply</text>
+            <path class="wire" d="M600 428 H647" marker-end="url(#ah)"/>
+
+            <text class="s" x="876" y="420">The door never listens on the</text>
+            <text class="s" x="876" y="438">network. It calls out, and only</text>
+            <text class="s" x="876" y="456">the reply can reach it.</text>
+          </svg>
+        </div>
+        <figcaption>
+          <b>Two tasks own everything.</b> The radio callback only queues a
+          reading. One control task, every 100 ms, is the only code that can
+          move the door. The uploader runs on its own and never holds it up.
+        </figcaption>
       </figure>
-      <figure>
-        <img src="/images/screenshot-settings.png" alt="The Settings tab: typed fields for signal thresholds, filters, dwell times, relay pulse, and how often the door reports" loading="lazy">
-        <figcaption><b>Settings</b> — every tunable the door will accept, filled in
-          with what it is set to now. Ranges are checked here and again on the
-          door, so a bad value is refused in a second rather than in five minutes.</figcaption>
+
+      <h3>Built so the door keeps working</h3>
+      <p>
+        Everything that matters runs on the door itself. With no WiFi, no server
+        and no internet it opens and closes exactly the same, and keeps its own
+        rolling log of the last 128 events in flash. WiFi can be compiled out
+        entirely.
+      </p>
+      <p>
+        Add a server and the door uploads that log, signed with a key only you
+        and the door know. Commands from the dashboard, such as open, close,
+        lock, a setting or a firmware update, wait on the server until the door
+        next calls in, and ride back in the reply. Credentials can never be
+        changed remotely, and a firmware update that cannot reach the server
+        afterwards rolls itself back.
+      </p>
+    </div>
+  </section>
+
+  <section class="sheet" id="hardware">
+    <header>
+      <h2>Hardware</h2>
+      <p>Six parts are required. The sensors are optional, and turn "pressed the
+         button" into "the door moved".</p>
+    </header>
+    <div class="body">
+      <table class="parts">
+        <thead>
+          <tr><th scope="col">Part</th><th scope="col">What it does</th><th scope="col">Pin</th><th scope="col" class="num">Price</th></tr>
+        </thead>
+        <tbody>
+          <tr class="group"><th colspan="4" scope="colgroup">Required</th></tr>
+          <tr><th scope="row">Motorised pet or coop door</th><td class="what">Its controller runs the motor and stops it at the limits. Needs separate OPEN and CLOSE buttons.</td><td class="pin"></td><td class="num">$40–60</td></tr>
+          <tr><th scope="row">ESP32 board with two relays</th><td class="what">Runs the firmware. The relays are wired across the door's two buttons.</td><td class="pin">16, 17</td><td class="num">$15–20</td></tr>
+          <tr><th scope="row">Minew BLE beacon</th><td class="what">Goes on the collar. Must broadcast a fixed address, which rules out AirTags, Tiles and phones.</td><td class="pin"></td><td class="num">$10–15</td></tr>
+          <tr><th scope="row">5 V supply, 1 A</th><td class="what">Powers the board and both relay coils.</td><td class="pin"></td><td class="num">$8–12</td></tr>
+          <tr><th scope="row">Weatherproof box</th><td class="what">Not optional in a coop.</td><td class="pin"></td><td class="num">$10–15</td></tr>
+          <tr><th scope="row">USB-to-serial adapter</th><td class="what">For the first flash. Later updates go over WiFi. You buy one, once.</td><td class="pin"></td><td class="num">$8–10</td></tr>
+          <tr class="group"><th colspan="4" scope="colgroup">Optional <span>all off by default, pins set from the console</span></th></tr>
+          <tr><th scope="row">Two reed switches</th><td class="what">One at each end of travel. Confirms the door arrived, catches a stalled close, notices a door moved by hand.</td><td class="pin">32, 25</td><td class="num">~$8</td></tr>
+          <tr><th scope="row">SW-420 vibration sensor</th><td class="what">On the door itself. Confirms within a second that it started moving.</td><td class="pin">33</td><td class="num">~$7</td></tr>
+          <tr><th scope="row">Passive buzzer</th><td class="what">Ticks while moving, chimes on arrival, and has a distinct pattern for each fault.</td><td class="pin">27</td><td class="num">~$1</td></tr>
+          <tr><th scope="row">Status LED</th><td class="what">Shows what the door believes at a glance.</td><td class="pin">23</td><td class="num"></td></tr>
+        </tbody>
+        <tfoot>
+          <tr><th scope="row">Typical build</th><td class="what">About $30 if you already own a motorised door.</td><td></td><td class="num">~$80</td></tr>
+        </tfoot>
+      </table>
+
+      <h3>Wiring</h3>
+      <figure class="diagram">
+        <img src="/images/wiring-esp32-2relay.svg" alt="Wiring diagram: GPIO 16 and 17 drive the two relays, whose contacts sit across the door's OPEN and CLOSE buttons. The status LED is on GPIO 23, the reed switches on 32 and 25, the passive buzzer on 27 through a 100 ohm resistor, and the vibration sensor's digital output on 33." loading="lazy">
+        <figcaption>The reference build. Relays on 16 and 17 are active high. The
+          sensor pins are where this door has them; yours are set at runtime and
+          saved on the board.</figcaption>
       </figure>
-    </div>
-    <div class="note" style="border-left-color:var(--out)">
-      <b>Coming soon: camera footage.</b> Each event already carries a precise
-      timestamp, which is the hard half — the dashboard has the frames laid out
-      for an outside and an inside view, waiting to be pointed at clips. What is
-      missing is a source: Blink and Wyze both keep footage in their own clouds
-      with no public API, so the honest answer is an RTSP bridge or any NVR that
-      records to files, and then the door's own log tells you exactly which
-      second to scrub to.
-    </div>
 
-    <div class="note">
-      <b>The real analytics are private.</b> This page and the sample are public;
-      the actual door log sits behind sign-in, because when a door opens and
-      closes says a great deal about when a house is occupied and when it is
-      empty. The door never needs this server at all — it keeps its own rolling
-      log and behaves identically with no network.
+      <h3>The conversion</h3>
+      <div class="photos">
+        <figure class="photo crop">
+          <img src="/images/ControllerInternal.jpeg" alt="The door's controller opened up, showing its logic board, gear motor and battery" loading="lazy">
+          <figcaption><b>The door's controller.</b> It keeps its limits and its motor protection.</figcaption>
+        </figure>
+        <figure class="photo crop">
+          <img src="/images/WiringRelaystoSwitch.jpeg" alt="Fine wires soldered to the pads of the controller's OPEN and CLOSE buttons" loading="lazy">
+          <figcaption><b>Across the buttons.</b> Two wires per button, to a relay's contacts.</figcaption>
+        </figure>
+        <figure class="photo crop">
+          <img src="/images/ESP32mountingToDoor.jpeg" alt="The ESP32 relay board mounted beside the door's control panel" loading="lazy">
+          <figcaption><b>Mounted.</b> The board sits beside the panel it presses.</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        Full steps, including which button pads to use and how to test before you
+        solder, are in the
+        <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/COOP-CONVERSION.md">build guide</a>
+        and <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/WIRING.md">wiring guide</a>.
+        The <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/BEACON-MINEW.md">beacon guide</a>
+        explains why a consumer tracker will not work: an AirTag's typical gap
+        between broadcasts is over five seconds, and it changes its address on
+        purpose.
+      </p>
     </div>
   </section>
 
-  <section>
-    <h2>What it costs</h2>
-    <p class="lede">About <b>$80</b> all in, and the door is most of it.</p>
-    <div class="facts">
-      <div class="fact"><div class="n">$50–60</div><div class="l">automatic pet or coop door</div></div>
-      <div class="fact"><div class="n">$15–20</div><div class="l">ESP32 board with relays</div></div>
-      <div class="fact"><div class="n">$10–15</div><div class="l">BLE beacon for the collar</div></div>
-      <div class="fact"><div class="n">$8–10</div><div class="l">USB-to-TTL adapter, once</div></div>
-    </div>
-    <p class="lede" style="margin-top:22px">
-      Already own a motorised door? Then it is the board and the beacon — around
-      thirty dollars to make a door you already have open for one specific animal.
-    </p>
-  </section>
-
-  <section>
-    <h2>Worth knowing before you build it</h2>
-    <p class="lede">The honest limits, stated up front.</p>
-    <div class="how">
-      <div class="step" style="counter-increment:none">
-        <h3>It is not a lock</h3>
-        <p>Bluetooth advertisements are unauthenticated. The door opens for
-           anything broadcasting your beacon's address, and reading that address
-           takes a free phone app. Fine against weather, rodents and the
-           neighbour's cat. Not a security barrier.</p>
-      </div>
-      <div class="step" style="counter-increment:none">
-        <h3>The animal must wear it</h3>
-        <p>No beacon, no door. That rules out anything that will not keep a
-           collar on, and it means a flat cell stops the door opening — though
-           it fails safe, closed, never on top of an animal.</p>
-      </div>
-      <div class="step" style="counter-increment:none">
-        <h3>You are wiring a motor</h3>
-        <p>The door's own controller keeps its limits and current protection;
-           this only presses its buttons. But you are still working on a door an
-           animal walks through. The safety guide is not optional reading.</p>
-      </div>
-      <div class="step" style="counter-increment:none">
-        <h3>You could just buy one</h3>
-        <p>Smart pet doors are a product you can order, finished, with a
-           warranty and somebody to call &mdash;
-           <a href="https://pawport.com/pages/smart-pet-doors"
-              rel="noopener noreferrer" target="_blank">PawPort</a>
-           is one of several. If you want a door that works this afternoon and
-           you have no interest in relays, buy one of those instead. This
-           project earns its keep when you already own a powered door worth
-           keeping, when you want the log to stay on hardware you control, or
-           when tuning it yourself is the point rather than the cost.</p>
-      </div>
+  <section class="sheet" id="safety">
+    <header>
+      <h2>Safety</h2>
+      <p>What the firmware will not do. Each of these is enforced in code, and
+         most are tested.</p>
+    </header>
+    <div class="body">
+      <ul class="never">
+        <li><b>Open on a stale signal.</b><span>A lost or weak beacon can close the door, never open it.</span></li>
+        <li><b>Act before it has heard the beacon.</b><span>A dead collar battery after a reboot cannot read as "gone" and shut the door.</span></li>
+        <li><b>Close in the first 30 s after power-up.</b><span>A power blip must not bring the door down on an animal standing in it.</span></li>
+        <li><b>Close on a brief dropout.</b><span>It needs 15 s of weak signal, and a returning animal cancels the close.</span></li>
+        <li><b>Retry a stalled close.</b><span>It reverses and opens. Further tries are minutes apart and capped, then it stays open and says so.</span></li>
+        <li><b>Energise both relays together.</b><span>The relays are interlocked, with a gap before every change of direction.</span></li>
+        <li><b>Press twice while the door is moving.</b><span>On these controllers a second press means stop, which would park it halfway.</span></li>
+        <li><b>Stay in maintenance by accident.</b><span>The window that keeps the beacon away from the motor ends by itself, and a reboot clears it.</span></li>
+      </ul>
+      <p class="muted">
+        Obstruction protection comes from the door, not from PetDoor. Buy a door
+        whose own controller detects an obstruction if anything larger than a
+        chicken will use it, and read the
+        <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/SAFETY.md">safety guide</a>
+        before you wire anything.
+      </p>
     </div>
   </section>
 
-  <footer>
-    <p>
-      <a href="https://github.com/jchirayath/PetDoor">Source &amp; full documentation</a> ·
-      <a href="https://github.com/jchirayath/PetDoor/wiki">Wiki</a> ·
-      <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/COOP-CONVERSION.md">Build guide</a> ·
-      <a href="https://github.com/jchirayath/PetDoor/blob/main/docs/SAFETY.md">Safety</a> ·
-      <a href="/demo">Sample dashboard</a>
-    </p>
-    <p>MIT licensed. Built with an ESP32, a beacon and a coop door.</p>
-    <p>
-      Not a security device. Bluetooth advertisements are unauthenticated, so the
-      door opens for anything broadcasting the beacon's address. Keep a real lock
-      on anything that matters.
-    </p>
-  </footer>
+  <section class="sheet" id="dashboard">
+    <header>
+      <h2>Dashboard</h2>
+      <p>Optional, self-hosted, and behind your own sign-in.</p>
+    </header>
+    <div class="body">
+      <p>
+        One file of Python and a SQLite database, on a Raspberry Pi or a small VM.
+        It turns months of the door's log into trips per day, how long each trip
+        lasts and the daily rhythm. It also tracks the beacon battery and warns
+        you weeks before the cell gives out. If you turn it on, it can drive the
+        door too: open, close, lock, change a setting, or push new firmware. It
+        can email you when anyone does.
+      </p>
+      <figure class="photo">
+        <a href="/demo"><img src="/images/screenshot-activity.png" alt="The Activity tab: firmware, event count and last check-in, then trips a day, typical trip, longest trip, and a two-week daily rhythm strip" loading="lazy"></a>
+        <figcaption><b>Activity.</b> The sample uses made-up data, so it can be
+          public. <a href="/demo">Open the sample dashboard</a>.</figcaption>
+      </figure>
+      <div class="photos two">
+        <figure class="photo">
+          <img src="/images/screenshot-controls.png" alt="The Controls tab: open, close, auto, lock, unlock and beep, with a log of each request and the door's response" loading="lazy">
+          <figcaption><b>Controls.</b> Commands wait until the door next calls in,
+            and you can cancel until then.</figcaption>
+        </figure>
+        <figure class="photo">
+          <img src="/images/screenshot-settings.png" alt="The Settings tab: fields for signal thresholds, filters, dwell times, relay pulse and reporting interval" loading="lazy">
+          <figcaption><b>Settings.</b> Every value the door accepts, range-checked
+            here and again on the door.</figcaption>
+        </figure>
+      </div>
+      <p class="muted">
+        The real log stays private because when a door opens and closes says when
+        a house is empty. This page and the sample are the only public parts.
+      </p>
+    </div>
+  </section>
 
-</div>
+  <section class="sheet" id="limits">
+    <header>
+      <h2>Before you build</h2>
+      <p>The honest limits.</p>
+    </header>
+    <div class="body">
+      <div class="limits">
+        <div>
+          <h3>It is not a lock</h3>
+          <p>Bluetooth advertisements are not authenticated. Anything that
+             broadcasts your beacon's address opens the door, and a free phone app
+             can read that address. That's fine against weather, rodents and the
+             neighbour's cat, but it won't stop a person.</p>
+        </div>
+        <div>
+          <h3>The animal has to wear it</h3>
+          <p>No beacon, no door. That rules out an animal that won't keep a collar
+             on. A flat cell stops the door opening; it never makes it close on an
+             animal.</p>
+        </div>
+        <div>
+          <h3>You are wiring a motor</h3>
+          <p>PetDoor only presses buttons, and the door's controller keeps its
+             limits. You are still working on a door an animal walks through.</p>
+        </div>
+        <div>
+          <h3>You could just buy one</h3>
+          <p>Finished smart pet doors exist, with a warranty and someone to call.
+             If you want one working this afternoon, buy one. This project is for
+             when you already own a powered door worth keeping, or want the log on
+             hardware you control.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="page">
+  <div class="foot">
+    <div><a class="mark" href="/">PetDoor</a></div>
+    <div>
+      <ul>
+        <li><a href="https://github.com/jchirayath/PetDoor">Source and documentation</a></li>
+        <li><a href="https://github.com/jchirayath/PetDoor/wiki">Wiki</a></li>
+        <li><a href="https://github.com/jchirayath/PetDoor/blob/main/docs/COOP-CONVERSION.md">Build guide</a></li>
+        <li><a href="https://github.com/jchirayath/PetDoor/blob/main/docs/SAFETY.md">Safety</a></li>
+        <li><a href="/demo">Sample dashboard</a></li>
+      </ul>
+      <p>MIT licensed. Built with an ESP32, a beacon and a coop door.</p>
+      <p>Not a security device. Keep a real lock on anything that matters.</p>
+    </div>
+  </div>
+</footer>
+
 </body>
 </html>

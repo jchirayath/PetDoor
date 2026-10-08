@@ -1,0 +1,135 @@
+/* PetDoor — the one theme every page shares: the project page, the public
+   sample dashboard and the private one.
+
+   Served from /assets/theme.css, a PUBLIC route, because the project page needs
+   it before anyone has signed in. Each page links this first and its own
+   stylesheet second, so a page can refine a component but never redefine a
+   colour. Change a colour HERE and all three pages move together; that is the
+   whole point of the file.
+
+   The two accents are not decoration, they are the project's two halves:
+     --in   teal   the door, and an animal coming IN
+     --out  amber  the radio — the beacon — and an animal going OUT
+   The dashboards already used them that way; the project page now does too. */
+
+:root{
+  --ground:#F4F7F7; --panel:#FFFFFF; --sunk:#EBF0F0;
+  --ink:#14222B; --ink-2:#465864; --ink-3:#768893;
+  --line:#D9E2E3; --line-2:#E9EFEF;
+  --in:#1F7F74; --in-soft:#1F7F7424; --on-in:#FFFFFF;
+  --out:#D98E22; --out-soft:#E9A23B2E;
+  --fault:#C4453B; --fault-soft:#C4453B1F;
+  --night:#14222B0A;
+
+  /* The solder mask. The project page's one dark surface — the schematic in
+     the masthead and the architecture diagram are drawn on it, the way the
+     board itself is green with white silkscreen. */
+  --pcb:#0D3532; --pcb-2:#124541; --pcb-line:#2B6660; --silk:#E9F2EF; --silk-2:#9FC2BB;
+
+  --shadow:0 1px 2px #14222B0F, 0 10px 28px -14px #14222B2E;
+  --r-s:6px; --r-m:10px; --r-l:16px;
+
+  --f-sans:"IBM Plex Sans",ui-sans-serif,-apple-system,"Segoe UI",Roboto,Arial,sans-serif;
+  --f-cond:"IBM Plex Sans Condensed","IBM Plex Sans",ui-sans-serif,"Arial Narrow",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --ground:#0E1519; --panel:#151F25; --sunk:#111A1F;
+  --ink:#E4EDEF; --ink-2:#A1B2BA; --ink-3:#6D808A;
+  --line:#25333A; --line-2:#1C282E;
+  --in:#2FA493; --in-soft:#2FA49330; --on-in:#04201C;
+  --out:#E0A040; --out-soft:#E0A04033;
+  --fault:#E06C60; --fault-soft:#E06C6026;
+  --night:#FFFFFF08;
+  --pcb:#0A2826; --pcb-2:#0F3532; --pcb-line:#245852;
+  --shadow:0 1px 2px #0008, 0 10px 28px -14px #000A;
+}}
+:root[data-theme="dark"]{
+  --ground:#0E1519; --panel:#151F25; --sunk:#111A1F;
+  --ink:#E4EDEF; --ink-2:#A1B2BA; --ink-3:#6D808A;
+  --line:#25333A; --line-2:#1C282E;
+  --in:#2FA493; --in-soft:#2FA49330; --on-in:#04201C;
+  --out:#E0A040; --out-soft:#E0A04033;
+  --fault:#E06C60; --fault-soft:#E06C6026;
+  --night:#FFFFFF08;
+  --pcb:#0A2826; --pcb-2:#0F3532; --pcb-line:#245852;
+  --shadow:0 1px 2px #0008, 0 10px 28px -14px #000A;
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0; background:var(--ground); color:var(--ink);
+  font-family:var(--f-sans); line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--in); text-underline-offset:.18em}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:2px solid var(--in); outline-offset:2px; border-radius:3px}
+.mono{font-family:var(--f-mono); font-variant-numeric:tabular-nums}
+
+/* ── The site bar ─────────────────────────────────────────────────────────
+   The same strip across the top of every page, so moving between the project
+   page and a dashboard feels like one site rather than three. */
+.sitebar{
+  position:sticky; top:0; z-index:20;
+  background:color-mix(in srgb,var(--ground) 86%,transparent);
+  -webkit-backdrop-filter:saturate(1.4) blur(10px); backdrop-filter:saturate(1.4) blur(10px);
+  border-bottom:1px solid var(--line);
+}
+@supports not (color:color-mix(in srgb,red,blue)){ .sitebar{background:var(--ground)} }
+.sitebar-in{
+  max-width:1160px; margin:0 auto; padding:0 20px; height:56px;
+  display:flex; align-items:center; gap:22px;
+}
+.mark{display:flex; align-items:center; gap:10px; text-decoration:none; color:var(--ink);
+      font-family:var(--f-cond); font-weight:600; font-size:19px; letter-spacing:-.01em}
+.mark svg{width:28px; height:28px; flex:0 0 auto}
+/* The logo is drawn with classes, not presentation attributes: var() inside
+   an SVG attribute is not reliably supported, and a class follows dark mode. */
+.logo .lg-frame{fill:none; stroke:var(--in); stroke-width:16}
+.logo .lg-flap{fill:var(--in); opacity:.28}
+.logo .lg-edge{fill:none; stroke:var(--in); stroke-width:9; stroke-linejoin:round}
+.logo .lg-tag{fill:var(--out)}
+.sitenav{display:flex; gap:4px; margin-left:auto; align-items:center; overflow-x:auto; scrollbar-width:none}
+.sitenav::-webkit-scrollbar{display:none}
+.sitenav a{
+  color:var(--ink-2); text-decoration:none; font-size:14.5px; font-weight:500;
+  padding:7px 11px; border-radius:var(--r-s); white-space:nowrap;
+}
+.sitenav a:hover{color:var(--ink); background:var(--sunk)}
+.sitenav a[aria-current="page"]{color:var(--ink); background:var(--sunk)}
+.sitenav a.go{color:var(--on-in); background:var(--in)}
+.sitenav a.go:hover{background:color-mix(in srgb,var(--in) 88%,#000)}
+.sitenav .narrow-only{display:none}
+@media (max-width:760px){ .sitenav .wide-only{display:none} .sitenav .narrow-only{display:inline} }
+
+/* ── Utilities ────────────────────────────────────────────────────────────
+   The strict Content-Security-Policy forbids style="" attributes — in markup
+   AND in HTML built by script — so what used to be inline is a class here.
+   Each also answers to data-u="name", for script-built elements that already
+   carry a class attribute: a second class="" on one tag is silently dropped.
+   !important because an inline style always won, and these stand in for one.
+   Keep them single-purpose; a utility that does two things gets reused for
+   the wrong one. */
+.c-ink,[data-u~="c-ink"]{color:var(--ink) !important}   .c-ink2,[data-u~="c-ink2"]{color:var(--ink-2) !important}   .c-ink3,[data-u~="c-ink3"]{color:var(--ink-3) !important}
+.c-in,[data-u~="c-in"]{color:var(--in) !important}     .c-out,[data-u~="c-out"]{color:var(--out) !important}      .c-fault,[data-u~="c-fault"]{color:var(--fault) !important}
+.bg-current,[data-u~="bg-current"]{background:currentColor !important}
+.bg-in,[data-u~="bg-in"]{background:var(--in) !important} .bg-out,[data-u~="bg-out"]{background:var(--out) !important}
+.sw-out,[data-u~="sw-out"]{background:var(--out-soft) !important; border:1px solid var(--out) !important}
+.sw-night,[data-u~="sw-night"]{background:var(--night) !important; border:1px solid var(--line) !important}
+.ta-r,[data-u~="ta-r"]{text-align:right !important}
+.fw4,[data-u~="fw4"]{font-weight:400 !important} .fw6,[data-u~="fw6"]{font-weight:600 !important}
+.fs12,[data-u~="fs12"]{font-size:12px !important} .fs15,[data-u~="fs15"]{font-size:15px !important}
+.dim,[data-u~="dim"]{opacity:.8 !important}
+.mt0,[data-u~="mt0"]{margin-top:0 !important} .mt4,[data-u~="mt4"]{margin-top:4px !important} .mt8,[data-u~="mt8"]{margin-top:8px !important} .mt12,[data-u~="mt12"]{margin-top:12px !important} .mt14,[data-u~="mt14"]{margin-top:14px !important}
+.m-note,[data-u~="m-note"]{margin:6px 0 0 !important}
+.flex1,[data-u~="flex1"]{flex:1 !important}
+.w7,[data-u~="w7"]{width:7em !important}
+.self-c,[data-u~="self-c"]{align-self:center !important}
+.lead-strong,[data-u~="lead-strong"]{font-size:15px !important; color:var(--ink) !important; font-weight:600 !important}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important; animation-iteration-count:1!important;
+                       transition-duration:.01ms!important; scroll-behavior:auto!important}
+}

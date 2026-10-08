@@ -1595,6 +1595,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if sent is not None:
                 return sent
             return self._send(404, "not found")
+        if path.startswith("/assets/"):
+            # The shared theme and the public page's own CSS, JS and diagrams.
+            # PUBLIC: the proxy lists /assets/* with the other public routes,
+            # because the project page needs them before anyone has signed in.
+            # Nothing here is data — it is the same code that is in the repo.
+            # basename() strips traversal, and the extension list is explicit.
+            name = os.path.basename(path[len("/assets/"):])
+            root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+            full = os.path.join(root, name)
+            types = {".css": "text/css; charset=utf-8",
+                     ".js": "text/javascript; charset=utf-8",
+                     ".svg": "image/svg+xml"}
+            ext = os.path.splitext(name)[1].lower()
+            if name and ext in types and os.path.isfile(full):
+                with open(full, "rb") as fh:
+                    return self._send(200, fh.read(), types[ext])
+            return self._send(404, "not found")
         if path.startswith("/images/"):
             # Static, read-only, and strictly from the images directory beside
             # this script. basename() strips any traversal attempt outright.

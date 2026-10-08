@@ -173,7 +173,7 @@ function renderSignal(){
   const early=median(vals.slice(0,half)), late=median(vals.slice(half));
   const drop=early-late;
   $("signote").innerHTML = drop>=6
-    ? `<strong style="color:var(--fault)">Signal has dropped ${drop} dBm</strong> across this window. That usually means the beacon battery is going — or it has moved further from the door. Worth checking before it starts missing.`
+    ? `<strong data-u="c-fault">Signal has dropped ${drop} dBm</strong> across this window. That usually means the beacon battery is going — or it has moved further from the door. Worth checking before it starts missing.`
     : `Steady within ${Math.abs(drop)} dBm, so the beacon is holding up. A sustained drop of 6 dBm or more is the early warning for a flat battery.`;
 }
 
@@ -252,15 +252,15 @@ function renderTable(){
   const cls=t=>t==="OPEN"?"in":t==="CLOSE"?"out":t==="REFUSED"?"fault":"sys";
   host.innerHTML="<table><thead><tr><th>When</th><th>Event</th><th>Detail</th><th>Signal</th><th></th></tr></thead><tbody>"
    +rows.map((e,i)=>{
-     const when=e.epoch?`<span class="mono">${fmtDate(e.epoch)}</span> <span class="mono" style="color:var(--ink-2)">${fmtClock(e.epoch)}</span>`
-                       :`<span class="mono" style="color:var(--ink-3)">boot ${e.boot} · +${e.uptime}s</span>`;
+     const when=e.epoch?`<span class="mono">${fmtDate(e.epoch)}</span> <span class="mono" data-u="c-ink2">${fmtClock(e.epoch)}</span>`
+                       :`<span class="mono" data-u="c-ink3">boot ${e.boot} · +${e.uptime}s</span>`;
      let d="";
      if(e.type==="BOOT") d=RESET[e.detail]||("reset "+e.detail);
      else if(e.type==="REFUSED") d=REFUSE[e.detail]||("reason "+e.detail);
-     if(e.type==="BOOT"&&e.detail===9) d=`<strong style="color:var(--fault)">${d}</strong>`;
-     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" style="background:currentColor"></i>${EV[e.type]}</span></td>`
-      +`<td style="color:var(--ink-2)">${d}</td><td class="mono" style="color:var(--ink-2)">${e.rssi?e.rssi+" dBm":""}</td>`
-      +`<td style="text-align:right">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
+     if(e.type==="BOOT"&&e.detail===9) d=`<strong data-u="c-fault">${d}</strong>`;
+     return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" data-u="bg-current"></i>${EV[e.type]}</span></td>`
+      +`<td data-u="c-ink2">${d}</td><td class="mono" data-u="c-ink2">${e.rssi?e.rssi+" dBm":""}</td>`
+      +`<td data-u="ta-r">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
    }).join("")+"</tbody></table>";
   host.querySelectorAll("button[data-ep]").forEach(b=>b.onclick=()=>selectEvent(+b.dataset.ep));
 }
@@ -269,8 +269,8 @@ function selectEvent(ep){
   selected=ep;
   const stamp=fmtDate(ep)+" "+fmtClock(ep)+"Z";
   for(const id of ["camOut","camIn"]){
-    $(id).innerHTML=`<div><div class="mono" style="font-size:15px;color:var(--ink);font-weight:600">${stamp}</div>
-      <div style="margin-top:4px">scrub here</div></div>`;
+    $(id).innerHTML=`<div><div class="mono" data-u="lead-strong">${stamp}</div>
+      <div data-u="mt4">scrub here</div></div>`;
   }
   $("camsec").scrollIntoView({behavior:"matchMedia" in window && matchMedia("(prefers-reduced-motion: reduce)").matches?"auto":"smooth",block:"nearest"});
 }
@@ -393,7 +393,7 @@ function renderDoors(devs){
         rows+=`<div class="live">`
           +`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
           +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
-          +(stand.label?` <span style="font-weight:400;opacity:.8">${esc(stand.label)}</span>`:"")
+          +(stand.label?` <span data-u="fw4 dim">${esc(stand.label)}</span>`:"")
           +`</span>`
           // A locked door will not open for the collar. That is the one state
           // worth shouting about, because from the outside it looks identical
@@ -620,7 +620,7 @@ function renderSettings(){
         <option value="high"${sLow==="0"?" selected":""}>to 3V3</option>
       </select>`
     +`<button data-apply="sensors">Apply</button></div>`
-    +(fitted?"":`<p class="note" style="margin-top:0">Not fitted yet. Wire a reed switch from each `
+    +(fitted?"":`<p class="note" data-u="mt0">Not fitted yet. Wire a reed switch from each `
       +`GPIO to GND, set the pins here, and the door starts measuring its own position \u2014 `
       +`the arrival chime stops being a stopwatch and a swallowed button press becomes visible.</p>`)
     +`</div>`;
@@ -738,7 +738,7 @@ function renderSchedule(){
       html+=`<div class="schedrow">
         <span class="schedwin">${esc(w.s)} \u2013 ${esc(w.e)}</span>
         <span class="scheddays">${esc(daysLabel(w.mask))}${overnight?" \u00b7 overnight":""}</span>
-        <span style="flex:1"></span>
+        <span data-u="flex1"></span>
         <button class="b-quiet" data-schedel="${esc(w.s)}-${esc(w.e)}">Remove</button></div>`;
     });
   } else if(known&&cfg.sched!==undefined){
@@ -755,10 +755,10 @@ function renderSchedule(){
   const waiting=(typeof pending!=="undefined"?pending:[])
     .filter(p=>String(p.command||"").toLowerCase().startsWith("schedule"));
   if(waiting.length){
-    html+=`<div class="queued" style="margin-top:12px">
+    html+=`<div class="queued" data-u="mt12">
       <span>Waiting for the door:</span>
       <span class="cmds">${waiting.map(p=>esc(p.command)).join(", ")}</span>
-      <p class="note" style="margin:6px 0 0">The list above still shows what the door
+      <p class="note" data-u="m-note">The list above still shows what the door
       currently has. It collects queued changes when it next calls in — usually within
       five minutes — and this panel updates after the check-in following that.</p></div>`;
   }
@@ -770,13 +770,13 @@ function renderSchedule(){
       <button class="b-outline" id="schedadd">Add window</button>
     </div>`;
 
-  html+=`<div class="schedadd" style="margin-top:14px">
+  html+=`<div class="schedadd" data-u="mt14">
       <label for="schedtz">Local time is UTC</label>
       <input type="number" id="schedtz" min="-840" max="840" step="15"
-             style="width:7em" value="${tz!==null?tz:0}">
+             data-u="w7" value="${tz!==null?tz:0}">
       <span class="scheddays">minutes</span>
       <button class="b-quiet" id="schedtzset">Set</button>
-      ${wins.length?`<span style="flex:1"></span>
+      ${wins.length?`<span data-u="flex1"></span>
         <button class="b-danger" id="schedclear">Remove all</button>`:""}
     </div>`;
 
@@ -872,7 +872,7 @@ function renderControl(){
           ? `<button class="b-danger" data-cmd="maint off">End maintenance (${Math.ceil(maintLeft/60)} min left)</button>`
             // Where to point a console. Shown only while a window is open,
             // because that is the only time anything is listening there.
-            +(st.ip&&st.ip!=="-"?`<span class="glabel" style="align-self:center">console: ${esc(st.ip)}:23</span>`:"")
+            +(st.ip&&st.ip!=="-"?`<span class="glabel" data-u="self-c">console: ${esc(st.ip)}:23</span>`:"")
           : `<button class="b-quiet" data-cmd="maint 30" data-confirm="Start a 30-minute maintenance window? The collar will NOT open or close the door until it expires, and the console opens over WiFi. The window ends by itself.">Maintenance (30 min)</button>`))
     +'</div>';
 
@@ -894,7 +894,7 @@ function renderControl(){
       return (c==="door close"&&here==="CLOSED")||(c==="door open"&&here==="OPEN");
     });
     if(redundant.length){
-      queue+=`<p class="note" style="margin-top:8px">The door already reports
+      queue+=`<p class="note" data-u="mt8">The door already reports
         <b>${esc(here)}</b>. This still pulses the relay — manual commands skip the
         "already in that state" check, which is how you correct the door when its
         idea of where it is has drifted from reality.</p>`;
@@ -1005,7 +1005,7 @@ function renderBanner(){
   if(d.version) bits.push(fact("Firmware","v"+esc(d.version)));
   bits.push(fact("Events",events.length.toLocaleString()));
   if(st.rssi!==undefined){
-    bits.push(fact("Signal",esc(st.rssi)+" dBm"+(st.dist?` <span style="font-weight:400;color:var(--ink-3)">~${esc(st.dist)} m</span>`:"")));
+    bits.push(fact("Signal",esc(st.rssi)+" dBm"+(st.dist?` <span data-u="fw4 c-ink3">~${esc(st.dist)} m</span>`:"")));
   }
   // Worst gap and boots are diagnostics, but they are the two that explain a
   // door misbehaving — a gap near the fix timeout, or a boot count climbing
@@ -1027,7 +1027,7 @@ function renderBanner(){
   bits.push(fact("Refreshed",'<span id="live">just now</span>'));
   // Hidden on a phone: it is an OTA-time detail, and nobody pushes firmware
   // from one. Dropping it saves a whole wrapped row where space is tightest.
-  if(d.door_ip) bits.push(fact("Push to",`<span class="mono" style="font-size:12px">${esc(d.door_ip)}</span>`,"wide-only"));
+  if(d.door_ip) bits.push(fact("Push to",`<span class="mono" data-u="fs12">${esc(d.door_ip)}</span>`,"wide-only"));
   host.innerHTML=bits.join("");
 
   // The live state rides in the title row itself. It is the one thing someone
@@ -1039,7 +1039,7 @@ function renderBanner(){
     const present=st.present==="1";
     hs.innerHTML=`<span class="pill ${present?"in":"out"}">${present?"beacon present":"beacon away"}</span>`
       +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
-      +(stand.label?` <span style="font-weight:400;opacity:.8">${esc(stand.label)}</span>`:"")
+      +(stand.label?` <span data-u="fw4 dim">${esc(stand.label)}</span>`:"")
       +`</span>`
       +(st.locked==="1"?`<span class="pill lock">LOCKED</span>`:"");
   }
