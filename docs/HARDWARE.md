@@ -23,7 +23,7 @@ What to buy, and why.
 | LED + 220 Ω–1 kΩ resistor | Optional; many dev boards have one you can reuse. |
 | Weatherproof enclosure | Not optional in a coop. |
 
-### The sensors — optional, and they change what the firmware can know
+### The sensors — required, because without them the door does not know its state
 
 <p>
   <img src="../images/part-reed.svg" width="240" alt="Reed switch in a plastic sleeve with long leads, and disc magnets">
@@ -31,9 +31,16 @@ What to buy, and why.
   <img src="../images/part-buzzer.svg" width="240" alt="Wired piezo buzzer with red and black leads">
 </p>
 
-Every one of these is optional and the door works without them. What they buy is
-not features, it is **the difference between the firmware believing something and
-knowing it**. Without them the door is open-loop: it pulses a relay and assumes.
+**The reed switches and the vibration sensor are required.** The firmware will
+still run without them — their pins are off until you set them — but a door
+without them is open-loop: it pulses a relay and *assumes* the door moved. It
+cannot tell an arrival from a stall, a press the controller swallowed from one
+it obeyed, or its own travel from a hand on the flap, and every one of those is
+a door that is somewhere other than where the firmware believes. What they buy
+is **the difference between believing the door's state and knowing it**.
+
+The buzzer is still optional: it reports what the door knows, it does not add
+to it.
 
 | Part | Cost | Pin on the reference build | What it buys |
 |---|---|---|---|
@@ -74,10 +81,10 @@ suppress the real press.
 
 ---
 
-**About $80 for a complete build** including a basic automatic door. The
-electronics alone — ESP32-with-relays board plus a USB-to-TTL adapter — come to
-roughly **$25–30**; the full sensor suite adds about **$16** on top of that, and
-the door is the rest.
+**About $95 for a complete build** including a basic automatic door. The
+electronics — ESP32-with-relays board, USB-to-TTL adapter, reed switches and
+vibration sensor — come to roughly **$40–45**, and the door is the rest. The
+optional buzzer adds a dollar or so.
 
 Spending more is worth it on the door, not the electronics: $80–180 buys
 anti-pinch, which is the only obstruction protection in the system. **The sensors

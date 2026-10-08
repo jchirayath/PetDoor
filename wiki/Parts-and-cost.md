@@ -1,6 +1,6 @@
 # Parts and cost
 
-About **$80 all in**, and the door is most of it.
+About **$95 all in**, and the door is most of it.
 
 <p>
   <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-esp32-relay.svg" width="240" alt="ESP32 board with two relays">
@@ -14,31 +14,41 @@ About **$80 all in**, and the door is most of it.
 | **ESP32 board with relays** | $15–20 | Integrated board — ESP32 and two relays on one PCB. |
 | **BLE beacon** | $10–15 | For the collar. See [[The beacon]]. |
 | **USB-to-TTL adapter** | $8–10 | One-off, for programming. Reusable forever. |
+| **[Two reed switches + magnets](https://www.amazon.com/dp/B08K36VLZ2)** | ~$8 / pack | How the door knows it *arrived*. |
+| **[SW-420 vibration sensor](https://www.amazon.com/dp/B0FC5PW8CK)** | ~$7 / pack | How the door knows it *started*. |
 
-**Already own a motorised door?** Then it is the board and the beacon — around
-**$30** to make a door you already have open for one specific animal.
+**Already own a motorised door?** Then it is the board, the sensors and the
+beacon — around **$45** to make a door you already have open for one specific
+animal.
 
-### Three optional sensors, well spent
-
-None is needed to make the door work, and the firmware ships with all of them
-switched off. Add them whenever you like — each is turned on with one command,
-not a reflash.
+### The sensors are required
 
 <p>
   <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-reed.svg" width="240" alt="Reed switch and disc magnets">
   <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-sw420.svg" width="240" alt="SW-420 vibration sensor module">
+</p>
+
+Without the reed switches and the vibration sensor the door only *assumes* where
+it is: it presses a button and believes the door moved. It cannot tell an arrival
+from a stall, a press the controller ignored from one it obeyed, or its own travel
+from a hand on the flap. The firmware still runs without them — so a missing or
+failed sensor does not lock the door — but a build without them is not one this
+project can vouch for.
+
+| | What it tells the door |
+|---|---|
+| **Reed switches** | That it *arrived*. A stalled close is detected and reversed, a stale belief is corrected, and a door moved by hand is noticed |
+| **SW-420 vibration sensor** | That it *started*, within about a second, so a press the controller swallowed is caught at once rather than at the end of the travel |
+
+### One optional extra
+
+<p>
   <img src="https://raw.githubusercontent.com/jchirayath/PetDoor/main/images/part-buzzer.svg" width="240" alt="Wired piezo buzzer">
 </p>
 
 | | Cost | What it buys |
 |---|---|---|
-| **[Passive piezo buzzer](https://www.amazon.com/dp/B07KNV8KVJ)** | ~$1 | The door stops being silent. A tick while it moves, a chime when it should have arrived, a low buzz when a locked door refuses the collar, and a distinct beep per command so you know one landed |
-| **[Two reed switches + magnets](https://www.amazon.com/dp/B08K36VLZ2)** | ~$2 | The door stops *guessing*. Its reported position becomes measured, the arrival chime becomes an actual arrival, and a button press the controller swallowed becomes visible instead of silent |
-| **[SW-420 vibration sensor](https://www.amazon.com/dp/B0FC5PW8CK)** | ~$7 / 5-pack | The door knows within a second that it *started* moving, so a press the controller swallowed is caught at once rather than at the end of the travel. On a door with no reed switches, it is also how a door moved by hand gets noticed |
-
-The reed switches are the better value of the two. Everything this project
-cannot currently promise — that the door arrived, that it is where it says it
-is, that the press took — traces back to not having them.
+| **[Passive piezo buzzer](https://www.amazon.com/dp/B07KNV8KVJ)** | ~$1 | The door stops being silent. A tick while it moves, a chime when it has arrived, a low buzz when a locked door refuses the collar, and a distinct beep per command so you know one landed. It must be **passive**: an active buzzer plays one note for everything |
 
 ---
 

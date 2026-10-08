@@ -402,8 +402,9 @@ door moves for forty-five seconds, so that one is counted as the chatter it is.
 
 #### Without limit switches: inferring the travel from its duration
 
-The switches are optional and most builds will not have them, so on those doors
-everything above is dead and the believed state silently goes stale. A stale
+The switches are required, but a build that has not fitted them yet — or has
+lost one — still runs, and on that door everything above is dead and the
+believed state silently goes stale. A stale
 **open** is the expensive one: the next open request is refused as "already
 there" and the animal stands at a shut door.
 

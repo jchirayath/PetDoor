@@ -14,7 +14,7 @@
 # PetDoor
 
 **Open a pet door when your animal walks up to it, and close it again once
-they have gone.** Open source, MIT licensed, and about **$80 all in** —
+they have gone.** Open source, MIT licensed, and about **$95 all in** —
 door, board and cable.
 
 An ESP32 listens continuously for a Bluetooth beacon on your pet's collar. When
@@ -394,7 +394,7 @@ beacon has to get *meaningfully* further away before anything changes.
 
 Prices are typical US street prices as of 2026 and will drift.
 
-**The whole build is about $80.** That is the real figure from this project,
+**The whole build is about $95.** That is the real figure from this project,
 not a best-case sum.
 
 | # | Part | Cost | Notes |
@@ -402,7 +402,9 @@ not a best-case sum.
 | 1 | **Automatic coop / pet door** | **$40–50** | The basic aluminium auto-door kits |
 | 2 | **ESP32 board with 2 relays on-board** | **$15–20** | Search "ESP32 relay 2 channel". One board, no relay wiring |
 | 3 | **USB-to-TTL adapter (CP2102)** | **$8–10** | Required — these boards have no USB port |
-| | **Total** | **~$80** | |
+| 4 | **2 × reed switch + magnet** | **~$8 / pack** | Required — how the door knows it arrived. [Reference part](https://www.amazon.com/dp/B08K36VLZ2) |
+| 5 | **SW-420 vibration sensor** | **~$7 / pack** | Required — how the door knows it started. [Reference part](https://www.amazon.com/dp/B0FC5PW8CK) |
+| | **Total** | **~$95** | |
 
 Then whatever you do not already have:
 
@@ -413,9 +415,10 @@ Then whatever you do not already have:
 | Weatherproof enclosure | $10–15 | Not optional outdoors |
 | *Optional:* spare remote for the door | $10–15 | Enables the easiest wiring — [Pattern 1](docs/COOP-CONVERSION.md#pattern-1-tap-a-spare-remote-easiest) |
 
-### The sensors — about $16, and the best value after the door
+### The sensors — required, about $15, and the best value after the door
 
-Optional, and the door works without them. What they buy is **the difference
+The reed switches and the vibration sensor are required; the buzzer is optional.
+The firmware runs without them, but then it only assumes where the door is. What they buy is **the difference
 between the firmware believing something and knowing it.** Without them the door
 is open-loop: it pulses a relay and assumes.
 
@@ -426,7 +429,7 @@ is open-loop: it pulses a relay and assumes.
 | Passive piezo buzzer | ~$1–8 | The only interface at the door. Distinct patterns for arrival, a stall, a lockout, a schedule refusal and a failed sensor |
 
 All three are sold in multi-packs, so one of each leaves spares.
-[HARDWARE.md](docs/HARDWARE.md#the-sensors--optional-and-they-change-what-the-firmware-can-know)
+[HARDWARE.md](docs/HARDWARE.md#the-sensors--required-because-without-them-the-door-does-not-know-its-state)
 has links and the three specifications that matter — the reeds must be
 **normally-open**, the buzzer must be **passive**, and the vibration sensor goes
 **on the door, not beside the relay**.

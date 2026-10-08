@@ -54,7 +54,7 @@
       <p class="intro">
         It wires into the motorised door you already have, by pressing its own
         buttons. <strong>No subscription, no vendor account</strong>, and about
-        $80 in parts.
+        $95 in parts.
       </p>
       <div class="actions">
         <a class="btn primary" href="https://github.com/jchirayath/PetDoor/blob/main/docs/COOP-CONVERSION.md">Read the build guide</a>
@@ -134,8 +134,8 @@
         </li>
         <li>
           <h3>Press, then check</h3>
-          <p>A relay presses the door's own button. Optional sensors confirm it
-             started and arrived; a close that stalls is reversed.</p>
+          <p>A relay presses the door's own button. A vibration sensor confirms it
+             started and reed switches that it arrived; a close that stalls is reversed.</p>
         </li>
       </ol>
       <p class="muted">
@@ -291,7 +291,7 @@
   <section class="sheet" id="hardware">
     <header>
       <h2>Hardware</h2>
-      <p>Six parts are required. The sensors are optional, and turn "pressed the
+      <p>Eight parts, all required. The sensors are what turn "pressed the
          button" into "the door moved".</p>
     </header>
     <div class="body">
@@ -299,8 +299,8 @@
         <li><img src="/images/part-esp32-relay.svg" alt="" loading="lazy"><b>ESP32 relay board</b><span>the brain and both buttons</span></li>
         <li><img src="/images/part-beacon.svg" alt="" loading="lazy"><b>BLE beacon</b><span>on the collar</span></li>
         <li><img src="/images/part-usb-ttl.svg" alt="" loading="lazy"><b>USB-to-serial adapter</b><span>for the first flash</span></li>
-        <li><img src="/images/part-reed.svg" alt="" loading="lazy"><b>Reed switch and magnet</b><span>optional, one per end</span></li>
-        <li><img src="/images/part-sw420.svg" alt="" loading="lazy"><b>SW-420 vibration sensor</b><span>optional, on the door</span></li>
+        <li><img src="/images/part-reed.svg" alt="" loading="lazy"><b>Reed switch and magnet</b><span>one at each end of travel</span></li>
+        <li><img src="/images/part-sw420.svg" alt="" loading="lazy"><b>SW-420 vibration sensor</b><span>on the door itself</span></li>
         <li><img src="/images/part-buzzer.svg" alt="" loading="lazy"><b>Passive piezo buzzer</b><span>optional, the door's voice</span></li>
       </ul>
       <table class="parts">
@@ -308,21 +308,21 @@
           <tr><th scope="col">Part</th><th scope="col">What it does</th><th scope="col">Pin</th><th scope="col" class="num">Price</th></tr>
         </thead>
         <tbody>
-          <tr class="group"><th colspan="4" scope="colgroup">Required</th></tr>
+          <tr class="group"><th colspan="4" scope="colgroup">Required <span>sensor pins are set from the console and saved on the board</span></th></tr>
           <tr><th scope="row">Motorised pet or coop door</th><td class="what">Its controller runs the motor and stops it at the limits. Needs separate OPEN and CLOSE buttons.</td><td class="pin"></td><td class="num">$40–60</td></tr>
           <tr><th scope="row">ESP32 board with two relays</th><td class="what">Runs the firmware. The relays are wired across the door's two buttons.</td><td class="pin">16, 17</td><td class="num">$15–20</td></tr>
           <tr><th scope="row">Minew BLE beacon</th><td class="what">Goes on the collar. Must broadcast a fixed address, which rules out AirTags, Tiles and phones.</td><td class="pin"></td><td class="num">$10–15</td></tr>
           <tr><th scope="row">5 V supply, 1 A</th><td class="what">Powers the board and both relay coils.</td><td class="pin"></td><td class="num">$8–12</td></tr>
           <tr><th scope="row">Weatherproof box</th><td class="what">Not optional in a coop.</td><td class="pin"></td><td class="num">$10–15</td></tr>
           <tr><th scope="row">USB-to-serial adapter</th><td class="what">For the first flash. Later updates go over WiFi. You buy one, once.</td><td class="pin"></td><td class="num">$8–10</td></tr>
-          <tr class="group"><th colspan="4" scope="colgroup">Optional <span>all off by default, pins set from the console</span></th></tr>
           <tr><th scope="row"><a href="https://www.amazon.com/dp/B08K36VLZ2" rel="noopener noreferrer">Two reed switches</a></th><td class="what">One at each end of travel. Confirms the door arrived, catches a stalled close, notices a door moved by hand.</td><td class="pin">32, 25</td><td class="num">~$8</td></tr>
           <tr><th scope="row"><a href="https://www.amazon.com/dp/B0FC5PW8CK" rel="noopener noreferrer">SW-420 vibration sensor</a></th><td class="what">On the door itself. Confirms within a second that it started moving.</td><td class="pin">33</td><td class="num">~$7</td></tr>
+          <tr class="group"><th colspan="4" scope="colgroup">Optional</th></tr>
           <tr><th scope="row"><a href="https://www.amazon.com/dp/B07KNV8KVJ" rel="noopener noreferrer">Passive buzzer</a></th><td class="what">Ticks while moving, chimes on arrival, and has a distinct pattern for each fault.</td><td class="pin">27</td><td class="num">~$1</td></tr>
           <tr><th scope="row">Status LED</th><td class="what">Shows what the door believes at a glance.</td><td class="pin">23</td><td class="num"></td></tr>
         </tbody>
         <tfoot>
-          <tr><th scope="row">Typical build</th><td class="what">About $30 if you already own a motorised door.</td><td></td><td class="num">~$80</td></tr>
+          <tr><th scope="row">Typical build</th><td class="what">About $45 if you already own a motorised door.</td><td></td><td class="num">~$95</td></tr>
         </tfoot>
       </table>
 
