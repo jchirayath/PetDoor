@@ -10,6 +10,7 @@ reporting is never mentioned at all.
 No framework and no network: send_notification is replaced with a recorder, and
 the database is a throwaway file. Run with  tests/server/run.sh
 """
+import io
 import os
 import re
 import sys
@@ -243,6 +244,66 @@ def test_act_source_covers_every_source_the_firmware_can_send():
           f"ACT_SOURCE covers every SRC_* value (missing {missing})")
 
 
+def test_every_dashboard_button_is_a_command_the_server_accepts():
+    """Walk every button on the panel through the server's own allowlist.
+
+    This exists because the panel and the allowlist are edited in different
+    files and nothing connected them. A button whose verb the server rejects,
+    or whose verb needs confirming while the button sends none, looks completely
+    correct in both files and fails only when somebody presses it.
+
+    It has already caught three: `lock open` and `lock close` were added to the
+    panel without teaching WEB_COMMANDS that `lock` can take an argument, and
+    `maint off` — the End maintenance button, which predates both — needed
+    confirming while sending none, so ending a window from the dashboard could
+    never work at all.
+    """
+    js = io.open(os.path.join(SERVER_DIR, "dashboard.js"), encoding="utf-8").read()
+
+    cmds = {}          # command -> does its button carry its own data-confirm?
+    for m in re.finditer(r'data-cmd="([^"$]+)"', js):
+        tag = js[m.start():js.find(">", m.start())]
+        cmds.setdefault(m.group(1), "data-confirm=" in tag)
+    # The maintenance durations are generated from MAINT_CHOICES.
+    for m in re.finditer(r'data-cmd="maint \$\{m\}"', js):
+        tag = js[m.start():js.find(">", m.start())]
+        for mins in (15, 30, 60, 120, 240):
+            cmds.setdefault("maint %d" % mins, "data-confirm=" in tag)
+    # Buttons built through the b() helper. These never carry a confirm, which
+    # is exactly why they need checking: the helper has no way to add one.
+    for m in re.finditer(r'\bb\("([a-z][a-z ]*)"\s*,', js):
+        cmds.setdefault(m.group(1), False)
+
+    check(len(cmds) >= 15,
+          "found the panel's buttons to check (got %d)" % len(cmds))
+
+    for cmd in sorted(cmds):
+        ok, why = srv.web_command_allowed(cmd)
+        check(ok, "the panel's %r is a command the server accepts (%s)" % (cmd, why))
+        if ok and srv.web_command_needs_confirm(cmd):
+            check(cmds[cmd],
+                  "%r needs confirming, so its button must send one" % cmd)
+
+
+def test_lock_takes_a_position_and_only_a_valid_one():
+    """`lock` grew an optional argument; the bare form must keep working."""
+    for good in ("lock", "lock open", "lock close", "unlock"):
+        ok, why = srv.web_command_allowed(good)
+        check(ok, "%r is accepted (%s)" % (good, why))
+    for bad in ("lock sideways", "lock open close"):
+        ok, _ = srv.web_command_allowed(bad)
+        check(not ok, "%r is rejected" % bad)
+
+    # Confirmation is argument-aware on purpose: marking the whole verb would
+    # refuse the plain Lock button, which sends no confirmation.
+    check(srv.web_command_needs_confirm("lock close"),
+          "`lock close` needs confirming — it pins the door and never expires")
+    check(srv.web_command_needs_confirm("lock open"),
+          "`lock open` needs confirming too")
+    check(not srv.web_command_needs_confirm("lock"),
+          "a bare `lock` does NOT, or the existing Lock button breaks")
+
+
 def test_a_held_closed_door_is_rendered_as_what_it_costs():
     """HOLD detail 2 pins the door shut and never expires.
 
@@ -439,6 +500,8 @@ def main():
     test_a_door_movement_says_what_asked_for_it()
     test_a_failsafe_reversal_is_not_rendered_as_an_ordinary_open()
     test_act_source_covers_every_source_the_firmware_can_send()
+    test_every_dashboard_button_is_a_command_the_server_accepts()
+    test_lock_takes_a_position_and_only_a_valid_one()
     test_a_held_closed_door_is_rendered_as_what_it_costs()
     test_held_closed_mails_on_arrival_and_held_open_is_quieter()
     test_a_still_held_closed_door_keeps_being_announced()

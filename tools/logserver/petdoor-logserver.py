@@ -414,7 +414,10 @@ def _lockout_below_close(v):
 WEB_COMMANDS = {
     # --- actions -----------------------------------------------------------
     "door":       ([_word("open", "close", "auto")], 1, None, False),
-    "lock":       ([], 0, None, False),
+    # A bare `lock` stops the collar OPENING the door. `lock open` / `lock close`
+    # pin the door to a position and never expire. One verb, optional argument,
+    # so `need` stays 0 and the validator only constrains the argument if given.
+    "lock":       ([_word("open", "close")], 0, None, False),
     "unlock":     ([], 0, None, False),
     "beep":       ([], 0, None, False),
     "scan":       ([], 0, None, False),
@@ -501,7 +504,17 @@ WEB_COMMANDS = {
 def web_command_needs_confirm(command):
     parts = command.split()
     spec = WEB_COMMANDS.get(parts[0].lower()) if parts else None
-    return bool(spec and spec[3])
+    if not spec:
+        return False
+    # `lock open` / `lock close` pin the door and never expire, so they must be
+    # confirmed even if the request is crafted by hand. A BARE `lock` only stops
+    # the collar opening the door and has never needed confirming — marking the
+    # whole verb would put a dialog on the ordinary lock and, worse, refuse the
+    # existing Lock button, which sends none. So this one asks about the
+    # argument rather than the verb.
+    if parts[0].lower() == "lock" and len(parts) > 1:
+        return True
+    return bool(spec[3])
 
 
 def web_command_allowed(command):
