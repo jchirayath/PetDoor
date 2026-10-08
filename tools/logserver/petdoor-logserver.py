@@ -186,6 +186,16 @@ ACTUATION_FLAGS = ((0x0001, "verified by a switch"), (0x0002, "after a wake pres
 RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog",
                 6: "task watchdog", 7: "watchdog", 9: "BROWNOUT"}
 
+# What asked the door to move. This is OPEN's and CLOSE's `detail`, and it is the
+# ActuationSource enum in petdoor/door.h — keep the two in step, and note that
+# adding a value must not re-label history already in the database.
+#
+# 3 is not an ordinary movement: the firmware reverses a stalled close by itself,
+# so a "fail-safe reversal" in this column is the visible trace of a close that
+# did not complete. Rendered loudly for that reason.
+ACT_SOURCE = {0: "beacon", 1: "console", 2: "network",
+              3: "fail-safe reversal"}
+
 # Which of those mean the door FELL OVER, as opposed to being restarted on
 # purpose. 1 (power-on) and 3 (software) are ordinary — a software restart is
 # exactly what an OTA push does, and power-on is a plug. Everything else is the
@@ -1375,7 +1385,17 @@ def render():
         when = (datetime.fromtimestamp(r["epoch"], timezone.utc).strftime("%Y-%m-%d %H:%M")
                 if r["epoch"] else f'boot {r["boot"]} +{r["uptime"]}s')
         detail = ""
-        if r["type"] == "BOOT":
+        if r["type"] in ("OPEN", "CLOSE"):
+            # detail is the ActuationSource (petdoor/door.h). Without this the
+            # Detail column was blank for every door movement, so a log full of
+            # correct beacon-driven travels read as though nothing had attributed
+            # them — and a fail-safe reversal after a stalled close rendered
+            # identically to an ordinary open, which is the same mistake the
+            # UNCOMMANDED branch below exists to avoid.
+            detail = ACT_SOURCE.get(r["detail"], f'source {r["detail"]}')
+            if r["detail"] == 3:
+                detail = f'<strong style="color:var(--bad)">{detail}</strong>'
+        elif r["type"] == "BOOT":
             detail = RESET_REASON.get(r["detail"], f'reset {r["detail"]}')
             if r["detail"] == 9:
                 detail = f'<strong style="color:var(--bad)">{detail}</strong>'

@@ -22,6 +22,13 @@ function uncommandedDetail(e){
 }
 const RESET={1:"power-on",3:"software",4:"panic",5:"interrupt watchdog",6:"task watchdog",7:"watchdog",9:"brownout",};
 const REFUSE={1:"already there",2:"too soon after last move",3:"boot grace period"};
+// OPEN and CLOSE spend `detail` on the ActuationSource (petdoor/door.h), so
+// without this the Detail column was BLANK for every door movement — which is
+// how a page full of correct beacon opens read as "nothing tagged the beacon".
+// Worse, it rendered a fail-safe reversal after a stalled close identically to
+// an ordinary beacon open, and those mean very different things: see CLAUDE.md
+// invariant 20 on why two different facts must not look the same here.
+const SRC={0:"beacon",1:"console",2:"network",3:"fail-safe reversal"};
 let events=[], commands=[], selected=null;
 let pending=[], controlOn=false, devices=[], busy=false;
 
@@ -281,7 +288,10 @@ function renderTable(){
      if(e.type==="BOOT") d=RESET[e.detail]||("reset "+e.detail);
      else if(e.type==="REFUSED") d=REFUSE[e.detail]||("reason "+e.detail);
      else if(e.type==="UNCOMMANDED") d=uncommandedDetail(e);
+     else if(e.type==="OPEN"||e.type==="CLOSE") d=SRC[e.detail]||("source "+e.detail);
      if(e.type==="BOOT"&&e.detail===9) d=`<strong data-u="c-fault">${d}</strong>`;
+     // A fail-safe reversal is not an ordinary open: it says a close STALLED.
+     if((e.type==="OPEN"||e.type==="CLOSE")&&e.detail===3) d=`<strong data-u="c-fault">${d}</strong>`;
      return `<tr><td>${when}</td><td><span class="pill ${cls(e.type)}"><i class="dot" data-u="bg-current"></i>${evLabel(e.type)}</span></td>`
       +`<td data-u="c-ink2">${d}</td><td class="mono" data-u="c-ink2">${e.rssi?e.rssi+" dBm":""}</td>`
       +`<td data-u="ta-r">${e.epoch?`<button class="cam" data-ep="${e.epoch}">Footage</button>`:""}</td></tr>`;
