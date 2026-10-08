@@ -40,7 +40,7 @@ beacon leaves the door inert with the animal outside, quietly.
 
 ---
 
-## The recurring panic — unexplained, now with an uptime pattern
+## The recurring panic — unexplained; the uptime theory is dead
 
 **State: recurring, instrumented, not mitigated.**
 
@@ -101,13 +101,35 @@ before it died were idle, but the boot as a whole was heavily loaded.
 | ended boot #1041 | **~3.2 h** (started ~15:43Z, died ~18:54Z) |
 | ended boot #1036 | between **1.6 h and 4.0 h** — last event at 5,724 s, and #1039 fixes the far bound; not pinned |
 
-n=2 pinned, so this is suggestive rather than established. But it points at
-something that ACCUMULATES rather than something an action triggers, which fits
-fragmentation better than anything else left — and it further weakens the
-original "eight seconds after an `ota` command" framing, since #1041's panic had
-no `ota` anywhere near it. **Check the next panic's uptime first**; if it is
-~3.2 h again, that is the strongest handle available without a backtrace, and it
-makes the fault reproducible on demand by simply leaving the door up that long.
+n=2 pinned, so this was suggestive rather than established — **and it has since
+been disconfirmed.** Boot **#1044** ran **12.07 hours** (43,446 s) with no panic:
+nearly four times the supposed interval. One hour of that was a deliberate
+stress of 20 open/close cycles; the rest was idle. So uptime alone does not
+cause it, and the fault is NOT reproducible by simply leaving the door up.
+
+The 12-hour run also kills a plain leak, and weakens accumulation generally.
+Across the final ~10.5 hours free heap moved **-360 bytes** (127,136 -> 126,776)
+and the low-water **-564** (67,260 -> 66,696); the control and uploader stacks
+lost 84 and 48 bytes of their minimum-ever margin. That is noise, not a slope.
+`maxalloc` is still absent from the console, so fragmentation is still not
+formally excluded — but a fragmenting heap that never once fails an allocation
+across 12 hours and 3.4 million advertisements is a thin story.
+
+**What boot #1044 did NOT exercise, and this is now the most promising lead:
+the target beacon was never heard.** `rssi : beacon has never been heard`, with
+3,446,154 advertisements processed and 0 samples dropped. Invariant 18 is
+explicit that the advertisement handler allocates NOTHING for a device that is
+not the target — so twelve clean hours tested the cheap path exhaustively and
+the expensive one not at all. With the collar in range the handler builds
+`String`s per advertisement, samples cross a queue, the filters and the
+discovery table run, and that is the path whose heap exhaustion the invariant
+says "used to panic doors". Boot #1041, which did panic, had the beacon at
+~0.4 m generating hundreds of samples a minute.
+
+**So the next test is uptime WITH the beacon present**, not uptime alone. If it
+panics with the collar in range and survives without it, that localises the
+fault to the target path and makes it reproducible — which is what the uptime
+theory promised and failed to deliver.
 
 **Beware of resetting the clock you are trying to measure.** On 7 Oct an OTA push
 and a USB flash each restarted the door, and each one postponed the very failure
@@ -115,8 +137,11 @@ being hunted. Once a watch is running, leave the door alone.
 
 **Still blocked on:** a backtrace. It exists only on the serial console, so it
 needs a cable attached at the moment it happens. The cable was deliberately kept
-on rather than mounting the door, precisely to catch the next one — and with the
-uptime pattern above the wait is bounded rather than open-ended.
+on rather than mounting the door, precisely to catch the next one. There is no
+bound on that wait — the uptime theory that appeared to give one is dead — so
+the practical move is to make the fault more likely rather than to sit and
+watch: run the door with the collar IN RANGE, which is the path twelve clean
+hours left untested.
 
 ---
 
