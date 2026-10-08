@@ -16,8 +16,8 @@ rather than editing `config.h`, so `git pull` does not clobber your build.
 | CLOSE relay | 17 | `PIN_RELAY_CLOSE` | Momentary pulse |
 | Status LED | 23 | `PIN_STATUS_LED` | Active high. **Already fitted on the 2-relay board** — wire your own only to repeat it somewhere visible, and then with a series resistor |
 | Buzzer | — | `PIN_BUZZER` | Optional annunciator, disabled (`-1`) by default. See [below](#the-annunciator) |
-| OPEN limit switch | — | `PIN_SENSOR_OPEN` | Optional, `-1` by default. See [below](#position-sensors) |
-| CLOSED limit switch | — | `PIN_SENSOR_CLOSED` | Optional, `-1` by default |
+| OPEN limit switch | 32 on the reference build | `PIN_SENSOR_OPEN` | **Required.** `-1` until set at runtime. See [below](#position-sensors) |
+| CLOSED limit switch | 25 on the reference build | `PIN_SENSOR_CLOSED` | **Required.** `-1` until set at runtime |
 
 ### Which header pin each wire goes to
 

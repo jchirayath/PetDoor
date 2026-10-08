@@ -208,7 +208,7 @@ that button.
    closed = button pressed.
 
    <p align="center">
-     <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 a piezo buzzer, and GPIO 32 and 33 are reserved for open and closed limit switches" width="820">
+     <img src="assets/wiring-esp32-2relay.svg" alt="ESP32 2-relay board: GPIO 16 and 17 drive the two on-board relays whose COM/NO terminals go across the door controller's OPEN and CLOSE buttons; GPIO 23 drives an optional status LED, GPIO 27 an optional piezo buzzer, GPIO 32 and 25 the open and closed reed switches, and GPIO 33 the vibration sensor" width="820">
    </p>
 
    The whole picture, for the all-in-one board used here. If you are also
@@ -354,9 +354,10 @@ If your door works this way:
 | Hookup wire | $5 | 4 short lengths to the button pads |
 | Weatherproof enclosure | $10–15 | Not optional outdoors |
 
-**About $80 for the whole build** — a basic auto door ($40–50), an ESP32 board
-with relays on it ($15–20) and a USB-to-TTL adapter ($8–10) — plus a beacon and
-an enclosure if you do not already have them.
+**About $95 for the whole build** — a basic auto door ($40–50), an ESP32 board
+with relays on it ($15–20), a USB-to-TTL adapter ($8–10), and the two reed
+switches and vibration sensor that tell the door where it is (~$15) — plus a
+beacon and an enclosure if you do not already have them.
 
 If you already own the door, the electronics are roughly **$35**.
 

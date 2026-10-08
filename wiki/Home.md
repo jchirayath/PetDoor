@@ -4,7 +4,7 @@
 they have gone.** No subscription, no vendor account — an ESP32 and a Bluetooth
 beacon on the collar are the whole system.
 
-Open source, MIT licensed, and about **$80 all in**.
+Open source, MIT licensed, and about **$95 all in**.
 
 > 🌐 **[petdoor.aspl.net](https://petdoor.aspl.net)** — overview and a live
 > sample dashboard
@@ -25,7 +25,7 @@ fit to a door you already own.
 
 | | |
 |---|---|
-| **~$80** | all in — door, board, beacon and cable |
+| **~$95** | all in — door, board, sensors, beacon and cable |
 | **MIT** | open source, build it yourself |
 | **0** | vendor accounts — any server is your own |
 | **~1 m** | typical open range, fully tunable |
