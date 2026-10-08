@@ -70,6 +70,30 @@ void stop() {
   g_expiredPending = false;
 }
 
+// The signed-delta test below is what survives the millis() rollover, and it
+// is also what caps the window: it is only correct while the gap fits in an
+// int32_t. A longer window does not merely misreport the remaining time — it
+// reads as ALREADY EXPIRED the instant it opens, which looks like success and
+// leaves the collar still in control. Fail the build rather than ship that.
+// The console's exposure must never silently become the window's. If somebody
+// raises CONSOLE_MAX_MS to match a longer window, that is a decision to expose
+// a door-opening service for that long and it should be made on purpose.
+static_assert(CONSOLE_MAX_MS <= MAINT_MAX_MS,
+              "CONSOLE_MAX_MS cannot exceed MAINT_MAX_MS: the console lives "
+              "inside the window, so a larger value is meaningless");
+
+static_assert(MAINT_MAX_MS < 2147483648UL,
+              "MAINT_MAX_MS must stay under 2^31 ms (24.85 days): the signed "
+              "delta in active() cannot represent a longer window, and one set "
+              "beyond it expires immediately and silently");
+
+uint32_t elapsedMs(uint32_t nowMs) {
+  if (!g_active) return 0;
+  // Plain unsigned subtraction is correct across the millis() rollover for a
+  // forward-running elapsed time, which this always is.
+  return nowMs - g_startedAtMs;
+}
+
 bool active(uint32_t nowMs) {
   if (!g_active) return false;
   // Signed comparison so the millis() rollover at 49 days is handled; an

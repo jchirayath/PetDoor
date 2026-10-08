@@ -848,7 +848,39 @@
 #define MAINT_MIN_MS 60000UL         // 1 minute
 #endif
 #ifndef MAINT_MAX_MS
-#define MAINT_MAX_MS 14400000UL      // 4 hours
+#define MAINT_MAX_MS 1728000000UL    // 480 hours (20 days)
+#endif
+
+// How long the NETWORK CONSOLE may listen inside a maintenance window.
+//
+// Separate from MAINT_MAX_MS on purpose. A window makes the door inert, which
+// is a safety property; the console it carries is the full console and can
+// OPEN THE DOOR (invariant 12), which is a security one. Those two wanted
+// different ceilings the moment the window could run for twenty days: nobody
+// calibrating needs a console on the eighteenth day, but leaving one listening
+// that long is a door-opening service exposed on the LAN for a fortnight.
+//
+// 4 hours because that was MAINT_MAX_MS before the window was lengthened, so
+// the console's maximum exposure is UNCHANGED by that change. Every window
+// that was possible before behaves exactly as it did; only the new, longer
+// ones close the console early and keep running.
+#ifndef CONSOLE_MAX_MS
+#define CONSOLE_MAX_MS 14400000UL    // 4 hours
+//
+// WHY 480 AND NOT MORE. The window is an absolute deadline compared with a
+// SIGNED delta — `(int32_t)(nowMs - endsAtMs) >= 0` in maintenance.cpp — which
+// is what makes it survive the millis() rollover. That comparison only holds
+// while the gap fits in an int32_t, i.e. under 2^31 ms = 24.85 days. Ask for
+// 999 hours (41.6 days) and the subtraction lands POSITIVE the moment the
+// window opens, so it reports expired immediately: the command succeeds, the
+// dashboard says so, and there is no window. Silent, and worse than a refusal.
+//
+// 480 h leaves ~4.8 days of headroom against that ceiling. Going beyond it
+// needs a different representation, not a bigger number here.
+//
+// For anything longer, `lock open` / `lock close` is the right tool: it is
+// persistent by design, survives a reboot, and — unlike a window — does not
+// leave the network console listening for the duration (invariant 12).
 #endif
 
 // How often the accumulated RSSI distribution is uploaded while a window is

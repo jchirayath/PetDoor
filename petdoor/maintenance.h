@@ -71,6 +71,10 @@ bool start(uint32_t nowMs, uint32_t durationMs, const char *&problem);
 void stop();
 
 bool active(uint32_t nowMs);
+
+// How long the current window has been open. Used to close the network console
+// before the window itself ends — see CONSOLE_MAX_MS.
+uint32_t elapsedMs(uint32_t nowMs);
 uint32_t remainingMs(uint32_t nowMs);
 
 // True exactly once, on the tick when the window lapsed on its own, so the

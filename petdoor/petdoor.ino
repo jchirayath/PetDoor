@@ -3447,10 +3447,23 @@ void serviceMaintenance(uint32_t nowMs) {
   if (!Maintenance::active(nowMs)) return;
 
 #if PETDOOR_ENABLE_WIFI
-  // Start listening only once there is a network to listen on, and stop again
-  // if the link drops — a listening socket on a down stack is a crash, not an
-  // inconvenience. Idempotent, so this is safe to evaluate every tick.
-  if (WifiLogger::radioAssociated()) {
+  // The console gets its OWN deadline, shorter than the window's. A window can
+  // now run for twenty days, and a door-opening console has no business
+  // listening on the LAN for twenty days just because the door is inert. The
+  // window continues; only the console closes. See CONSOLE_MAX_MS.
+  const bool consoleWindowOpen = Maintenance::elapsedMs(nowMs) < CONSOLE_MAX_MS;
+  if (!consoleWindowOpen) {
+    if (NetConsole::listening()) {
+      NetConsole::stop();
+      Con.printf("[console] closed after %lu h — the maintenance window is "
+                 "still open and the door is still inert.\r\n",
+                 static_cast<unsigned long>(CONSOLE_MAX_MS / 3600000UL));
+      Con.println(F("[console] Re-open it with a fresh `maint` if you need it."));
+    }
+  } else if (WifiLogger::radioAssociated()) {
+    // Start listening only once there is a network to listen on, and stop again
+    // if the link drops — a listening socket on a down stack is a crash, not an
+    // inconvenience. Idempotent, so this is safe to evaluate every tick.
     NetConsole::start();
   } else if (NetConsole::listening()) {
     NetConsole::stop();

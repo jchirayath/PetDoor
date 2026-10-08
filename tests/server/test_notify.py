@@ -285,6 +285,30 @@ def test_every_dashboard_button_is_a_command_the_server_accepts():
                   "%r needs confirming, so its button must send one" % cmd)
 
 
+def test_the_maintenance_range_matches_the_firmware_ceiling():
+    """The panel's range and MAINT_MAX_MS have to agree.
+
+    The firmware REFUSES a window longer than MAINT_MAX_MS rather than
+    shortening it, so a panel offering more just produces refusals. And the
+    ceiling is not a preference: the window is an absolute deadline compared
+    with a SIGNED delta, which cannot represent more than 2^31 ms (24.85 days).
+    A longer one reads as already expired the instant it opens -- the command
+    succeeds, the dashboard agrees, and there is no window.
+    """
+    hdr = io.open(os.path.join(HERE, "..", "..", "petdoor", "config.h"),
+                  encoding="utf-8").read()
+    m = re.search(r"#define\s+MAINT_MAX_MS\s+(\d+)", hdr)
+    check(m is not None, "found MAINT_MAX_MS in config.h")
+    max_ms = int(m.group(1))
+    check(max_ms < 2**31,
+          "MAINT_MAX_MS stays under the 2^31 ms signed-delta ceiling")
+    max_min = max_ms // 60000
+    ok, why = srv.web_command_allowed("maint %d" % max_min)
+    check(ok, "the panel accepts a window of exactly MAINT_MAX_MS (%s)" % why)
+    ok, _ = srv.web_command_allowed("maint %d" % (max_min + 1))
+    check(not ok, "and refuses one minute more, rather than letting the door refuse it")
+
+
 def test_lock_takes_a_position_and_only_a_valid_one():
     """`lock` grew an optional argument; the bare form must keep working."""
     for good in ("lock", "lock open", "lock close", "unlock"):
@@ -501,6 +525,7 @@ def main():
     test_a_failsafe_reversal_is_not_rendered_as_an_ordinary_open()
     test_act_source_covers_every_source_the_firmware_can_send()
     test_every_dashboard_button_is_a_command_the_server_accepts()
+    test_the_maintenance_range_matches_the_firmware_ceiling()
     test_lock_takes_a_position_and_only_a_valid_one()
     test_a_held_closed_door_is_rendered_as_what_it_costs()
     test_held_closed_mails_on_arrival_and_held_open_is_quieter()
