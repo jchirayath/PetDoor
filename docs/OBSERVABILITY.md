@@ -55,6 +55,7 @@ at all.
 | `SENSOR_OK` | ✓ | — | ✓ | `sfault=0` | ✓ **only if the fault emailed** |
 | `BEACON_LOW` | ✓ | — | ✓ | `battlow` | ✓ on the falling edge |
 | `MAINT` | ✓ | — | ✓ | `maint` | ✓ |
+| `HOLD` | ✓ (and in the boot banner) | — | ✓ | `hold` | ✓ **held closed: every time, no cooldown, and repeated while it lasts**. Held open: once |
 | `CONSOLE` | ✓ | — | ✓ | — | ✓ — a network console can open the door |
 | `FIX_GOT` / `FIX_LOST` | ✓ | — | ✓ | `present` | ! several a day |
 | *door goes silent* | n/a | n/a | n/a | n/a | ✓ server-side watchdog, 2 h, plus one recovery mail |

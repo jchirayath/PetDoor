@@ -555,6 +555,20 @@ comment above it explains why; keep the comment with the code.
     the freshest reading there is reads as 49 days old — which drops the fix and
     cancels a pending open. Clamping to 0 is the whole fix.
 
+24. **A position hold pins the door and does NOT expire — which is why it has
+    to be loud.** `lock open` / `lock close` make the automatic path inert in
+    both directions and persist in NVS across a brownout. That is a deliberate
+    exception to invariant 10, granted on request and recorded in
+    `docs/STANDARD_EXCEPTIONS.md` with an owner and an expiry. Held CLOSED is
+    the dangerous half: an animal outside cannot get in and nothing corrects it.
+    It is therefore paid for in every sink at once — `hold=` in the status line,
+    a `HOLD` event, a triple-blip LED, the boot banner, and email on arrival
+    with no cooldown plus a repeating reminder. **Do not add a countdown to any
+    of it**: a hold has no clock, and showing one would be the most misleading
+    thing on the page. Manual and remote commands still move a held door on
+    purpose — with the automatic path inert, a hand-driven move is exactly what
+    persists, which is what makes "held" mean "where I left it".
+
 ## Conventions
 
 - **Console output in `petdoor.ino` goes to `Con`, not `Serial`.** `Con` is a

@@ -122,6 +122,7 @@ const char *typeName(uint8_t type) {
     case LOG_SENSOR_FAULT: return "SENSOR_FAULT";
     case LOG_SENSOR_CLEARED: return "SENSOR_OK";
     case LOG_MAINT: return "MAINT";
+    case LOG_HOLD: return "HOLD";
     case LOG_CONSOLE: return "CONSOLE";
     case LOG_NO_MOVEMENT: return "NO_MOVE";
     default: return "?";

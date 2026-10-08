@@ -105,6 +105,16 @@ enum LogEventType : uint8_t {
   // indistinguishable from the rest. The status line carries the CURRENT state
   // correctly, but a status line is not a history.
   LOG_SENSOR_CLEARED = 16,
+  // The position hold was set or released. `detail` is the DoorHold value:
+  // 0 = released, 1 = held OPEN, 2 = held CLOSED.
+  //
+  // Logged, and not merely reflected in the status line, because this is a
+  // state somebody CHOSE and may forget. The status line says what is true now;
+  // only a history answers "when did this door stop deciding for itself", which
+  // is the first question worth asking about a door that has not moved in two
+  // days. A held-CLOSED door in particular cannot let an animal in, and the
+  // moment that began is the thing you want timestamped.
+  LOG_HOLD = 17,
 };
 
 // Which sensor, and how it failed. Each is diagnosed by cross-checking against

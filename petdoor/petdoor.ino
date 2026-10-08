@@ -238,6 +238,30 @@ uint32_t g_restartAtMs = 0;
 // every status line says so in capitals.
 bool g_locked = false;
 
+// The POSITION hold. 0 = off, 1 = held OPEN, 2 = held CLOSED.
+//
+// Distinct from g_locked above, and the distinction is the whole point: the
+// lock stops the BEACON opening the door but still lets the door close when the
+// collar leaves. This pins the door to a state and makes the automatic path
+// inert in BOTH directions, so whatever position you put the door in stays
+// until it is released.
+//
+// Manual and remote commands still move the door while it is held. That is not
+// a hole in it: with the automatic path inert, a hand-driven move is exactly
+// what persists, which is what makes "held" mean "where I left it" rather than
+// "where the firmware last decided".
+//
+// HELD CLOSED IS THE DANGEROUS ONE. A door held open can always be walked
+// through; a door held closed cannot let an animal in, and nothing will correct
+// it — which is the failure docs/SAFETY.md and invariant 10 exist to prevent.
+// It is deliberately available anyway, at the owner's explicit request, and is
+// paid for with noise: the status line, the log, the LED, the boot banner and a
+// recurring email. See docs/STANDARD_EXCEPTIONS.md.
+uint8_t g_hold = 0;
+const char *holdName(uint8_t h) {
+  return h == 1 ? "OPEN" : h == 2 ? "CLOSED" : "off";
+}
+
 // Set by a `scan` command: upload the discovery table with the next flush.
 bool g_scanRequested = false;
 
@@ -385,6 +409,17 @@ void printBanner() {
                 SCAN_WINDOW_MS, SCAN_INTERVAL_MS, SCAN_ACTIVE ? "active" : "passive");
   Con.printf("  boot          : #%lu, last reset: %s\r\n",
                 static_cast<unsigned long>(g_bootCount), resetReasonName());
+  // A hold is the only state here that survives a reboot and never expires, so
+  // the banner has to say so. Somebody power-cycling a door that "will not do
+  // anything" should learn why in the first screen, not after an hour.
+  if (g_hold == 1) {
+    Con.println(F("  HELD OPEN     : nothing automatic will close this door "
+                  "('unlock' releases it)"));
+  } else if (g_hold == 2) {
+    Con.println(F("  !! HELD CLOSED: an animal OUTSIDE CANNOT GET IN. Nothing "
+                  "automatic will open"));
+    Con.println(F("  !!              this door. 'unlock' releases it."));
+  }
   Con.println(F("--------------------------------------------------"));
 
   if (esp_reset_reason() == ESP_RST_BROWNOUT) {
@@ -629,6 +664,16 @@ void printStatus(uint32_t nowMs) {
   }
   if (g_locked) {
     Con.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
+  }
+  if (g_hold == 1) {
+    Con.println(F("  HELD OPEN    : nothing automatic will close this door"));
+    Con.println(F("                 ('unlock' releases it; it survives a reboot)"));
+  } else if (g_hold == 2) {
+    // The one state in this report that can shut an animal out indefinitely,
+    // so it says what that means rather than naming itself and stopping.
+    Con.println(F("  !! HELD CLOSED: an animal OUTSIDE CANNOT GET IN."));
+    Con.println(F("  !!             Nothing automatic will open this door, and"));
+    Con.println(F("  !!             this survives a reboot. 'unlock' releases it."));
   }
   Schedule::describe(Con, EventLog::haveEpoch(), EventLog::epochNow());
   if (Vibration::enabled()) {
@@ -2631,7 +2676,7 @@ void publishStatusLines() {
            "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu maxalloc=%lu "
            "heaplow=%lu cstack=%lu ustack=%lu up=%lu maint=%lu ip=%s real=%s "
            "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
-           "batt=%ld battlow=%d sfault=%u",
+           "batt=%ld battlow=%d sfault=%u hold=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -2713,7 +2758,12 @@ void publishStatusLines() {
            // this to tell "the door is open because it gave up" from "the door
            // is open because the switch that would have confirmed a close has
            // stopped working".
-           static_cast<unsigned>(g_sensorFault));
+           static_cast<unsigned>(g_sensorFault),
+           // The position hold. Uploaded rather than left on the console
+           // because it is the one state here that does not expire: a door held
+           // CLOSED cannot let an animal in, and the owner of a mounted door
+           // has no cable to find that out down.
+           static_cast<unsigned>(g_hold));
   WifiLogger::setStatusLine(line);
 
   // Every tunable the remote channel can change, so the dashboard's
@@ -3164,12 +3214,22 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
     const DoorState shown = measured ? Position::state() : g_door.state();
     switch (shown) {
       case DOOR_OPEN:
-        on = true;                      // solid
+        // Solid normally; a slow wink when HELD, so a glance tells you the door
+        // is open because somebody pinned it rather than because the collar is
+        // here. Held reads as "mostly on with a gap" — still obviously open.
+        on = (g_hold != 0) ? ((nowMs % 2000) > 250) : true;
         break;
       case DOOR_CLOSED:
         // Locked reads as a DOUBLE blip, so a glance tells you whether the
         // door is merely shut or shut against the collar.
-        on = g_locked
+        // Held CLOSED is the state worth spotting from across a yard, so it
+        // gets the busiest pattern here: a triple blip, distinct from the
+        // double blip that means merely locked.
+        on = (g_hold == 2)
+                 ? ((nowMs % 2000) < 150 ||
+                    ((nowMs % 2000) > 300 && (nowMs % 2000) < 450) ||
+                    ((nowMs % 2000) > 600 && (nowMs % 2000) < 750))
+                 : g_locked
                  ? ((nowMs % 2000) < 150 ||
                     ((nowMs % 2000) > 300 && (nowMs % 2000) < 450))
                  : (nowMs % 2000) < 200;
@@ -3419,6 +3479,13 @@ void driveDoor(uint32_t nowMs) {
   // holding the collar, and a door that shuts on them is both useless for
   // measurement and unsafe. The window expires by itself; see maintenance.h.
   if (Maintenance::active(nowMs)) return;
+
+  // Held in a position: same rule as maintenance above, and for the same
+  // reason — the door listens but does not act. Unlike maintenance this does
+  // not expire, so it is the one state that can outlast a reboot and a
+  // brownout. Checked here rather than inside the open and close paths so that
+  // adding a future automatic trigger cannot accidentally bypass it.
+  if (g_hold != 0) return;
 
   // Never operate the door without a configured beacon.
   if (!BleScanner::isConfigured()) return;
@@ -3838,7 +3905,49 @@ bool applyRemoteCommand(const char *line, String &result) {
     return ok;
   }
   if (strcmp(verb, "lock") == 0 || strcmp(verb, "unlock") == 0) {
+    const char *a = arg();
+    // `lock open` / `lock close` PIN the door to a position: the automatic path
+    // goes inert both ways and stays that way until released, across reboots.
+    // A bare `lock` keeps its original meaning — the beacon may not open the
+    // door, but the door still closes when the collar leaves — because that is
+    // what is already stored on doors in service and in their history.
+    if (verb[0] == 'l' && a != nullptr) {
+      uint8_t want = 0;
+      if (strcmp(a, "open") == 0) want = 1;
+      else if (strcmp(a, "close") == 0 || strcmp(a, "closed") == 0) want = 2;
+      else { result = "lock takes nothing, 'open' or 'close'"; return false; }
+
+      g_hold = want;
+      BleScanner::storeHold(want);
+      EventLog::record(LOG_HOLD, want, g_tracker.filteredRssi());
+      // Drive it to the held position now rather than waiting for somebody to
+      // ask. `force` because the ordinary lockout and "already there" gates
+      // would otherwise make this silently do nothing, and a hold that leaves
+      // the door on the wrong side of itself is a trap.
+      const DoorState target = (want == 1) ? DOOR_OPEN : DOOR_CLOSED;
+      Actuator::request(target, SRC_REMOTE, millis(), /*force=*/true);
+      if (want == 1) {
+        result = "HELD OPEN — nothing automatic will close it. The beacon, the "
+                 "close dwell and the schedule are all inert until `unlock`";
+      } else {
+        // Loudest message this command can produce, and deliberately so: this
+        // is the state that can shut an animal out indefinitely.
+        result = "HELD CLOSED — an animal OUTSIDE CANNOT GET IN, and nothing "
+                 "will correct that until `unlock`. Nothing automatic will "
+                 "open it";
+      }
+      return true;
+    }
+
     const bool want = (verb[0] == 'l');
+    // `unlock` means "decide for yourself again", so it clears the hold as well
+    // as the lock. Clearing only one would leave a door that still refuses to
+    // move with nothing on the dashboard obviously set.
+    if (!want && g_hold != 0) {
+      g_hold = 0;
+      BleScanner::storeHold(0);
+      EventLog::record(LOG_HOLD, 0, g_tracker.filteredRssi());
+    }
     g_locked = want;
     BleScanner::storeLock(want);
     if (want) {
@@ -4256,6 +4365,7 @@ void setup() {
   // Said loudly because it survives a reboot by design, and a door that will
   // not open for the collar is exactly the thing someone needs to be told
   // about before they start wondering why the animal is outside.
+  g_hold = BleScanner::loadStoredHold();
   g_locked = BleScanner::loadStoredLock();
   if (g_locked) {
     Con.println(F("  !! THIS DOOR IS LOCKED — the beacon cannot open it"));

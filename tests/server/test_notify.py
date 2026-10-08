@@ -243,6 +243,81 @@ def test_act_source_covers_every_source_the_firmware_can_send():
           f"ACT_SOURCE covers every SRC_* value (missing {missing})")
 
 
+def test_a_held_closed_door_is_rendered_as_what_it_costs():
+    """HOLD detail 2 pins the door shut and never expires.
+
+    Rendering it as a neutral state change would be the worst outcome here: a
+    maintenance window reads the same way and ends by itself, while this does
+    not. The row has to say what it costs, not what it is called.
+    """
+    seed_device("hold-door", int(time.time()))
+    seed_event("hold-door", 20, 100, "HOLD", 2)
+    seed_event("hold-door", 20, 200, "HOLD", 1)
+    seed_event("hold-door", 20, 300, "HOLD", 0)
+    page = srv.render()
+    check("an animal outside cannot get in" in page,
+          "a held-CLOSED row says an animal cannot get in")
+    check("held OPEN" in page, "a held-OPEN row names itself")
+    check("decides for itself again" in page, "a release says automation is back")
+    check("detail 2" not in page, "the hold detail is decoded, not shown raw")
+
+
+def test_held_closed_mails_on_arrival_and_held_open_is_quieter():
+    """Held closed is the one state whose cost lands on the animal."""
+    SENT.clear()
+    seed_device("hold-mail", int(time.time()))
+    srv.notify_events("hold-mail", [
+        {"type": "HOLD", "detail": 2, "uptime": 10, "boot": 3, "rssi": -60},
+    ])
+    check(any("HELD CLOSED" in sub for sub, _ in SENT),
+          "being held closed sends a mail naming it")
+
+    SENT.clear()
+    srv.notify_events("hold-mail", [
+        {"type": "HOLD", "detail": 1, "uptime": 20, "boot": 3, "rssi": -60},
+    ])
+    check(any("held OPEN" in sub for sub, _ in SENT),
+          "being held open also mails, as a notice")
+
+
+def test_a_still_held_closed_door_keeps_being_announced():
+    """A state that cannot expire needs something that does not depend on an
+    event arriving to re-announce it. Driven off the status line, because the
+    HOLD event may be weeks old by the time it matters."""
+    SENT.clear()
+    with srv.db() as conn:
+        conn.execute(
+            "INSERT INTO devices(device,version,build,boots,last_seen,last_ip,status)"
+            " VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(device) DO UPDATE SET status=excluded.status",
+            ("still-held", "v1.1.0", "t", 1, int(time.time()), "10.0.0.9",
+             "door=CLOSED locked=0 maint=0 sfault=0 hold=2"))
+    srv.check_held_closed_doors()
+    check(any("STILL held closed" in sub for sub, _ in SENT),
+          "a door still reporting hold=2 is re-announced")
+
+    # And the cooldown applies, or this would mail on every sweep.
+    SENT.clear()
+    srv.check_held_closed_doors()
+    check(not SENT, "the reminder respects the cooldown rather than every sweep")
+
+
+def test_the_reminder_does_not_fire_on_a_door_that_is_not_held():
+    """`hold=2` must not be matched inside another field. sfault=2 is the
+    obvious collision, and it means something entirely different."""
+    SENT.clear()
+    with srv.db() as conn:
+        conn.execute(
+            "INSERT INTO devices(device,version,build,boots,last_seen,last_ip,status)"
+            " VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(device) DO UPDATE SET status=excluded.status",
+            ("not-held", "v1.1.0", "t", 1, int(time.time()), "10.0.0.8",
+             "door=CLOSED locked=0 maint=0 sfault=2 hold=0"))
+    srv.check_held_closed_doors()
+    check(not any("not-held" in sub for sub, _ in SENT),
+          "sfault=2 with hold=0 does not trigger the held-closed reminder")
+
+
 def test_fault_evidence_is_read_according_to_its_fault():
     """The spare field is one integer shared by every event type, and
     SENSOR_FAULT does not use it consistently: an edge count for the vibration
@@ -351,6 +426,10 @@ def test_a_recovery_only_mails_if_the_fault_did():
 
 def main():
     srv.init_db()
+    # The real server runs migrate() at startup, and some columns the tests
+    # exercise (devices.status, which carries the uploaded status line) only
+    # exist after it. Without this the suite tests a schema no door ever meets.
+    srv.migrate()
     print("log server — alerting tests")
     test_stale_door_alerts_once_then_recovers()
     test_healthy_and_unknown_doors_stay_silent()
@@ -360,6 +439,10 @@ def main():
     test_a_door_movement_says_what_asked_for_it()
     test_a_failsafe_reversal_is_not_rendered_as_an_ordinary_open()
     test_act_source_covers_every_source_the_firmware_can_send()
+    test_a_held_closed_door_is_rendered_as_what_it_costs()
+    test_held_closed_mails_on_arrival_and_held_open_is_quieter()
+    test_a_still_held_closed_door_keeps_being_announced()
+    test_the_reminder_does_not_fire_on_a_door_that_is_not_held()
     test_fault_evidence_is_read_according_to_its_fault()
     test_a_lost_reed_is_rendered_and_explained()
     test_a_crashed_door_emails_but_a_normal_restart_does_not()

@@ -306,6 +306,47 @@ Do these in order. Do not skip ahead because the previous step looked fine.
   is the only thing between your birds and the night. A firmware that fails open
   is the safe outcome for the animals and the unsafe outcome for predators.
 
+## A hold does not expire, and held CLOSED can shut an animal out
+
+`lock open` and `lock close` pin the door to a position. While either is set the
+automatic path is inert **in both directions**: the collar cannot open or close
+the door, the close dwell does not run, and the schedule is ignored. Your own
+`door open` / `door close` still work, and because nothing automatic will undo
+them, whatever position you put the door in is where it stays.
+
+**Unlike a maintenance window, a hold has no clock.** It does not expire, it is
+not bounded, and it survives a reboot and a power cut. Only `unlock` releases it.
+
+That makes `lock close` the most dangerous state this firmware can be left in:
+
+> **An animal outside cannot get in, and nothing will ever correct that.**
+
+It is not a stall, which fails open. It is not a schedule, which only refuses to
+*open* while a clock says so and gives up at the boundary. It is a decision that
+stays made. A chicken shut out overnight in bad weather is the realistic
+consequence, and the door will look, from outside, exactly like one that is
+simply closed.
+
+So before you use it, know how you will be reminded. The door tells you in every
+way it can:
+
+| | |
+|---|---|
+| the dashboard | a pill saying an animal cannot get in, with **no countdown**, because there is none |
+| email | on arrival, with no cooldown, and **repeated** for as long as it stays set |
+| the LED | a triple blip — distinct from the double blip that means merely locked |
+| the boot banner | stated on every restart |
+| the log | a `HOLD` event, so the moment it began is timestamped |
+
+**Use `lock open` freely; treat `lock close` as a tool you are holding.** An open
+door is the safe failure — the animal can always get through it. A closed one is
+not, which is why only one of the two shouts at you.
+
+If you want a hold that cannot be forgotten, use a maintenance window instead:
+`maint 240` blocks both directions for up to four hours and then releases itself.
+That is the same inertness with a clock attached, and for most jobs — cleaning
+out, moving a bird, working on the mechanism — it is the better tool.
+
 ## Reporting a safety problem
 
 If you find a way this firmware can injure an animal that is not listed above,

@@ -104,6 +104,10 @@ EVENT_LABEL = {
     "REFUSED": "refused", "FIX_GOT": "beacon found", "FIX_LOST": "beacon lost",
     "STALLED": "did not complete its travel",
     "MAINT": "maintenance mode",
+    # The position hold: the door pinned open or closed with the automatic
+    # path inert. Unlike maintenance this does not expire, so it is the one
+    # state here that can be months old and still true.
+    "HOLD": "held in position",
     "CONSOLE": "network console",
     "NO_MOVE": "did not move at all",
     # The door's own controller has modes of its own and has been watched
@@ -1139,6 +1143,41 @@ def notify_events(device, rows):
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
 
+        elif r["type"] == "HOLD" and r["detail"] == 2:
+            # Held CLOSED earns a mail on arrival with NO cooldown, for the same
+            # reason an abnormal reset does: the cost lands on an animal that
+            # cannot report it, and unlike every other state this door can be
+            # left in, this one never expires.
+            ok, why = send_notification(
+                f"door is HELD CLOSED on {device}",
+                title="The door is pinned shut and will not open by itself",
+                lede="An animal outside cannot get in. Nothing automatic will "
+                     "open this door — not the collar, not the schedule — and "
+                     "this survives a reboot and a power cut.",
+                rows=[("door", device),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="Release it with `unlock`. You will be reminded while it "
+                     "stays set, because a hold does not end by itself the way "
+                     "a maintenance window does.",
+                accent="bad")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for hold closed: {why}\n")
+
+        elif (r["type"] == "HOLD" and r["detail"] == 1
+              and notify_due(device, "HOLD_OPEN")):
+            ok, why = send_notification(
+                f"door is held OPEN on {device}",
+                title="The door is pinned open",
+                lede="Nothing automatic will close it, and this survives a "
+                     "reboot.",
+                rows=[("door", device),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="An open door is the safe failure here, so this is a notice "
+                     "rather than a warning. It will not expire by itself "
+                     "though; release it with `unlock`.")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for hold open: {why}\n")
+
         elif r["type"] == "GAVE_UP":
             ok, why = send_notification(
                 f"door is staying OPEN on {device}",
@@ -1209,6 +1248,37 @@ WATCHDOG_EVERY_S = 300
 _stale_alerted = {}
 
 
+def check_held_closed_doors():
+    """Re-announce every door still pinned CLOSED.
+
+    The arrival mail is not enough by itself. A hold does not expire, so the
+    only thing between "I will release it this evening" and an animal locked out
+    for a fortnight is something that keeps saying so. Driven off the uploaded
+    status line rather than the event, because the event happened once and may
+    be weeks old by the time it matters.
+    """
+    if not NOTIFY_TO:
+        return
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT device, status FROM devices WHERE status IS NOT NULL").fetchall()
+    for r in rows:
+        # Padded on both sides so this cannot match `hold=2` inside some future
+        # field, nor `sfault=2`.
+        if " hold=2" not in f' {r["status"] or ""} ':
+            continue
+        if not notify_due(r["device"], "HOLD_CLOSED_REMINDER"):
+            continue
+        send_notification(
+            f'door is STILL held closed on {r["device"]}',
+            title="That door is still pinned shut",
+            lede="An animal outside still cannot get in. This hold will not "
+                 "release itself.",
+            rows=[("door", r["device"])],
+            note="Release it with `unlock` when you are done with it.",
+            accent="bad")
+
+
 def check_stale_doors():
     """One pass. Mails for doors that have gone quiet, and for their return."""
     if not NOTIFY_TO:
@@ -1267,6 +1337,10 @@ def watchdog_loop():
         time.sleep(WATCHDOG_EVERY_S)
         try:
             check_stale_doors()
+            # In the same sweep, and inside the same try: a hold that cannot
+            # expire is exactly the sort of thing that must not stop being
+            # announced because the other check threw.
+            check_held_closed_doors()
         except Exception as exc:                        # noqa: BLE001
             sys.stderr.write(f"  watchdog error (continuing): {exc}\n")
 
@@ -1472,6 +1546,17 @@ def render():
             # The relay fired and nothing moved. Louder than STALLED, which at
             # least means the door tried.
             detail = ('<strong style="color:var(--bad)">relay fired, door never moved</strong>')
+        elif r["type"] == "HOLD":
+            # 0 released, 1 held open, 2 held closed. Held CLOSED is rendered as
+            # a warning because it is the only state the door can be left in
+            # that stops an animal getting in and never corrects itself.
+            if r["detail"] == 2:
+                detail = ('<strong style="color:var(--bad)">HELD CLOSED — '
+                          "an animal outside cannot get in</strong>")
+            elif r["detail"] == 1:
+                detail = "held OPEN — nothing automatic will close it"
+            else:
+                detail = "released — the door decides for itself again"
         elif r["type"] == "MAINT":
             detail = {0: "expired", 1: "started", 2: "ended"}.get(
                 r["detail"], f'detail {r["detail"]}')
