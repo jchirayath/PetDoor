@@ -40,7 +40,7 @@ beacon leaves the door inert with the animal outside, quietly.
 
 ---
 
-## The recurring panic — unexplained, now with an uptime pattern
+## The recurring panic — unexplained; every hypothesis so far eliminated
 
 **State: recurring, instrumented, not mitigated.**
 
@@ -48,42 +48,53 @@ On 6 Oct the door panicked (`ESP_RST_PANIC`) about eight seconds after collectin
 an `ota` command, 3.5 hours into a boot. It recovered on the next boot, and it has
 since repeated — see the recurrence section below.
 
-What was thought ruled out: **heap fragmentation.** `maxalloc` was sampled across
-more than forty minutes on two builds and oscillated between 77,812 and 86,004
-with no downward trend, so the heap appeared not to be degrading.
+**Every hypothesis below has now been eliminated or weakened to the point of
+uselessness. The decision tree this entry used to carry has run out.** The
+measurements that did it, all from boot **#1044** which ran clean for 16.4 hours
+and counting:
 
-**That sampling window was too short to rule it out, and this is the correction
-that matters.** If the fault needs ~3.2 hours of uptime to develop (as the table
-below suggests), forty minutes of flat `maxalloc` says only that the first 20% of
-the run looks healthy — which is exactly what a slow accumulation would look
-like. Fragmentation is therefore NOT excluded; it is the leading candidate, and
-the sample needs to span a whole boot to mean anything.
+| hypothesis | verdict | evidence |
+|---|---|---|
+| uploader stack exhaustion | **disproven** | `ustack` 4,084–4,268 free of 7,168, against the 2,220 that prompted it |
+| plain heap leak | **disproven** | free heap moved -360 bytes across 12 h |
+| ~3.2 h uptime accumulation | **disproven** | 16.4 h clean, nearly 5× the supposed interval |
+| heap fragmentation | **weak** | `maxalloc` 77,812 after 16.4 h — the FLOOR of the range once sampled, not below it |
 
-What remains: **the uploader task's stack.** `beginOtaWindow()` only raises a flag;
-`radioUp()` and `ArduinoOTA.begin()` both run on the uploader task, whose margin
-was 2,220 bytes — against a `config.h` comment that justified its 5,120-byte size
-from a measured 2,650-byte peak that had since been exceeded. Both stacks are now
-7,168, and the margins measured 3,820 and 4,272.
+**On fragmentation specifically**, because it was the last one standing. It was
+once recorded as ruled out on forty minutes of flat `maxalloc` (77,812–86,004),
+and that window was fairly criticised as too short to exclude a slow
+accumulation. The objection no longer applies: a 16.4-hour sample reads
+`heap=117688 maxalloc=77812 heaplow=59720`, so the largest contiguous block is
+still 77 KB after most of a day. Nothing this firmware allocates comes within an
+order of magnitude of that. A heap can be fragmented and healthy; this one is
+not failing allocations.
 
-**This is not claimed as the fix.** It was never reproduced, and an OTA window
-opened cleanly from the console at 27 minutes' uptime on the same build.
+**Get `maxalloc` from the log server, not the console.** It rides in the uploaded
+status line only, which is why it went unexamined for so long. One command:
+`docker exec -i podcast-petdoor-1 python3 petdoor-logserver.py --doors` prints the
+whole line per door. The panic alert emails carry it too.
 
-**IT HAS RECURRED — twice, and the stack hypothesis does not survive it.** The
-event ring shows `BOOT reset=4` at boot **#1037** (~2026-10-07 00:53Z) and again
-at **#1042** (~2026-10-07 18:54Z), roughly eighteen hours apart. The #1042 panic
-came about 46 minutes after a maintenance window closed, with the door idle and
-nothing logged in between — so, unlike the original, it was **not** within
-seconds of an `ota` command.
+**The stack hypothesis, and why its fix is worth keeping anyway.**
+`beginOtaWindow()` only raises a flag; `radioUp()` and `ArduinoOTA.begin()` both
+run on the uploader task, whose margin was 2,220 bytes — against a `config.h`
+comment that justified its 5,120-byte size from a measured 2,650-byte peak that
+had since been exceeded. Both stacks were raised to 7,168 and the margins have
+measured 3,724–4,272 ever since. That did not fix the panic, and the table above
+retires it as a cause, but a task running 2.2 KB from the edge was a real defect
+found on the way; do not undo it.
 
-Against the decision tree below: `ustack` read **4,268 free of 7,168** and
-`cstack` 3,780, so the uploader stack is not exhausted — that was the leading
-hypothesis and it is now unlikely. Free heap was 127,816 with a 69,648 low-water,
-which does not look starved either. That leaves **fragmentation**, discriminated
-by `maxalloc`, which rides in the uploaded status line rather than the console —
-check the two panic emails, which fire without cooldown.
+**The recurrences.** The event ring shows `BOOT reset=4` at boot **#1037**
+(~2026-10-07 00:53Z) and **#1042** (~2026-10-07 18:54Z), roughly eighteen hours
+apart. The #1042 one came about 46 minutes after a maintenance window closed, with
+the door idle and nothing logged in between — so, unlike the original, it was
+**not** within seconds of an `ota` command. Whatever the cause is, it is not
+OTA-triggered.
 
-If it recurs *with* a wide `heap`-to-`maxalloc` gap it is the heap after all; if
-`ustack` is small it is the stack; if neither, start again.
+The decision tree this entry used to end on — *wide `heap`-to-`maxalloc` gap means
+the heap, small `ustack` means the stack, neither means start again* — has been
+walked to its third branch. **Neither. Start again.** That is not a dead end so
+much as the point of having instrumented it: three candidates are gone and the
+numbers that killed them are cheap to re-take.
 
 **Attribute each panic to the RIGHT boot.** `esp_reset_reason()` at boot *N*
 reports why boot *N-1* ended, so the `reset=4` rows above record panics that
@@ -92,8 +103,9 @@ because #1041 is the boot in which five `calibrate` passes, a maintenance window
 the network console and ~90 WiFi uploads all ran. The 46 minutes immediately
 before it died were idle, but the boot as a whole was heavily loaded.
 
-**The first thing resembling a pattern: both well-characterised panics landed
-~3.2-3.5 hours into a boot.**
+**A pattern that looked strong and did not hold: both well-characterised panics
+landed ~3.2-3.5 hours into a boot.** Kept here because the figures are real and
+the reasoning is instructive, not because it is still believed.
 
 | panic | boot duration before it |
 |---|---|
@@ -101,13 +113,33 @@ before it died were idle, but the boot as a whole was heavily loaded.
 | ended boot #1041 | **~3.2 h** (started ~15:43Z, died ~18:54Z) |
 | ended boot #1036 | between **1.6 h and 4.0 h** — last event at 5,724 s, and #1039 fixes the far bound; not pinned |
 
-n=2 pinned, so this is suggestive rather than established. But it points at
-something that ACCUMULATES rather than something an action triggers, which fits
-fragmentation better than anything else left — and it further weakens the
-original "eight seconds after an `ota` command" framing, since #1041's panic had
-no `ota` anywhere near it. **Check the next panic's uptime first**; if it is
-~3.2 h again, that is the strongest handle available without a backtrace, and it
-makes the fault reproducible on demand by simply leaving the door up that long.
+n=2 pinned, so this was suggestive rather than established — **and it was
+disconfirmed within a day.** Boot **#1044** ran **16.4 hours** (58,962 s) with no
+panic, nearly five times the supposed interval. One hour of that was a deliberate
+stress of 20 open/close cycles; the rest was idle, then idle with the beacon back
+in range. Uptime alone does not cause it, and the fault is **not** reproducible by
+leaving the door up.
+
+**Two theories died here in two days, both built on n=2** — this one, and (in
+CLAUDE.md) a close-travel difference blamed on temperature that turned out to be
+orientation. Treat any pattern from two data points on this door as a prompt for
+a third measurement, not as a handle.
+
+**What is still untested is the expensive BLE path.** For most of boot #1044 the
+target beacon was never heard at all — 3.4 million advertisements processed, 0
+samples dropped. Invariant 18 is explicit that the advertisement handler allocates
+NOTHING for a device that is not the target, so those clean hours exercised the
+cheap path exhaustively and the costly one barely. With the collar in range the
+handler builds `String`s per advertisement, samples cross a queue, and the filters
+and discovery table run — the path whose heap exhaustion that invariant says "used
+to panic doors". Boot #1041, which did panic, had the beacon at ~0.4 m producing
+hundreds of samples a minute; by 16.4 h boot #1044 had it at ~4 m with
+`samples=17671` and was still healthy.
+
+So the remaining experiment is **sustained uptime with the collar close**, not
+merely in range. It is the one condition the panicking boots shared and the clean
+one did not. State it as the weak hypothesis it is: there is no positive evidence
+for it, only an absence of coverage.
 
 **Beware of resetting the clock you are trying to measure.** On 7 Oct an OTA push
 and a USB flash each restarted the door, and each one postponed the very failure
@@ -115,8 +147,11 @@ being hunted. Once a watch is running, leave the door alone.
 
 **Still blocked on:** a backtrace. It exists only on the serial console, so it
 needs a cable attached at the moment it happens. The cable was deliberately kept
-on rather than mounting the door, precisely to catch the next one — and with the
-uptime pattern above the wait is bounded rather than open-ended.
+on rather than mounting the door, precisely to catch the next one. There is no
+bound on that wait — the uptime theory that appeared to give one is dead — so the
+practical move is to make the fault more likely rather than to sit and watch: run
+the door for a long stretch with the collar **close**, which is the one condition
+the clean 16.4-hour boot never reproduced.
 
 ---
 
