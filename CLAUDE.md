@@ -344,7 +344,7 @@ apart. That is not a fault.
 
 ## secrets.h
 
-Git-ignored, and denied in `.claude/settings.json`, because this is a public
+Git-ignored, and denied in the local (uncommitted) `.claude/settings.json`, because this is a public
 repo. It typically carries `BEACON_MAC`, `RSSI_ENTER_DBM`, `RSSI_EXIT_DBM`,
 `RELAY_ACTIVE_LOW`, `OTA_PASSWORD`, `CONSOLE_PASSWORD` and the log-server
 credentials.

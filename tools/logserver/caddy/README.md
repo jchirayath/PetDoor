@@ -1,9 +1,11 @@
 # The reference deployment's Caddy vhost
 
 `petdoor.aspl.net.caddy` is **the file that is actually running**, not an example
-— copied verbatim from the reference deployment so that it is version-controlled
-rather than existing only on one VM. It was previously only on that VM, and would
-have been lost with it.
+— copied from the reference deployment so that it is version-controlled rather
+than existing only on one VM. It was previously only on that VM, and would have
+been lost with it. The directives are verbatim; comments that named other sites
+on the same web host have been made generic, so the copy here and the live file
+differ in comments only.
 
 [../../../docs/WEB-DASHBOARD.md](../../../docs/WEB-DASHBOARD.md) has the generic
 pattern, for nginx and Apache too. Read that first if you are standing up your
@@ -35,8 +37,14 @@ is reliably empty; that is what the gate is for.
 Validate before you reload. This Caddy serves 26 vhosts, and a bad config takes
 all of them down:
 
+Where the web host is — its name, resource group, VM and compose directory —
+lives in `tools/logserver/webhost.local.env`, which is git-ignored. Copy
+`webhost.example.env` to that name and fill it in; nothing committed names the
+host.
+
 ```bash
-cd ~/webhost
+source tools/logserver/webhost.local.env
+cd "$WEBHOST_COMPOSE_DIR"
 sudo docker compose exec -T caddy caddy adapt --config /etc/caddy/Caddyfile   # FIRST
 sudo docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
 ```
@@ -58,8 +66,16 @@ There is no automation. After editing the live config, copy it back here in the
 same change:
 
 ```bash
-az ssh config --file /tmp/azcfg -g RG-WEBHOST -n webhost --overwrite
-ssh -F /tmp/azcfg RG-WEBHOST-webhost \
-  'sudo cat /srv/webhost/sites/petdoor.aspl.net.caddy' \
+source tools/logserver/webhost.local.env
+az ssh config --file /tmp/azcfg -g "$WEBHOST_RG" -n "$WEBHOST_VM" --overwrite
+ssh -F /tmp/azcfg "$WEBHOST_SSH" \
+  "sudo cat $WEBHOST_COMPOSE_DIR/sites/petdoor.aspl.net.caddy" \
   > tools/logserver/caddy/petdoor.aspl.net.caddy
+```
+
+That copy brings back the live comments, which name other sites on the web host.
+Re-generalise them before committing — `git diff` shows exactly which lines.
+
+```bash
+git grep -n -i -E "$WEBHOST_PRIVATE_PATTERN" -- . && echo "STOP: host detail in tracked files"
 ```
