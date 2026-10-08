@@ -425,7 +425,10 @@ WEB_COMMANDS = {
     # Needs confirming because for its duration the door deliberately ignores
     # the collar — an animal outside cannot let itself in. The firmware bounds
     # the window; this bounds the surprise.
-    "maint":      ([_whole(1, 240, " min")], 0, None, True),
+    # Minutes, up to MAINT_MAX_MS (480 h = 28,800 min). The firmware REFUSES a
+    # longer window rather than shortening it, so this range has to match the
+    # firmware's or the panel starts offering windows that come back refused.
+    "maint":      ([_whole(1, 28800, " min")], 0, None, True),
     # Confirmed, because a window that is wrong locks an animal out overnight
     # and nobody finds out until morning. Arguments are free-form
     # ("add 22:00-06:00 Mon-Fri"), so the firmware does the parsing — which it

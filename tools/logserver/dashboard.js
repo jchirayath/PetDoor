@@ -36,6 +36,12 @@ const SRC={0:"beacon",1:"console",2:"network",3:"fail-safe reversal"};
 // that works, and offering 480 here would just produce a refusal in the
 // acknowledgement.
 const MAINT_CHOICES=[15,30,60,120,240];
+// The firmware's ceiling, in hours. MAINT_MAX_MS is 480 h and the firmware
+// REFUSES anything longer rather than shortening it, so offering more here
+// would only produce a refusal in the acknowledgement. The ceiling itself is
+// not arbitrary: the window is a signed-delta deadline and cannot represent
+// more than 2^31 ms (24.85 days).
+const MAINT_MAX_H=480;
 const maintLabel=m=>m<60?`${m} min`:(m%60?`${(m/60).toFixed(1)} h`:`${m/60} h`);
 let events=[], commands=[], selected=null;
 let pending=[], controlOn=false, devices=[], busy=false;
@@ -718,6 +724,22 @@ function applySetting(verb,host){
     if(pin==="") {say.className="said bad";say.textContent="Give the buzzer a GPIO pin, or -1 for none.";return;}
     cmd = (+pin < 0) ? "buzzer off"
         : `buzzer ${pin} ${$("bz-type").value} ${$("bz-pol").value}`;
+  }else if(verb==="maint"){
+    // The box is HOURS because that is what a long window is thought about in;
+    // the command is MINUTES. Converting here rather than asking for minutes
+    // keeps "999" from meaning sixteen hours by accident.
+    const h=Number(($("mt-hours")||{}).value);
+    if(!Number.isFinite(h)||h<1||h>MAINT_MAX_H||h!==Math.floor(h)){
+      say.className="said bad";
+      say.textContent=`Give a whole number of hours, 1 to ${MAINT_MAX_H}. Longer than that cannot be represented as a deadline — see MAINT_MAX_MS.`;
+      return;
+    }
+    // Its own confirmation, and it names the duration: applySetting's normal
+    // path sends unconfirmed, and `maint` is a verb the server insists on
+    // confirming. Without this the Start button would 400 every time.
+    if(!confirm(`Start a ${h}-hour maintenance window? For ${h} hours the collar will NOT open or close the door, and the network console stays listening over WiFi. It ends by itself.`)) return;
+    send(`maint ${h*60}`,"setsaid",true);
+    return;
   }else{
     const vals=[...host.querySelectorAll(`input[data-verb="${verb}"]`)].map(i=>i.value.trim());
     if(vals.some(v=>v==="")){
@@ -944,7 +966,11 @@ function renderControl(){
             // that does not state its own duration invites leaving it on. A
             // button that says "4 h" cannot be misread; a box showing "240"
             // can.
-          : MAINT_CHOICES.map(m=>
+          : `<span class="glabel">custom</span>`
+            +`<input id="mt-hours" type="number" min="1" max="${MAINT_MAX_H}" step="1" value="24" style="width:5.5em">`
+            +`<span class="glabel">hours</span>`
+            +`<button class="b-quiet" data-apply="maint">Start</button>`
+            + MAINT_CHOICES.map(m=>
               `<button class="b-quiet" data-cmd="maint ${m}"`
               +` data-confirm="Start a ${maintLabel(m)} maintenance window? The collar will NOT open or close the door until it expires, and the console opens over WiFi. The window ends by itself.">`
               +`${maintLabel(m)}</button>`).join("")))

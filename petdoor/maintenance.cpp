@@ -70,6 +70,16 @@ void stop() {
   g_expiredPending = false;
 }
 
+// The signed-delta test below is what survives the millis() rollover, and it
+// is also what caps the window: it is only correct while the gap fits in an
+// int32_t. A longer window does not merely misreport the remaining time — it
+// reads as ALREADY EXPIRED the instant it opens, which looks like success and
+// leaves the collar still in control. Fail the build rather than ship that.
+static_assert(MAINT_MAX_MS < 2147483648UL,
+              "MAINT_MAX_MS must stay under 2^31 ms (24.85 days): the signed "
+              "delta in active() cannot represent a longer window, and one set "
+              "beyond it expires immediately and silently");
+
 bool active(uint32_t nowMs) {
   if (!g_active) return false;
   // Signed comparison so the millis() rollover at 49 days is handled; an
