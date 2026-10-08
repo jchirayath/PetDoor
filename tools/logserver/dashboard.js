@@ -35,6 +35,25 @@ const SRC={0:"beacon",1:"console",2:"network",3:"fail-safe reversal"};
 // window somebody asked for" is the thing it avoids). So 240 is the last entry
 // that works, and offering 480 here would just produce a refusal in the
 // acknowledgement.
+/* The one pill that says who is in charge of this door, in precedence order.
+   Both the masthead and the per-door panel call this: they rendered the same
+   idea separately once, the hold was added to one of them, and a door HELD
+   OPEN went on reporting "LOCKED" at the top of the page.
+
+   Precedence is not cosmetic. A hold makes the automatic path inert in BOTH
+   directions, so while one is set the collar lock changes nothing — and since
+   `unlock` clears both, the lock can never outlive the hold it was hidden
+   behind. Showing "LOCKED — collar cannot open it" beside a door being held
+   OPEN states something true and useless, next to the thing that is actually
+   governing, which reads as a contradiction. */
+function governingPill(st){
+  if(st.hold==="2") return `<span class="pill lock">HELD CLOSED — will not open</span>`;
+  if(st.hold==="1") return `<span class="pill lock">HELD OPEN — will not close</span>`;
+  const maint=Number(st.maint||0)||0;
+  if(maint>0) return `<span class="pill lock">MAINTENANCE — ${Math.ceil(maint/60)} min left</span>`;
+  if(st.locked==="1") return `<span class="pill lock">LOCKED — collar cannot open it</span>`;
+  return "";
+}
 const MAINT_CHOICES=[15,30,60,120,240];
 // The firmware's ceiling, in hours. MAINT_MAX_MS is 480 h and the firmware
 // REFUSES anything longer rather than shortening it, so offering more here
@@ -447,27 +466,10 @@ function renderDoors(devs){
           +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
           +(stand.label?` <span data-u="fw4 dim">${esc(stand.label)}</span>`:"")
           +`</span>`
-          // A locked door will not open for the collar. That is the one state
-          // worth shouting about, because from the outside it looks identical
-          // to a door that is simply shut.
-          +(st.locked==="1"?`<span class="pill lock">LOCKED — collar cannot open it</span>`:"")
-          // Same reasoning as the lock pill, more so: during a maintenance
-          // window the door ignores the collar entirely, which from out here
-          // is indistinguishable from a door that has stopped working. Say how
-          // long is left, because "it ends by itself" is the whole safety
-          // argument and it is worthless if nobody can see the clock.
-          +((Number(st.maint||0)||0)>0
-             ? `<span class="pill lock">MAINTENANCE — not moving for ${Math.ceil(Number(st.maint)/60)} more min</span>`
-             : "")
-          // The hold. Deliberately has NO clock, because unlike maintenance it
-          // does not end by itself — and showing a countdown it does not have
-          // would be the most misleading thing on this page. Held CLOSED says
-          // what it costs rather than naming itself.
-          +(st.hold==="2"
-             ? `<span class="pill lock">HELD CLOSED — an animal outside cannot get in, and this will not expire</span>`
-             : st.hold==="1"
-             ? `<span class="pill lock">HELD OPEN — nothing automatic will close it</span>`
-             : "")
+          // Whichever of lock / maintenance / hold is actually governing. From
+          // outside, every one of these looks identical to a door that has
+          // simply stopped working, which is why one of them has to be said.
+          +governingPill(st)
           +`</div>`;
       }
 
@@ -1152,7 +1154,7 @@ function renderBanner(){
       +`<span class="pill ${stand.state==="OPEN"?"in":""}">door ${esc(stand.state||st.door||"?")}`
       +(stand.label?` <span data-u="fw4 dim">${esc(stand.label)}</span>`:"")
       +`</span>`
-      +(st.locked==="1"?`<span class="pill lock">LOCKED</span>`:"");
+      +governingPill(st);
   }
 }
 
