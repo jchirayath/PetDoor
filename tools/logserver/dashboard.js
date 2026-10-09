@@ -733,7 +733,9 @@ function applySetting(verb,host){
     const h=Number(($("mt-hours")||{}).value);
     if(!Number.isFinite(h)||h<1||h>MAINT_MAX_H||h!==Math.floor(h)){
       say.className="said bad";
-      say.textContent=`Give a whole number of hours, 1 to ${MAINT_MAX_H}. Longer than that cannot be represented as a deadline — see MAINT_MAX_MS.`;
+      say.textContent=(h===0||!Number.isFinite(h))
+        ? `Type how many hours first — the box starts at 0 so Start cannot run a window you did not choose. 1 to ${MAINT_MAX_H}.`
+        : `Give a whole number of hours, 1 to ${MAINT_MAX_H}. Longer than that cannot be represented as a deadline — see MAINT_MAX_MS.`;
       return;
     }
     // Its own confirmation, and it names the duration: applySetting's normal
@@ -948,6 +950,9 @@ function renderControl(){
         `<button class="b-outline" data-cmd="lock open" data-confirm="Hold the door OPEN? It will open now and nothing automatic will close it again — not the collar, not the close dwell, not the schedule. This SURVIVES A REBOOT and does not expire. Release it with Unlock.">Hold open</button>`
        +`<button class="act-lock" data-cmd="lock close" data-confirm="Hold the door CLOSED? An animal outside WILL NOT BE ABLE TO GET IN, and nothing will correct that — this does not expire and survives a reboot and a power cut. Only you can release it, with Unlock. Are you sure?">Hold closed</button>`
        +(holdOn?`<button class="b-quiet" data-cmd="unlock">Release hold</button>`:""))
+    +group("Sound",
+        b("mute","Mute","b-quiet",st.mute==="1")
+       +b("unmute","Unmute","b-quiet",st.mute!=="1"))
     +group("Check",
         b("beep","Beep","b-quiet",false))
     // Its own group because it is not an action on the door so much as a
@@ -968,14 +973,18 @@ function renderControl(){
             // that does not state its own duration invites leaving it on. A
             // button that says "4 h" cannot be misread; a box showing "240"
             // can.
-          : `<span class="glabel">custom</span>`
-            +`<input id="mt-hours" type="number" min="1" max="${MAINT_MAX_H}" step="1" value="24" style="width:5.5em">`
-            +`<span class="glabel">hours</span>`
-            +`<button class="b-quiet" data-apply="maint">Start</button>`
-            + MAINT_CHOICES.map(m=>
+          // Presets first, custom last: the presets are what gets pressed, and a
+          // box defaulting to a real duration invites pressing Start without
+          // reading it. It defaults to 0, which the handler refuses — so the
+          // custom path cannot start a window nobody chose.
+          : MAINT_CHOICES.map(m=>
               `<button class="b-quiet" data-cmd="maint ${m}"`
               +` data-confirm="Start a ${maintLabel(m)} maintenance window? The collar will NOT open or close the door until it expires, and the console opens over WiFi. The window ends by itself.">`
-              +`${maintLabel(m)}</button>`).join("")))
+              +`${maintLabel(m)}</button>`).join("")
+            +`<span class="glabel">custom</span>`
+            +`<input id="mt-hours" type="number" min="0" max="${MAINT_MAX_H}" step="1" value="0" style="width:5.5em">`
+            +`<span class="glabel">hours</span>`
+            +`<button class="b-quiet" data-apply="maint">Start</button>`))
     +'</div>';
 
   let queue="";
@@ -1012,7 +1021,17 @@ function renderControl(){
     +`<div class="said" id="said"></div>`;
 
   host.querySelectorAll("button[data-cmd]").forEach(el=>{
-    el.addEventListener("click",()=>send(el.dataset.cmd));
+    el.addEventListener("click",()=>{
+      // Identical to the settings panel's handler, and it has to be. This one
+      // used to call send(cmd) with neither the dialog nor the confirmed flag,
+      // so every button on this panel that the server insists on confirming —
+      // `lock open`, `lock close`, `ota`, `reboot`, `defaults` and every
+      // `maint` — came back "needs confirming" and nothing happened. The
+      // markup carried a data-confirm the whole time; nothing read it.
+      const q=el.dataset.confirm;
+      if(q && !confirm(q)) return;
+      send(el.dataset.cmd,"said",!!q);
+    });
   });
   const c=$("cancelq");
   if(c) c.addEventListener("click",cancelQueued);

@@ -101,6 +101,7 @@ Everything the serial console can set, and nothing else.
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
 | `door open\|close\|auto` | Actuate now, or clear a manual hold |
 | `lock` / `unlock` | Stop the beacon opening the door — see below |
+| `mute` / `unmute` | Silence the **routine** sounds — the moving tick, the arrival chime, the refusal note, the acknowledgements. Stored, so it survives a reboot. **Faults still sound**: stalls, no-moves, exhausted retries, uncommanded travel, sensor faults. Different from `buzzer off`, which forgets the pin |
 | `lock open` | **Pin the door OPEN.** Opens it now, then nothing automatic closes it — not the collar, not the close dwell, not the schedule. Does **not** expire and survives a reboot. `unlock` releases it |
 | `lock close` | **Pin the door CLOSED. An animal outside cannot get in.** Same properties: no expiry, survives a power cut. Emails on arrival and keeps reminding you while it is set. Only `unlock` releases it |
 | `schedule add 22:00-06:00 [days]` | Add a scheduled lockout window |

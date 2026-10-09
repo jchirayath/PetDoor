@@ -327,7 +327,9 @@ VALID_VERBS = ("ota", "thresholds", "dwell", "gap", "pulse", "filter",
                "openfilter", "macs", "door", "resetstats", "defaults",
                "scan", "reboot", "lock", "unlock", "presses",
                "travel", "buzzer", "beep", "sensors", "upload", "maint",
-               "schedule", "vibration", "led", "wake", "retry", "calibrate")
+               "schedule", "vibration", "led", "wake", "retry", "calibrate",
+    "mute", "unmute",
+)
 
 # ---------------------------------------------------------------- web control
 #
@@ -419,6 +421,10 @@ WEB_COMMANDS = {
     # so `need` stays 0 and the validator only constrains the argument if given.
     "lock":       ([_word("open", "close")], 0, None, False),
     "unlock":     ([], 0, None, False),
+    # Silences the routine sounds only; faults still ring. Neither needs
+    # confirming: both are instantly reversible and neither moves the door.
+    "mute":       ([], 0, None, False),
+    "unmute":     ([], 0, None, False),
     "beep":       ([], 0, None, False),
     "scan":       ([], 0, None, False),
     "resetstats": ([], 0, None, False),

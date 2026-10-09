@@ -24,7 +24,7 @@ Reviewed: **2026-10-06**.
 | Sink | Reaches you | Survives a reboot | Needs |
 |---|---|---|---|
 | **Console** (`Con`) | only while something is attached | no | a USB cable, or a network console inside a maintenance window |
-| **Buzzer** | immediately, at the door | no | a passive buzzer fitted |
+| **Buzzer** | immediately, at the door | no | a passive buzzer fitted, and not muted — see below |
 | **Event log** | on the next upload | **yes** — NVS ring | nothing |
 | **Status line** | on the next upload, ~5 min | no — current state only | WiFi configured |
 | **Email** | minutes | n/a | the log server configured with `PETDOOR_NOTIFY_TO` |
@@ -35,6 +35,25 @@ the only one that survives a power cut**, which is why a crash is reconstructabl
 at all.
 
 ---
+
+### The buzzer can be muted, and that changes this table
+
+`mute` silences the **routine** sounds: the tick while moving, the arrival
+chime, the refusal note and the command acknowledgements. It is stored, so it
+survives a reboot — somebody who silenced a door at bedtime should not have it
+start ticking again because the power blinked.
+
+**Faults still sound through a mute**, deliberately: a stall, a door that never
+moved, exhausted close retries, an uncommanded travel and a sensor fault. The
+buzzer is the only sink that reaches somebody standing at the door, and a mute
+that silenced the alarms as well would quietly remove a whole column from this
+table rather than trim it.
+
+`beep` also still sounds, because that is how an undocumented buzzer pin gets
+found, and a mute that silenced the test would make the buzzer look broken.
+
+Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
+`mute` is a flag; `buzzer off` is a configuration change.
 
 ## Producer × sink
 
