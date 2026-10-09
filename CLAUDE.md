@@ -562,30 +562,34 @@ comment above it explains why; keep the comment with the code.
     the freshest reading there is reads as 49 days old — which drops the fix and
     cancels a pending open. Clamping to 0 is the whole fix.
 
-24. **A position hold pins the door and does NOT expire — which is why it has
-    to be loud.** `lock open` / `lock close` make the automatic path inert in
-    both directions and persist in NVS across a brownout. That is a deliberate
-    exception to invariant 10, granted on request and recorded in
-    `docs/STANDARD_EXCEPTIONS.md` with an owner and an expiry. Held CLOSED is
-    the dangerous half: an animal outside cannot get in and nothing corrects it.
-    It is therefore paid for in every sink at once — `hold=` in the status line,
-    a `HOLD` event, a triple-blip LED, the boot banner, and email on arrival
-    with no cooldown plus a repeating reminder. **Do not add a countdown to any
-    of it**: a hold has no clock, and showing one would be the most misleading
-    thing on the page. Manual and remote commands still move a held door on
-    purpose — with the automatic path inert, a hand-driven move is exactly what
-    persists, which is what makes "held" mean "where I left it".
+24. **Manual control is a FACT ABOUT A PERSON, not a position to assert.**
+    `g_override` records that somebody moved this door — at the console, from
+    the portal, or by hand (an `UNCOMMANDED` travel). While set, nothing
+    automatic moves it in either direction, manual commands are never refused
+    because of it, and it survives a reboot. Only `door auto` clears it.
 
-    **A hold must also count as IDLE for the uploader**, exactly as a
-    maintenance window does. The idle test refuses to spend radio time on WiFi
-    while the door is OPEN, so that BLE stays sharp enough to notice a
-    returning animal — and under a hold that observation cannot change
-    anything, because the beacon is not allowed to act on it. Omit this and a
-    HELD OPEN door is never idle, so it calls in only on the 30-minute
-    heartbeat instead of every five: it goes half-deaf to commands at precisely
-    the moment the only way to release it is to send it one. Anything else that
-    special-cases `Maintenance::active` should be read the same way and asked
-    whether a hold belongs beside it.
+    **It deliberately stores no target.** An earlier version stored the
+    position to hold, and that was the bug: a door moved by hand, or rebooted,
+    came back with the flag claiming one thing while the door did another — and
+    the flag won, so "held open" could mean "shut, and the beacon may not open
+    it". Where the door IS comes from its limit switches. The two can no longer
+    disagree because only one of them is remembered.
+
+    Treating an `UNCOMMANDED` travel as manual is safe **on this door** and not
+    in general: the flap is a motorised vertical panel, so wind cannot blow it
+    shut and an animal cannot push it. On a door where that is untrue, a gust
+    would silently stop the door working. Say so before copying the rule.
+
+    **It must count as IDLE for the uploader**, exactly as a maintenance window
+    does — see the idle test. Omit that and an overridden door calls in only on
+    the 30-minute heartbeat, going half-deaf to commands at the moment the only
+    way to release it is to send one.
+
+    It is a deliberate exception to invariant 10, recorded in
+    `docs/STANDARD_EXCEPTIONS.md` with an owner and an expiry, and paid for
+    with noise rather than a timer: `ovr=` in the status line, a `MANUAL`
+    event, a distinct LED, the boot banner, and email on arrival plus a
+    repeating reminder. **Do not add a countdown**: it has no clock.
 
 ## Conventions
 

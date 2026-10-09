@@ -364,15 +364,15 @@ def test_a_held_closed_door_is_rendered_as_what_it_costs():
     not. The row has to say what it costs, not what it is called.
     """
     seed_device("hold-door", int(time.time()))
-    seed_event("hold-door", 20, 100, "HOLD", 2)
-    seed_event("hold-door", 20, 200, "HOLD", 1)
-    seed_event("hold-door", 20, 300, "HOLD", 0)
+    seed_event("hold-door", 20, 100, "MANUAL", 1)
+    seed_event("hold-door", 20, 200, "MANUAL", 0)
     page = srv.render()
-    check("an animal outside cannot get in" in page,
-          "a held-CLOSED row says an animal cannot get in")
-    check("held OPEN" in page, "a held-OPEN row names itself")
+    check("a person took control" in page,
+          "taking manual control says a person did it")
+    check("nothing automatic will move this door" in page,
+          "and says what it costs, rather than naming the state")
     check("decides for itself again" in page, "a release says automation is back")
-    check("detail 2" not in page, "the hold detail is decoded, not shown raw")
+    check("detail 1" not in page, "the detail is decoded, not shown raw")
 
 
 def test_held_closed_mails_on_arrival_and_held_open_is_quieter():
@@ -380,17 +380,17 @@ def test_held_closed_mails_on_arrival_and_held_open_is_quieter():
     SENT.clear()
     seed_device("hold-mail", int(time.time()))
     srv.notify_events("hold-mail", [
-        {"type": "HOLD", "detail": 2, "uptime": 10, "boot": 3, "rssi": -60},
+        {"type": "MANUAL", "detail": 1, "uptime": 10, "boot": 3, "rssi": -60},
     ])
-    check(any("HELD CLOSED" in sub for sub, _ in SENT),
-          "being held closed sends a mail naming it")
+    check(any("MANUAL control" in sub for sub, _ in SENT),
+          "taking manual control sends a mail naming it")
 
     SENT.clear()
     srv.notify_events("hold-mail", [
-        {"type": "HOLD", "detail": 1, "uptime": 20, "boot": 3, "rssi": -60},
+        {"type": "MANUAL", "detail": 0, "uptime": 20, "boot": 3, "rssi": -60},
     ])
-    check(any("held OPEN" in sub for sub, _ in SENT),
-          "being held open also mails, as a notice")
+    check(any("released" in sub for sub, _ in SENT),
+          "handing it back mails too, so the reminders stopping is explained")
 
 
 def test_a_still_held_closed_door_keeps_being_announced():
@@ -404,20 +404,19 @@ def test_a_still_held_closed_door_keeps_being_announced():
             " VALUES(?,?,?,?,?,?,?)"
             " ON CONFLICT(device) DO UPDATE SET status=excluded.status",
             ("still-held", "v1.1.0", "t", 1, int(time.time()), "10.0.0.9",
-             "door=CLOSED locked=0 maint=0 sfault=0 hold=2"))
-    srv.check_held_closed_doors()
-    check(any("STILL held closed" in sub for sub, _ in SENT),
-          "a door still reporting hold=2 is re-announced")
+             "door=CLOSED locked=0 maint=0 sfault=0 ovr=1"))
+    srv.check_overridden_doors()
+    check(any("STILL under manual control" in sub for sub, _ in SENT),
+          "a door still reporting ovr=1 is re-announced")
 
     # And the cooldown applies, or this would mail on every sweep.
     SENT.clear()
-    srv.check_held_closed_doors()
+    srv.check_overridden_doors()
     check(not SENT, "the reminder respects the cooldown rather than every sweep")
 
 
 def test_the_reminder_does_not_fire_on_a_door_that_is_not_held():
-    """`hold=2` must not be matched inside another field. sfault=2 is the
-    obvious collision, and it means something entirely different."""
+    """`ovr=1` must not be matched inside another field."""
     SENT.clear()
     with srv.db() as conn:
         conn.execute(
@@ -425,10 +424,10 @@ def test_the_reminder_does_not_fire_on_a_door_that_is_not_held():
             " VALUES(?,?,?,?,?,?,?)"
             " ON CONFLICT(device) DO UPDATE SET status=excluded.status",
             ("not-held", "v1.1.0", "t", 1, int(time.time()), "10.0.0.8",
-             "door=CLOSED locked=0 maint=0 sfault=2 hold=0"))
-    srv.check_held_closed_doors()
+             "door=CLOSED locked=0 maint=0 sfault=2 ovr=0"))
+    srv.check_overridden_doors()
     check(not any("not-held" in sub for sub, _ in SENT),
-          "sfault=2 with hold=0 does not trigger the held-closed reminder")
+          "sfault=2 with ovr=0 does not trigger the manual reminder")
 
 
 def test_fault_evidence_is_read_according_to_its_fault():

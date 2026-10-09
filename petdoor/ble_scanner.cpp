@@ -747,21 +747,20 @@ void storeLock(bool locked) {
   prefs.end();
 }
 
-uint8_t loadStoredHold() {
+bool loadStoredOverride() {
   Preferences prefs;
-  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return 0;
-  const uint8_t h = prefs.getUChar("hold", 0);
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  // A fresh key, not the old "hold" byte: that one stored a POSITION, and
+  // reading a stale 2 as "manual" would inherit a meaning it never had.
+  const bool o = prefs.getBool("ovr", false);
   prefs.end();
-  // Anything unrecognised reads as OFF. A corrupt byte here must not be able to
-  // leave a door inert: the failure direction is "it decides for itself again",
-  // never "it stays shut and nothing can tell it otherwise".
-  return (h == 1 || h == 2) ? h : 0;
+  return o;
 }
 
-void storeHold(uint8_t hold) {
+void storeOverride(bool on) {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
-  prefs.putUChar("hold", hold);
+  prefs.putBool("ovr", on);
   prefs.end();
 }
 

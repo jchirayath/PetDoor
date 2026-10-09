@@ -46,20 +46,20 @@ The two places the standard applies with full force are:
 | **REL-1 / REL-3** | No `docs/SLO.md`, no incident section in a `docs/RUNBOOK.md` | The "service" is one door and one log server with one user. An SLO would be fiction. `docs/TROUBLESHOOTING.md` and `docs/DIAGNOSTICS.md` are the runbook in practice | 2027-03-31, to revisit if anyone else deploys the server |
 | **Checklist** | No `docs/THREAT_MODEL.md` | The threat model exists in prose, in the Scope section of [SECURITY.md](../SECURITY.md) and by chapter in [mappings/ASVS-5.0.md](../mappings/ASVS-5.0.md), which is where a contributor will actually look. A separate document would restate both. `docs/OBSERVABILITY.md` now exists and earned its keep — it caught three gaps where the door knew something and no sink a person reads carried it | 2027-03-31 |
 
-### On `lock close` being able to shut an animal out
+### On manual control being able to shut an animal out
 
 **A deliberate deviation from invariant 10, added at the owner's explicit request
 on 2026-10-08.**
 
 Invariant 10 says a maintenance window expires by itself, is bounded, and is
 never written to NVS, because "a door left inert by a forgotten flag, a lost
-network or a brownout is a door that cannot let an animal in". `lock close`
+network or a brownout is a door that cannot let an animal in". Manual control
 breaks all three on purpose: it does not expire, it has no bound, and it
 survives a power cut.
 
 What was wanted is sound — pin the door shut while the coop is cleaned, or open
 while a broody hen is moved, and have it still be pinned an hour later. Why it is
-a deviation is equally sound: a forgotten `lock close` is indistinguishable from
+a deviation is equally sound: a forgotten override is indistinguishable from
 outside from a door that has stopped working, and the cost lands on an animal
 that cannot report it.
 
@@ -68,9 +68,9 @@ hold would not do the job asked of it:
 
 | | |
 |---|---|
-| status line | `hold=2`, so the dashboard shows it on every refresh |
+| status line | `ovr=1`, so the dashboard shows it on every refresh |
 | dashboard | a pill that deliberately shows **no countdown**, because it has none |
-| event log | `HOLD` with detail 2, so the moment it began is timestamped |
+| event log | a `MANUAL` event, so the moment it began is timestamped |
 | email | on arrival with **no cooldown**, and **repeated** by the watchdog sweep for as long as it stays set |
 | LED | a triple blip, distinct from the double blip that means merely locked |
 | boot banner | stated on every restart, since that is when somebody is asking why the door does nothing |
