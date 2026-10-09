@@ -576,6 +576,17 @@ comment above it explains why; keep the comment with the code.
     purpose — with the automatic path inert, a hand-driven move is exactly what
     persists, which is what makes "held" mean "where I left it".
 
+    **A hold must also count as IDLE for the uploader**, exactly as a
+    maintenance window does. The idle test refuses to spend radio time on WiFi
+    while the door is OPEN, so that BLE stays sharp enough to notice a
+    returning animal — and under a hold that observation cannot change
+    anything, because the beacon is not allowed to act on it. Omit this and a
+    HELD OPEN door is never idle, so it calls in only on the 30-minute
+    heartbeat instead of every five: it goes half-deaf to commands at precisely
+    the moment the only way to release it is to send it one. Anything else that
+    special-cases `Maintenance::active` should be read the same way and asked
+    whether a hold belongs beside it.
+
 ## Conventions
 
 - **Console output in `petdoor.ino` goes to `Con`, not `Serial`.** `Con` is a
