@@ -272,6 +272,35 @@ int pin() { return pin_; }
 bool passive() { return passive_; }
 bool activeLow() { return activeLow_; }
 bool enabled() { return pin_ >= 0; }
+
+bool muted_ = false;
+void setMuted(bool m) { muted_ = m; }
+bool muted() { return muted_; }
+
+bool isRoutine(ChimeTune tune) {
+  switch (tune) {
+    // Everything a working door does on an ordinary day.
+    case CHIME_WORKING:
+    case CHIME_MOVE_BEACON_OPEN:
+    case CHIME_MOVE_BEACON_CLOSE:
+    case CHIME_MOVE_CONSOLE_OPEN:
+    case CHIME_MOVE_CONSOLE_CLOSE:
+    case CHIME_MOVE_REMOTE_OPEN:
+    case CHIME_MOVE_REMOTE_CLOSE:
+    case CHIME_DONE:
+    case CHIME_REFUSED:
+    case CHIME_REFUSED_SCHEDULE:
+    case CHIME_ACK_LOCK:
+    case CHIME_ACK_UNLOCK:
+    case CHIME_ACK_SET:
+      return true;
+    // Faults, and the one test tone. CHIME_TEST is deliberately NOT routine:
+    // `beep` is how somebody finds an undocumented buzzer pin, and a mute that
+    // silences the test makes the buzzer look broken.
+    default:
+      return false;
+  }
+}
 ChimeTune playing() { return tune_; }
 
 const char *tuneName(ChimeTune t) {
@@ -300,6 +329,12 @@ const char *tuneName(ChimeTune t) {
 }
 
 void play(ChimeTune tune) {
+  // Checked here rather than at ~40 call sites, which is also what stops a
+  // future tune being added that forgets to respect the mute.
+  if (muted_ && isRoutine(tune)) {
+    tune_ = CHIME_NONE;
+    return;
+  }
   if (pin_ < 0) {
     tune_ = CHIME_NONE;
     return;

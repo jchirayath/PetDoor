@@ -309,6 +309,34 @@ def test_the_maintenance_range_matches_the_firmware_ceiling():
     check(not ok, "and refuses one minute more, rather than letting the door refuse it")
 
 
+def test_every_data_cmd_handler_actually_sends_the_confirmation():
+    """A button carrying data-confirm is useless if its handler ignores it.
+
+    This is the gap that let a real bug through. The earlier test asserted the
+    MARKUP had a data-confirm, and it did -- but the control panel's click
+    handler was `()=>send(el.dataset.cmd)`, with neither the dialog nor the
+    confirmed flag. So `lock open`, `lock close`, `ota`, `reboot`, `defaults`
+    and every `maint` button came back "needs confirming" and did nothing,
+    while both the markup and the server were correct.
+
+    Checked by reading the source rather than by running it: there is no DOM
+    here, and the property worth asserting is structural anyway -- EVERY
+    handler bound to button[data-cmd] must read dataset.confirm and pass it on.
+    """
+    js = io.open(os.path.join(SERVER_DIR, "dashboard.js"), encoding="utf-8").read()
+
+    # Each handler, as the slice of source following its querySelectorAll.
+    starts = [m.start() for m in
+              re.finditer(r'querySelectorAll\("button\[data-cmd\]"\)', js)]
+    check(len(starts) >= 1, "found the data-cmd click handlers (got %d)" % len(starts))
+    for i, pos in enumerate(starts):
+        body = js[pos:pos + 1200]
+        check("dataset.confirm" in body,
+              "data-cmd handler #%d reads dataset.confirm" % (i + 1))
+        check(re.search(r'send\([^)]*,\s*!!q\s*\)', body) is not None,
+              "data-cmd handler #%d passes the confirmation to send()" % (i + 1))
+
+
 def test_lock_takes_a_position_and_only_a_valid_one():
     """`lock` grew an optional argument; the bare form must keep working."""
     for good in ("lock", "lock open", "lock close", "unlock"):
@@ -526,6 +554,7 @@ def main():
     test_act_source_covers_every_source_the_firmware_can_send()
     test_every_dashboard_button_is_a_command_the_server_accepts()
     test_the_maintenance_range_matches_the_firmware_ceiling()
+    test_every_data_cmd_handler_actually_sends_the_confirmation()
     test_lock_takes_a_position_and_only_a_valid_one()
     test_a_held_closed_door_is_rendered_as_what_it_costs()
     test_held_closed_mails_on_arrival_and_held_open_is_quieter()

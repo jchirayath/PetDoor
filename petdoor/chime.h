@@ -173,6 +173,23 @@ bool passive();
 bool activeLow();
 bool enabled();
 
+// Silence the routine sounds without forgetting the buzzer pin.
+//
+// Distinct from `buzzer off`, which sets the pin to -1 and makes you re-enter
+// the wiring to get sound back. This is a flag you can toggle from the portal
+// and it survives a reboot.
+//
+// FAULTS STILL SOUND. A stall, a door that never moved, exhausted close
+// retries, an uncommanded travel and a sensor fault all ring through a mute,
+// because the buzzer is the only sink that reaches somebody standing at the
+// door and docs/OBSERVABILITY.md counts it as one. Muting the ticking is a
+// comfort; muting the alarm is a different decision and is not this one.
+void setMuted(bool muted);
+bool muted();
+// True for the tunes a mute silences — the routine ones. Pure, so the split
+// can be read in one place rather than inferred from call sites.
+bool isRoutine(ChimeTune tune);
+
 void play(ChimeTune tune);
 void stop();
 

@@ -765,6 +765,21 @@ void storeHold(uint8_t hold) {
   prefs.end();
 }
 
+bool loadStoredMute() {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return false;
+  const bool m = prefs.getBool("muted", false);
+  prefs.end();
+  return m;
+}
+
+void storeMute(bool muted) {
+  Preferences prefs;
+  if (!prefs.begin(kNvsNamespace, /*readOnly=*/false)) return;
+  prefs.putBool("muted", muted);
+  prefs.end();
+}
+
 uint32_t loadStoredPulseMs() {
   Preferences prefs;
   if (!prefs.begin(kNvsNamespace, /*readOnly=*/true)) return 0;

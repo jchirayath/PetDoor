@@ -258,6 +258,9 @@ bool g_locked = false;
 // paid for with noise: the status line, the log, the LED, the boot banner and a
 // recurring email. See docs/STANDARD_EXCEPTIONS.md.
 uint8_t g_hold = 0;
+// Set at boot when a hold was restored from NVS, cleared once the door has
+// been put back where the hold says it is. See serviceHoldReassert().
+bool g_holdReassertPending = false;
 const char *holdName(uint8_t h) {
   return h == 1 ? "OPEN" : h == 2 ? "CLOSED" : "off";
 }
@@ -664,6 +667,12 @@ void printStatus(uint32_t nowMs) {
   }
   if (g_locked) {
     Con.println(F("  LOCKED       : the beacon cannot open this door ('K' to unlock)"));
+  }
+  if (Chime::muted()) {
+    Con.println(F("  MUTED        : routine sounds off. Stalls, no-moves, "
+                  "exhausted retries,"));
+    Con.println(F("                 uncommanded travel and sensor faults still "
+                  "sound."));
   }
   if (g_hold == 1) {
     Con.println(F("  HELD OPEN    : nothing automatic will close this door"));
@@ -2686,7 +2695,7 @@ void publishStatusLines() {
            "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu maxalloc=%lu "
            "heaplow=%lu cstack=%lu ustack=%lu up=%lu maint=%lu ip=%s real=%s "
            "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
-           "batt=%ld battlow=%d sfault=%u hold=%u",
+           "batt=%ld battlow=%d sfault=%u hold=%u mute=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -2773,7 +2782,11 @@ void publishStatusLines() {
            // because it is the one state here that does not expire: a door held
            // CLOSED cannot let an animal in, and the owner of a mounted door
            // has no cable to find that out down.
-           static_cast<unsigned>(g_hold));
+           static_cast<unsigned>(g_hold),
+           // Uploaded so the portal can show it: a muted door and a broken
+           // buzzer are indistinguishable from across a yard, and only one of
+           // them is worth walking out to.
+           static_cast<unsigned>(Chime::muted() ? 1 : 0));
   WifiLogger::setStatusLine(line);
 
   // Every tunable the remote channel can change, so the dashboard's
@@ -3494,6 +3507,53 @@ void serviceMaintenance(uint32_t nowMs) {
 #endif
 }
 
+// Put the door back where a restored hold says it is.
+//
+// Loading g_hold at boot is not enough, and the gap is not cosmetic. A door
+// that reboots while HELD OPEN comes back with the flag set and the door
+// wherever it physically ended up — and because a hold makes the automatic
+// path inert, nothing will move it. "Held open" then means "shut, and the
+// beacon is not allowed to open it", which is the one failure this project
+// engineers against everywhere else. Found the hard way: a power cycle left
+// this door closed, held, and unable to let an animal in.
+//
+// The open/closed asymmetry needs no code here because DoorController::check()
+// already has it: the boot grace is tested BEFORE `force` and only for a
+// CLOSE. So re-asserting OPEN succeeds at once, while re-asserting CLOSED is
+// refused until the grace expires — which is invariant 6 doing its job for a
+// caller that did not have to know about it. Retry until it takes.
+void serviceHoldReassert(uint32_t nowMs) {
+  if (!g_holdReassertPending) return;
+  if (g_hold == 0) { g_holdReassertPending = false; return; }
+
+  // Only a limit switch can say where the door actually is. Without one, do
+  // nothing: re-asserting on a believed state that was never measured would
+  // mean driving the door on a guess, and a wrong guess here closes it.
+  if (!Position::enabled()) { g_holdReassertPending = false; return; }
+
+  const DoorState target = (g_hold == 1) ? DOOR_OPEN : DOOR_CLOSED;
+  const DoorState at = Position::state();
+  if (at == DOOR_UNKNOWN) return;          // debounce has not settled yet
+  if (at == target) {                      // already where it should be
+    g_holdReassertPending = false;
+    return;
+  }
+
+  const ActuationResult r = Actuator::request(target, SRC_REMOTE, nowMs,
+                                             /*force=*/true);
+  if (r != ACT_DONE) return;               // boot grace, busy, lockout: try again
+
+  g_holdReassertPending = false;
+  Con.printf("[hold] restored HELD %s after a restart and the door was %s — "
+             "putting it back.\r\n",
+             holdName(g_hold), DoorController::stateName(at));
+  // Logged as the hold being asserted, not as an ordinary move, so a history
+  // shows the door moved because of a restart rather than because anything
+  // asked it to.
+  EventLog::record(LOG_HOLD, g_hold, g_tracker.filteredRssi());
+  announceMovement(SRC_REMOTE, target);
+}
+
 void driveDoor(uint32_t nowMs) {
   // Maintenance mode: the door listens but does not act. Checked before
   // everything else, and it blocks BOTH directions — unlike the lock below,
@@ -3932,6 +3992,22 @@ bool applyRemoteCommand(const char *line, String &result) {
     result = msg;
     return ok;
   }
+  if (strcmp(verb, "mute") == 0 || strcmp(verb, "unmute") == 0) {
+    const bool want = (strcmp(verb, "mute") == 0);
+    Chime::setMuted(want);
+    BleScanner::storeMute(want);
+    if (want) {
+      // Says what still sounds, because a mute that silenced the alarms too
+      // would be a different and much worse thing to have switched on.
+      result = "muted — the ticking, the arrival chime and the acknowledgements "
+               "are silent. STALLS, a door that never moved, exhausted close "
+               "retries, uncommanded travel and sensor faults still sound";
+    } else {
+      result = "unmuted — the buzzer is back";
+      Chime::play(CHIME_ACK_UNLOCK);
+    }
+    return true;
+  }
   if (strcmp(verb, "lock") == 0 || strcmp(verb, "unlock") == 0) {
     const char *a = arg();
     // `lock open` / `lock close` PIN the door to a position: the automatic path
@@ -4212,6 +4288,7 @@ void controlTask(void *) {
     updateVibrationNoise(now);
     updateReedAgreement(now);
     updateSensorFaultBeep(now);
+    serviceHoldReassert(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);
@@ -4408,7 +4485,12 @@ void setup() {
   // Said loudly because it survives a reboot by design, and a door that will
   // not open for the collar is exactly the thing someone needs to be told
   // about before they start wondering why the animal is outside.
+  Chime::setMuted(BleScanner::loadStoredMute());
   g_hold = BleScanner::loadStoredHold();
+  // A restored hold has to be ACTED on, not merely remembered. See
+  // serviceHoldReassert() for why this is the difference between "held open"
+  // and "shut, and nothing will ever open it".
+  g_holdReassertPending = (g_hold != 0);
   g_locked = BleScanner::loadStoredLock();
   if (g_locked) {
     Con.println(F("  !! THIS DOOR IS LOCKED — the beacon cannot open it"));

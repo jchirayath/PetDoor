@@ -89,6 +89,11 @@ void storeLock(bool locked);
 uint8_t loadStoredHold();
 void storeHold(uint8_t hold);
 
+// The buzzer mute. Stored, because somebody who silenced a door at bedtime
+// should not have it start ticking again because the power blinked.
+bool loadStoredMute();
+void storeMute(bool muted);
+
 uint32_t loadStoredPulseMs();
 void storePulseTrain(uint8_t count, uint32_t gapMs);
 bool loadStoredPulseTrain(uint8_t &count, uint32_t &gapMs);
