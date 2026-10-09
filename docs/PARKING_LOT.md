@@ -145,6 +145,38 @@ for it, only an absence of coverage.
 and a USB flash each restarted the door, and each one postponed the very failure
 being hunted. Once a watch is running, leave the door alone.
 
+**2026-10-09: the strongest correlation yet, and it points back at the radio.**
+
+Six `ota` commands were queued between 10:42 and 11:51 while trying to push a
+build. Boots went 1050 -> 1053 across exactly that window, and boot #1053
+records `reset=4`. Against that, boot #1049 ran **13 hours clean** with no OTA
+activity at all, on the same firmware.
+
+That revives the framing this entry opened with and then talked itself out of —
+the original panic was "about eight seconds after collecting an `ota` command".
+It was dismissed on 2026-10-08 because boot #1041's panic had no `ota` near it.
+But #1041 died 46 minutes into a MAINTENANCE WINDOW, which also brings the
+radio up and starts a listening socket. So the counterexample was not one:
+
+> **Hypothesis: bringing the radio up for a LISTENING SERVICE is what kills it**
+> — `radioUp()` followed by `ArduinoOTA.begin()` (an OTA window) or
+> `NetConsole::start()` (a maintenance window). Both run on the uploader task.
+
+This unifies every panic on record instead of explaining some away, and it
+lands on the task this entry suspected from the start — which the stack
+increase did not fix, and `ustack` readings of 4,268 free of 7,168 say is not
+exhaustion. Something else in that path.
+
+**It also makes the fault reproducible on demand**, which nothing else has:
+queue `ota` repeatedly and the door panics within the hour. That is the
+difference between waiting for evidence and going to get it.
+
+**Do not diagnose this over OTA.** Every attempt to push a fix is itself the
+suspected trigger, and a door restarting every few minutes cannot complete a
+30-second transfer. 2026-10-09: the door is being unmounted and brought to a
+desk for a wired session, which is the right call — the backtrace is serial
+only, and the fault can now be provoked rather than waited for.
+
 **Still blocked on:** a backtrace. It exists only on the serial console, so it
 needs a cable attached at the moment it happens. The cable was deliberately kept
 on rather than mounting the door, precisely to catch the next one. There is no
