@@ -74,7 +74,7 @@ Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
 | `SENSOR_OK` | ✓ | — | ✓ | `sfault=0` | ✓ **only if the fault emailed** |
 | `BEACON_LOW` | ✓ | — | ✓ | `battlow` | ✓ on the falling edge |
 | `MAINT` | ✓ | — | ✓ | `maint` | ✓ |
-| `HOLD` | ✓ (and in the boot banner) | — | ✓ | `hold` | ✓ **held closed: every time, no cooldown, and repeated while it lasts**. Held open: once |
+| `MANUAL` | ✓ (and in the boot banner) | — | ✓ | `ovr` | ✓ **on arrival, no cooldown, and repeated for as long as it lasts** |
 | `CONSOLE` | ✓ | — | ✓ | — | ✓ — a network console can open the door |
 | `FIX_GOT` / `FIX_LOST` | ✓ | — | ✓ | `present` | ! several a day |
 | *door goes silent* | n/a | n/a | n/a | n/a | ✓ server-side watchdog, 2 h, plus one recovery mail |

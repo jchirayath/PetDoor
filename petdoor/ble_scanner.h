@@ -86,8 +86,10 @@ void storeLock(bool locked);
 // lock stops the beacon OPENING the door, while this pins the door to a
 // state and makes the automatic path inert in both directions. 0 = off,
 // 1 = held open, 2 = held closed. Stored, so it survives a brownout.
-uint8_t loadStoredHold();
-void storeHold(uint8_t hold);
+// Manual control, stored so a reboot does not quietly hand the door back to
+// the beacon while somebody still has it where they want it.
+bool loadStoredOverride();
+void storeOverride(bool on);
 
 // The buzzer mute. Stored, because somebody who silenced a door at bedtime
 // should not have it start ticking again because the power blinked.

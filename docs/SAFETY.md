@@ -306,50 +306,55 @@ Do these in order. Do not skip ahead because the previous step looked fine.
   is the only thing between your birds and the night. A firmware that fails open
   is the safe outcome for the animals and the unsafe outcome for predators.
 
-## A hold does not expire, and held CLOSED can shut an animal out
+## Manual control does not expire, and a door left CLOSED shuts an animal out
 
-`lock open` and `lock close` pin the door to a position. While either is set the
-automatic path is inert **in both directions**: the collar cannot open or close
-the door, the close dwell does not run, and the schedule is ignored. Your own
-`door open` / `door close` still work, and because nothing automatic will undo
-them, whatever position you put the door in is where it stays.
+Move this door and you take control of it. That is true whether you press Open
+or Close on the portal, type `o` or `x` at the console, **or move the flap by
+hand** — all three set the same state, and while it is set:
 
-**Unlike a maintenance window, a hold has no clock.** It does not expire, it is
-not bounded, and it survives a reboot and a power cut. Only `unlock` releases it.
+- nothing automatic moves the door, **in either direction**: not the collar,
+  not the close dwell, not the schedule;
+- your own commands are never refused because of it;
+- it **survives a reboot and a power cut**;
+- only `door auto` ends it.
 
-That makes `lock close` the most dangerous state this firmware can be left in:
+**It records that a person acted, not where the door should be.** An earlier
+version stored a position to hold, and that was worse than useless: a door
+moved by hand or restarted came back asserting one thing while sitting at
+another, and the assertion won. Where the door is now comes from its limit
+switches, so the two cannot disagree.
+
+**The dangerous case is leaving it CLOSED.**
 
 > **An animal outside cannot get in, and nothing will ever correct that.**
 
-It is not a stall, which fails open. It is not a schedule, which only refuses to
-*open* while a clock says so and gives up at the boundary. It is a decision that
-stays made. A chicken shut out overnight in bad weather is the realistic
-consequence, and the door will look, from outside, exactly like one that is
-simply closed.
-
-So before you use it, know how you will be reminded. The door tells you in every
-way it can:
+Not a stall, which fails open. Not a schedule, which gives up at the boundary.
+A decision that stays made, and from outside the door looks exactly like one
+that is simply shut. So before you use it, know how you are reminded:
 
 | | |
 |---|---|
-| the dashboard | a pill saying an animal cannot get in, with **no countdown**, because there is none |
-| email | on arrival, with no cooldown, and **repeated** for as long as it stays set |
-| the LED | a triple blip — distinct from the double blip that means merely locked |
+| the dashboard | a pill naming the position and saying automation is off, with **no countdown**, because there is none |
+| email | on arrival, no cooldown, and **repeated** for as long as it lasts |
+| the LED | a distinct pattern in both positions |
 | the boot banner | stated on every restart |
-| the log | a `HOLD` event, so the moment it began is timestamped |
+| the log | a `MANUAL` event, so the moment it began is timestamped |
 
-**Calibration is refused while a hold is set.** `calibrate` drives the door
-twice, which would walk it straight out of the position you pinned it in and
-leave the hold claiming something untrue. Release the hold first.
+**A hand on the flap counts as taking control, and that rule is specific to
+this door.** It is a motorised vertical panel: wind cannot blow it shut and an
+animal cannot push it, so an uncommanded travel is a person. On a door where
+that is not true — a hinged flap, anything a gust can move — the same rule
+would let weather silently stop the door working, which is the opposite of
+what it is for. Check your mechanism before relying on it.
 
-**Use `lock open` freely; treat `lock close` as a tool you are holding.** An open
-door is the safe failure — the animal can always get through it. A closed one is
-not, which is why only one of the two shouts at you.
+**If you want something that cannot be forgotten, use a maintenance window
+instead.** `maint 240` makes the door inert for up to four hours and then
+releases itself. For cleaning out, moving a bird, or working on the mechanism,
+that is the better tool.
 
-If you want a hold that cannot be forgotten, use a maintenance window instead:
-`maint 240` blocks both directions for up to four hours and then releases itself.
-That is the same inertness with a clock attached, and for most jobs — cleaning
-out, moving a bird, working on the mechanism — it is the better tool.
+**Calibration is refused while manual control is held**, because `calibrate`
+drives the door twice and would move it out from under you. Send `door auto`
+first.
 
 ## Reporting a safety problem
 

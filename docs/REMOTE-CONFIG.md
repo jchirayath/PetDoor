@@ -101,9 +101,10 @@ Everything the serial console can set, and nothing else.
 | `macs <csv>` | Beacon list. **Restarts the door** — see below |
 | `door open\|close\|auto` | Actuate now, or clear a manual hold |
 | `lock` / `unlock` | Stop the beacon opening the door — see below |
+| `door auto` | **Hand manual control back.** The one way out of the manual state below |
 | `mute` / `unmute` | Silence the **routine** sounds — the moving tick, the arrival chime, the refusal note, the acknowledgements. Stored, so it survives a reboot. **Faults still sound**: stalls, no-moves, exhausted retries, uncommanded travel, sensor faults. Different from `buzzer off`, which forgets the pin |
-| `lock open` | **Pin the door OPEN.** Opens it now, then nothing automatic closes it — not the collar, not the close dwell, not the schedule. Does **not** expire and survives a reboot. `unlock` releases it |
-| `lock close` | **Pin the door CLOSED. An animal outside cannot get in.** Same properties: no expiry, survives a power cut. Emails on arrival and keeps reminding you while it is set. Only `unlock` releases it |
+| `lock open` | **Open it and take manual control.** Opens now, then nothing automatic moves it — not the collar, not the close dwell, not the schedule. Does **not** expire and survives a reboot. `door auto` hands it back |
+| `lock close` | **Close it and take manual control. An animal outside cannot get in.** Same properties: no expiry, survives a power cut. Emails on arrival and keeps reminding you. `door auto` hands it back |
 | `schedule add 22:00-06:00 [days]` | Add a scheduled lockout window |
 | `schedule del 22:00-06:00` | Remove one **by its times**. Order-independent — prefer this |
 | `schedule del <n>` | Remove one by its number from `list`. **Deleting several this way only works highest-number first**: removing a window renumbers the rest, so `del 0` then `del 1` deletes one and refuses the other, and over this channel the refusal is heard only as a tone. Use the times form, or `clear` |

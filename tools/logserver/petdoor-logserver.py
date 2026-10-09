@@ -107,7 +107,7 @@ EVENT_LABEL = {
     # The position hold: the door pinned open or closed with the automatic
     # path inert. Unlike maintenance this does not expire, so it is the one
     # state here that can be months old and still true.
-    "HOLD": "held in position",
+    "MANUAL": "under manual control",
     "CONSOLE": "network console",
     "NO_MOVE": "did not move at all",
     # The door's own controller has modes of its own and has been watched
@@ -1165,38 +1165,36 @@ def notify_events(device, rows):
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
 
-        elif r["type"] == "HOLD" and r["detail"] == 2:
+        elif r["type"] == "MANUAL" and r["detail"] == 1:
             # Held CLOSED earns a mail on arrival with NO cooldown, for the same
             # reason an abnormal reset does: the cost lands on an animal that
             # cannot report it, and unlike every other state this door can be
             # left in, this one never expires.
             ok, why = send_notification(
-                f"door is HELD CLOSED on {device}",
-                title="The door is pinned shut and will not open by itself",
-                lede="An animal outside cannot get in. Nothing automatic will "
-                     "open this door — not the collar, not the schedule — and "
-                     "this survives a reboot and a power cut.",
+                f"door is under MANUAL control on {device}",
+                title="Somebody took control of this door",
+                lede="Nothing automatic will open or close it — not the collar, "
+                     "not the close dwell, not the schedule — and this survives "
+                     "a reboot.",
                 rows=[("door", device),
                       ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="Release it with `unlock`. You will be reminded while it "
-                     "stays set, because a hold does not end by itself the way "
-                     "a maintenance window does.",
+                note="Send `door auto` to hand it back. You will be reminded "
+                     "while it stays set, because manual control does not end by "
+                     "itself the way a maintenance window does.",
                 accent="bad")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for hold closed: {why}\n")
 
-        elif (r["type"] == "HOLD" and r["detail"] == 1
-              and notify_due(device, "HOLD_OPEN")):
+        elif (r["type"] == "MANUAL" and r["detail"] == 0
+              and notify_due(device, "MANUAL_RELEASED")):
             ok, why = send_notification(
-                f"door is held OPEN on {device}",
-                title="The door is pinned open",
-                lede="Nothing automatic will close it, and this survives a "
-                     "reboot.",
+                f"manual control released on {device}",
+                title="The door is back under automatic control",
+                lede="The collar decides again.",
                 rows=[("door", device),
                       ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="An open door is the safe failure here, so this is a notice "
-                     "rather than a warning. It will not expire by itself "
-                     "though; release it with `unlock`.")
+                note="Sent so the reminders stopping is explained rather than "
+                     "just noticed.")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for hold open: {why}\n")
 
@@ -1270,7 +1268,7 @@ WATCHDOG_EVERY_S = 300
 _stale_alerted = {}
 
 
-def check_held_closed_doors():
+def check_overridden_doors():
     """Re-announce every door still pinned CLOSED.
 
     The arrival mail is not enough by itself. A hold does not expire, so the
@@ -1287,17 +1285,17 @@ def check_held_closed_doors():
     for r in rows:
         # Padded on both sides so this cannot match `hold=2` inside some future
         # field, nor `sfault=2`.
-        if " hold=2" not in f' {r["status"] or ""} ':
+        if " ovr=1" not in f' {r["status"] or ""} ':
             continue
-        if not notify_due(r["device"], "HOLD_CLOSED_REMINDER"):
+        if not notify_due(r["device"], "MANUAL_REMINDER"):
             continue
         send_notification(
-            f'door is STILL held closed on {r["device"]}',
-            title="That door is still pinned shut",
-            lede="An animal outside still cannot get in. This hold will not "
+            f'door is STILL under manual control on {r["device"]}',
+            title="That door is still being held by hand",
+            lede="Nothing automatic will open or close it. This does not "
                  "release itself.",
             rows=[("door", r["device"])],
-            note="Release it with `unlock` when you are done with it.",
+            note="Send `door auto` when you are done with it.",
             accent="bad")
 
 
@@ -1362,7 +1360,7 @@ def watchdog_loop():
             # In the same sweep, and inside the same try: a hold that cannot
             # expire is exactly the sort of thing that must not stop being
             # announced because the other check threw.
-            check_held_closed_doors()
+            check_overridden_doors()
         except Exception as exc:                        # noqa: BLE001
             sys.stderr.write(f"  watchdog error (continuing): {exc}\n")
 
@@ -1568,15 +1566,10 @@ def render():
             # The relay fired and nothing moved. Louder than STALLED, which at
             # least means the door tried.
             detail = ('<strong style="color:var(--bad)">relay fired, door never moved</strong>')
-        elif r["type"] == "HOLD":
-            # 0 released, 1 held open, 2 held closed. Held CLOSED is rendered as
-            # a warning because it is the only state the door can be left in
-            # that stops an animal getting in and never corrects itself.
-            if r["detail"] == 2:
-                detail = ('<strong style="color:var(--bad)">HELD CLOSED — '
-                          "an animal outside cannot get in</strong>")
-            elif r["detail"] == 1:
-                detail = "held OPEN — nothing automatic will close it"
+        elif r["type"] == "MANUAL":
+            if r["detail"] == 1:
+                detail = ('<strong style="color:var(--bad)">a person took '
+                          "control — nothing automatic will move this door</strong>")
             else:
                 detail = "released — the door decides for itself again"
         elif r["type"] == "MAINT":

@@ -122,6 +122,10 @@ constexpr uint8_t kUncommandedInferred = 10;
 bool applyScheduleLine(const char *line, String &result);
 void printScheduleMenu();
 bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message);
+// Defined below, used by the console keys and the uncommanded-travel path
+// above it. Declared here for the same reason beginMaintenance is.
+void enterOverride(const char *why, uint32_t nowMs);
+void clearOverride(uint32_t nowMs);
 void endMaintenance(String &message);
 void publishStatusLines();
 void announceMovement(ActuationSource src, DoorState target);
@@ -257,13 +261,26 @@ bool g_locked = false;
 // It is deliberately available anyway, at the owner's explicit request, and is
 // paid for with noise: the status line, the log, the LED, the boot banner and a
 // recurring email. See docs/STANDARD_EXCEPTIONS.md.
-uint8_t g_hold = 0;
-// Set at boot when a hold was restored from NVS, cleared once the door has
-// been put back where the hold says it is. See serviceHoldReassert().
-bool g_holdReassertPending = false;
-const char *holdName(uint8_t h) {
-  return h == 1 ? "OPEN" : h == 2 ? "CLOSED" : "off";
-}
+// MANUAL OVERRIDE: a person has taken control of this door.
+//
+// Replaces an earlier "hold" that stored a POSITION to assert. Storing a target
+// was the mistake: a door that rebooted, or was moved by hand, came back with a
+// flag claiming one thing while the door did another, and the flag won. This
+// tracks the fact of a person having acted, and lets the door's own limit
+// switches say where it is — so the two can no longer disagree.
+//
+// Set by ANY manual action: `o`/`x` at the console, `door open`/`door close`
+// from the portal, and an UNCOMMANDED travel. The last is included because on
+// this door it can only be a person: the flap is a motorised vertical panel
+// that wind cannot blow shut and an animal cannot push.
+//
+// While set, NOTHING automatic moves the door — neither direction, no beacon,
+// no close dwell, no schedule. Manual commands are never refused because of it.
+// Cleared only by `door auto`, and it survives a reboot.
+bool g_override = false;
+// Announced on arrival and then at intervals, because a door under manual
+// control stays that way until somebody remembers.
+uint32_t g_overrideSinceMs = 0;
 
 // Set by a `scan` command: upload the discovery table with the next flush.
 bool g_scanRequested = false;
@@ -415,13 +432,11 @@ void printBanner() {
   // A hold is the only state here that survives a reboot and never expires, so
   // the banner has to say so. Somebody power-cycling a door that "will not do
   // anything" should learn why in the first screen, not after an hour.
-  if (g_hold == 1) {
-    Con.println(F("  HELD OPEN     : nothing automatic will close this door "
-                  "('unlock' releases it)"));
-  } else if (g_hold == 2) {
-    Con.println(F("  !! HELD CLOSED: an animal OUTSIDE CANNOT GET IN. Nothing "
-                  "automatic will open"));
-    Con.println(F("  !!              this door. 'unlock' releases it."));
+  if (g_override) {
+    Con.println(F("  MANUAL        : a person moved this door, so nothing "
+                  "automatic will move it."));
+    Con.println(F("                  The door is wherever it actually is; "
+                  "`door auto` hands it back."));
   }
   Con.println(F("--------------------------------------------------"));
 
@@ -674,15 +689,16 @@ void printStatus(uint32_t nowMs) {
     Con.println(F("                 uncommanded travel and sensor faults still "
                   "sound."));
   }
-  if (g_hold == 1) {
-    Con.println(F("  HELD OPEN    : nothing automatic will close this door"));
-    Con.println(F("                 ('unlock' releases it; it survives a reboot)"));
-  } else if (g_hold == 2) {
-    // The one state in this report that can shut an animal out indefinitely,
-    // so it says what that means rather than naming itself and stopping.
-    Con.println(F("  !! HELD CLOSED: an animal OUTSIDE CANNOT GET IN."));
-    Con.println(F("  !!             Nothing automatic will open this door, and"));
-    Con.println(F("  !!             this survives a reboot. 'unlock' releases it."));
+  if (g_override) {
+    // Says what it costs, not just that it is set: with the door CLOSED this
+    // is the state that keeps an animal outside, and it does not expire.
+    Con.println(F("  MANUAL       : a person moved this door. Nothing automatic"));
+    Con.println(F("                 will open or close it, in either direction,"));
+    Con.println(F("                 and this survives a reboot. `door auto` ends it."));
+    if (Position::enabled() && Position::state() == DOOR_CLOSED) {
+      Con.println(F("  !!             The door is CLOSED, so an animal outside "
+                    "cannot get in."));
+    }
   }
   Schedule::describe(Con, EventLog::haveEpoch(), EventLog::epochNow());
   if (Vibration::enabled()) {
@@ -2012,6 +2028,7 @@ void handleSerial(uint32_t nowMs) {
           break;
         }
         announceMovement(SRC_MANUAL, DOOR_OPEN);
+        enterOverride("opened at the console", nowMs);
         if (MANUAL_HOLD_MS > 0) {
           g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
           if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;  // 0 means "off"
@@ -2042,6 +2059,7 @@ void handleSerial(uint32_t nowMs) {
           break;
         }
         announceMovement(SRC_MANUAL, DOOR_CLOSED);
+        enterOverride("closed at the console", nowMs);
         break;
       }
       case 'C': {
@@ -2049,10 +2067,9 @@ void handleSerial(uint32_t nowMs) {
         // Calibration drives the door twice with force=true, which would walk
         // it straight out of the position it was pinned in and leave the hold
         // claiming something untrue. Refused rather than silently winning.
-        if (g_hold != 0) {
-          Con.printf("[cal] refused: the door is HELD %s. Release it with "
-                     "'unlock' first — calibration has to move the door.\r\n",
-                     holdName(g_hold));
+        if (g_override) {
+          Con.println(F("[cal] refused: this door is under MANUAL control. "
+                        "`door auto` first — calibration moves the door."));
           Chime::play(CHIME_REFUSED);
           break;
         }
@@ -2657,6 +2674,13 @@ void updatePosition(uint32_t nowMs) {
       EventLog::record(LOG_UNCOMMANDED, static_cast<uint8_t>(seen),
                        g_tracker.filteredRssi());
       Chime::play(CHIME_UNCOMMANDED);
+      // A hand on the door counts as taking control of it. On THIS door that
+      // inference is safe: the flap is a motorised vertical panel, so wind
+      // cannot blow it shut and an animal cannot push it — an uncommanded
+      // travel is a person. On a door where that is not true this would be the
+      // wrong rule, because a gust would silently stop the door working; see
+      // docs/SAFETY.md.
+      enterOverride("the door was moved by hand", millis());
 #if PETDOOR_ENABLE_WIFI
       // Worth a radio burst of its own. A door moving by itself is the kind of
       // thing you want to find in the dashboard the same evening, not at the
@@ -2695,7 +2719,7 @@ void publishStatusLines() {
            "gap=%lu samples=%lu adv=%lu drop=%lu weak=%lu heap=%lu maxalloc=%lu "
            "heaplow=%lu cstack=%lu ustack=%lu up=%lu maint=%lu ip=%s real=%s "
            "act=%s gaveup=%d attempt=%u retry=%lu mopen=%lu mclose=%lu cal=%s "
-           "batt=%ld battlow=%d sfault=%u hold=%u mute=%u",
+           "batt=%ld battlow=%d sfault=%u ovr=%u mute=%u",
            g_tracker.filteredRssi(), g_tracker.rawRssi(),
            fmt1(g_tracker.distanceM()).c_str(),
            g_tracker.isPresent() ? 1 : 0,
@@ -2782,7 +2806,7 @@ void publishStatusLines() {
            // because it is the one state here that does not expire: a door held
            // CLOSED cannot let an animal in, and the owner of a mounted door
            // has no cable to find that out down.
-           static_cast<unsigned>(g_hold),
+           static_cast<unsigned>(g_override ? 1 : 0),
            // Uploaded so the portal can show it: a muted door and a broken
            // buzzer are indistinguishable from across a yard, and only one of
            // them is worth walking out to.
@@ -3240,7 +3264,7 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
         // Solid normally; a slow wink when HELD, so a glance tells you the door
         // is open because somebody pinned it rather than because the collar is
         // here. Held reads as "mostly on with a gap" — still obviously open.
-        on = (g_hold != 0) ? ((nowMs % 2000) > 250) : true;
+        on = g_override ? ((nowMs % 2000) > 250) : true;
         break;
       case DOOR_CLOSED:
         // Locked reads as a DOUBLE blip, so a glance tells you whether the
@@ -3248,7 +3272,7 @@ void updateLed(uint32_t nowMs, bool scanHealthy) {
         // Held CLOSED is the state worth spotting from across a yard, so it
         // gets the busiest pattern here: a triple blip, distinct from the
         // double blip that means merely locked.
-        on = (g_hold == 2)
+        on = g_override
                  ? ((nowMs % 2000) < 150 ||
                     ((nowMs % 2000) > 300 && (nowMs % 2000) < 450) ||
                     ((nowMs % 2000) > 600 && (nowMs % 2000) < 750))
@@ -3507,51 +3531,27 @@ void serviceMaintenance(uint32_t nowMs) {
 #endif
 }
 
-// Put the door back where a restored hold says it is.
-//
-// Loading g_hold at boot is not enough, and the gap is not cosmetic. A door
-// that reboots while HELD OPEN comes back with the flag set and the door
-// wherever it physically ended up — and because a hold makes the automatic
-// path inert, nothing will move it. "Held open" then means "shut, and the
-// beacon is not allowed to open it", which is the one failure this project
-// engineers against everywhere else. Found the hard way: a power cycle left
-// this door closed, held, and unable to let an animal in.
-//
-// The open/closed asymmetry needs no code here because DoorController::check()
-// already has it: the boot grace is tested BEFORE `force` and only for a
-// CLOSE. So re-asserting OPEN succeeds at once, while re-asserting CLOSED is
-// refused until the grace expires — which is invariant 6 doing its job for a
-// caller that did not have to know about it. Retry until it takes.
-void serviceHoldReassert(uint32_t nowMs) {
-  if (!g_holdReassertPending) return;
-  if (g_hold == 0) { g_holdReassertPending = false; return; }
-
-  // Only a limit switch can say where the door actually is. Without one, do
-  // nothing: re-asserting on a believed state that was never measured would
-  // mean driving the door on a guess, and a wrong guess here closes it.
-  if (!Position::enabled()) { g_holdReassertPending = false; return; }
-
-  const DoorState target = (g_hold == 1) ? DOOR_OPEN : DOOR_CLOSED;
-  const DoorState at = Position::state();
-  if (at == DOOR_UNKNOWN) return;          // debounce has not settled yet
-  if (at == target) {                      // already where it should be
-    g_holdReassertPending = false;
-    return;
+// Record that a person moved this door. One entry point, so a future caller
+// cannot take manual control without the door noticing it has been taken.
+void enterOverride(const char *why, uint32_t nowMs) {
+  if (!g_override) {
+    g_override = true;
+    g_overrideSinceMs = nowMs;
+    BleScanner::storeOverride(true);
+    EventLog::record(LOG_OVERRIDE, 1, g_tracker.filteredRssi());
+    Con.printf("[manual] %s — this door is now under MANUAL control. Nothing "
+               "automatic will open or close it until `door auto`.\r\n", why);
   }
+}
 
-  const ActuationResult r = Actuator::request(target, SRC_REMOTE, nowMs,
-                                             /*force=*/true);
-  if (r != ACT_DONE) return;               // boot grace, busy, lockout: try again
-
-  g_holdReassertPending = false;
-  Con.printf("[hold] restored HELD %s after a restart and the door was %s — "
-             "putting it back.\r\n",
-             holdName(g_hold), DoorController::stateName(at));
-  // Logged as the hold being asserted, not as an ordinary move, so a history
-  // shows the door moved because of a restart rather than because anything
-  // asked it to.
-  EventLog::record(LOG_HOLD, g_hold, g_tracker.filteredRssi());
-  announceMovement(SRC_REMOTE, target);
+void clearOverride(uint32_t nowMs) {
+  if (g_override) {
+    g_override = false;
+    g_overrideSinceMs = 0;
+    BleScanner::storeOverride(false);
+    EventLog::record(LOG_OVERRIDE, 0, g_tracker.filteredRssi());
+    Con.println(F("[manual] released — the beacon controls this door again."));
+  }
 }
 
 void driveDoor(uint32_t nowMs) {
@@ -3568,7 +3568,7 @@ void driveDoor(uint32_t nowMs) {
   // not expire, so it is the one state that can outlast a reboot and a
   // brownout. Checked here rather than inside the open and close paths so that
   // adding a future automatic trigger cannot accidentally bypass it.
-  if (g_hold != 0) return;
+  if (g_override) return;
 
   // Never operate the door without a configured beacon.
   if (!BleScanner::isConfigured()) return;
@@ -3895,7 +3895,8 @@ bool applyRemoteCommand(const char *line, String &result) {
     if (!a) { result = "door needs open or close"; return false; }
     if (strcmp(a, "auto") == 0) {
       g_manualHoldUntilMs = 0;
-      result = "manual hold cleared";
+      clearOverride(millis());
+      result = "manual control released — the beacon decides again";
       return true;
     }
     const bool wantOpen = (strcmp(a, "open") == 0);
@@ -3915,6 +3916,8 @@ bool applyRemoteCommand(const char *line, String &result) {
       return false;
     }
     announceMovement(SRC_REMOTE, want);
+    enterOverride(wantOpen ? "opened from the portal" : "closed from the portal",
+                  millis());
     if (wantOpen) {
       if (MANUAL_HOLD_MS > 0) {
         g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
@@ -3949,9 +3952,9 @@ bool applyRemoteCommand(const char *line, String &result) {
   }
   if (strcmp(verb, "calibrate") == 0) {
     String msg;
-    if (g_hold != 0) {
-      result = String("the door is HELD ") + holdName(g_hold) +
-               " — release it with `unlock` first, calibration has to move it";
+    if (g_override) {
+      result = "this door is under MANUAL control — send `door auto` first, "
+               "calibration has to move the door";
       return false;
     }
     const bool ok = Actuator::startCalibration(millis(), Maintenance::active(millis()), msg);
@@ -4021,9 +4024,7 @@ bool applyRemoteCommand(const char *line, String &result) {
       else if (strcmp(a, "close") == 0 || strcmp(a, "closed") == 0) want = 2;
       else { result = "lock takes nothing, 'open' or 'close'"; return false; }
 
-      g_hold = want;
-      BleScanner::storeHold(want);
-      EventLog::record(LOG_HOLD, want, g_tracker.filteredRssi());
+      enterOverride(want == 1 ? "lock open" : "lock close", millis());
       // Drive it to the held position now rather than waiting for somebody to
       // ask. `force` because the ordinary lockout and "already there" gates
       // would otherwise make this silently do nothing, and a hold that leaves
@@ -4047,11 +4048,10 @@ bool applyRemoteCommand(const char *line, String &result) {
     // `unlock` means "decide for yourself again", so it clears the hold as well
     // as the lock. Clearing only one would leave a door that still refuses to
     // move with nothing on the dashboard obviously set.
-    if (!want && g_hold != 0) {
-      g_hold = 0;
-      BleScanner::storeHold(0);
-      EventLog::record(LOG_HOLD, 0, g_tracker.filteredRssi());
-    }
+    // `unlock` means "decide for yourself again", so it also hands manual
+    // control back. Clearing one and not the other would leave a door that
+    // still refuses to move with nothing obviously set.
+    if (!want) clearOverride(millis());
     g_locked = want;
     BleScanner::storeLock(want);
     if (want) {
@@ -4288,7 +4288,6 @@ void controlTask(void *) {
     updateVibrationNoise(now);
     updateReedAgreement(now);
     updateSensorFaultBeep(now);
-    serviceHoldReassert(now);
     driveDoor(now);
     updateLed(now, scanHealthy);
     updateChime(now);
@@ -4307,7 +4306,7 @@ void controlTask(void *) {
     // vibration count or a limit-switch arrival missed because the WiFi task
     // had the antenna would turn a good travel into a reported stall — which
     // for a close means reversing a door that was closing perfectly well.
-    // `g_hold` short-circuits this for the same reason `Maintenance::active`
+    // `g_override` short-circuits this for the same reason `Maintenance::active`
     // does, and the symmetry is the point: both make the automatic path inert,
     // so both remove the reason the clause below exists.
     //
@@ -4322,7 +4321,7 @@ void controlTask(void *) {
     // calls in on the 30-minute heartbeat instead of every 5 — it goes
     // half-deaf to commands at exactly the moment the only way to release it
     // is to send it one. Found on a door held open that stopped answering.
-    const bool idle = (Maintenance::active(now) || g_hold != 0 ||
+    const bool idle = (Maintenance::active(now) || g_override ||
                        (!g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
                         g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen())) &&
                       !Actuator::busy();
@@ -4486,11 +4485,10 @@ void setup() {
   // not open for the collar is exactly the thing someone needs to be told
   // about before they start wondering why the animal is outside.
   Chime::setMuted(BleScanner::loadStoredMute());
-  g_hold = BleScanner::loadStoredHold();
+  g_override = BleScanner::loadStoredOverride();
   // A restored hold has to be ACTED on, not merely remembered. See
   // serviceHoldReassert() for why this is the difference between "held open"
   // and "shut, and nothing will ever open it".
-  g_holdReassertPending = (g_hold != 0);
   g_locked = BleScanner::loadStoredLock();
   if (g_locked) {
     Con.println(F("  !! THIS DOOR IS LOCKED — the beacon cannot open it"));

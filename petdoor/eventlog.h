@@ -105,8 +105,13 @@ enum LogEventType : uint8_t {
   // indistinguishable from the rest. The status line carries the CURRENT state
   // correctly, but a status line is not a history.
   LOG_SENSOR_CLEARED = 16,
-  // The position hold was set or released. `detail` is the DoorHold value:
-  // 0 = released, 1 = held OPEN, 2 = held CLOSED.
+  // Manual control was taken or handed back. detail: 1 = taken, 0 = released.
+  //
+  // Replaced a "hold" that recorded a POSITION to assert. Storing a target was
+  // the mistake: a door moved by hand, or rebooted, came back with the flag
+  // claiming one thing and the door doing another. This records only that a
+  // person acted; where the door IS comes from its limit switches, so the two
+  // cannot disagree.
   //
   // Logged, and not merely reflected in the status line, because this is a
   // state somebody CHOSE and may forget. The status line says what is true now;
@@ -114,7 +119,7 @@ enum LogEventType : uint8_t {
   // is the first question worth asking about a door that has not moved in two
   // days. A held-CLOSED door in particular cannot let an animal in, and the
   // moment that began is the thing you want timestamped.
-  LOG_HOLD = 17,
+  LOG_OVERRIDE = 17,
 };
 
 // Which sensor, and how it failed. Each is diagnosed by cross-checking against

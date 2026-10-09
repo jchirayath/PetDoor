@@ -4,7 +4,7 @@
 // sitting correctly in the database.
 const EV={OPEN:"came in",CLOSE:"went out",BOOT:"restarted",REFUSED:"refused",FIX_GOT:"beacon found",FIX_LOST:"beacon lost",STALLED:"did not complete its travel",
   UNCOMMANDED:"moved, not by PetDoor",RETRY:"pressed again",GAVE_UP:"gave up closing",WAKE:"woke the controller",NO_MOVE:"did not move at all",
-  MAINT:"maintenance mode",HOLD:"held in position",CONSOLE:"network console",BEACON_LOW:"beacon battery",SENSOR_FAULT:"sensor fault",SENSOR_OK:"sensor recovered"};
+  MAINT:"maintenance mode",MANUAL:"under manual control",CONSOLE:"network console",BEACON_LOW:"beacon battery",SENSOR_FAULT:"sensor fault",SENSOR_OK:"sensor recovered"};
 // The fallback is the type string as uploaded, so it is escaped: it reaches
 // innerHTML, and a signed upload is still not a reason to trust its markup.
 const escHtml=v=>String(v==null?"":v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -47,8 +47,14 @@ const SRC={0:"beacon",1:"console",2:"network",3:"fail-safe reversal"};
    OPEN states something true and useless, next to the thing that is actually
    governing, which reads as a contradiction. */
 function governingPill(st){
-  if(st.hold==="2") return `<span class="pill lock">HELD CLOSED — will not open</span>`;
-  if(st.hold==="1") return `<span class="pill lock">HELD OPEN — will not close</span>`;
+  // Manual control first: it overrides everything else and, unlike the others,
+  // says nothing about WHERE the door is — the door's own switches do that, so
+  // the pill names the position rather than asserting one.
+  if(st.ovr==="1"){
+    const where=(st.real||st.door||"").toUpperCase();
+    const w=where==="OPEN"?"open":where==="CLOSED"?"closed":"between ends";
+    return `<span class="pill lock">MANUAL — door ${w}, automation off</span>`;
+  }
   const maint=Number(st.maint||0)||0;
   if(maint>0) return `<span class="pill lock">MAINTENANCE — ${Math.ceil(maint/60)} min left</span>`;
   if(st.locked==="1") return `<span class="pill lock">LOCKED — collar cannot open it</span>`;
@@ -322,10 +328,9 @@ function renderTable(){
      else if(e.type==="REFUSED") d=REFUSE[e.detail]||("reason "+e.detail);
      else if(e.type==="UNCOMMANDED") d=uncommandedDetail(e);
      else if(e.type==="OPEN"||e.type==="CLOSE") d=SRC[e.detail]||("source "+e.detail);
-     else if(e.type==="HOLD") d=e.detail===2
-          ? `<strong data-u="c-fault">HELD CLOSED — an animal outside cannot get in</strong>`
-          : e.detail===1 ? "held OPEN — nothing automatic will close it"
-                         : "released — the door decides for itself again";
+     else if(e.type==="MANUAL") d=e.detail===1
+          ? `<strong data-u="c-fault">a person took control — nothing automatic will move this door</strong>`
+          : "released — the door decides for itself again";
      if(e.type==="BOOT"&&e.detail===9) d=`<strong data-u="c-fault">${d}</strong>`;
      // A fail-safe reversal is not an ordinary open: it says a close STALLED.
      if((e.type==="OPEN"||e.type==="CLOSE")&&e.detail===3) d=`<strong data-u="c-fault">${d}</strong>`;
@@ -922,7 +927,7 @@ function renderControl(){
   // Seconds left in a maintenance window; absent on firmware older than this
   // field, which reads as 0 and simply offers to start one.
   const maintLeft=Number(st.maint||0)||0;
-  const holdOn=st.hold==="1"||st.hold==="2";
+  const holdOn=st.ovr==="1";
   const stand=doorStanding(d);
 
   // Disabled rather than hidden when it would be a no-op: a button that
@@ -947,9 +952,9 @@ function renderControl(){
     // and held-closed confirms in the strongest terms the dialog allows,
     // because nothing about it expires.
     +group("Hold position",
-        `<button class="b-outline" data-cmd="lock open" data-confirm="Hold the door OPEN? It will open now and nothing automatic will close it again — not the collar, not the close dwell, not the schedule. This SURVIVES A REBOOT and does not expire. Release it with Unlock.">Hold open</button>`
-       +`<button class="act-lock" data-cmd="lock close" data-confirm="Hold the door CLOSED? An animal outside WILL NOT BE ABLE TO GET IN, and nothing will correct that — this does not expire and survives a reboot and a power cut. Only you can release it, with Unlock. Are you sure?">Hold closed</button>`
-       +(holdOn?`<button class="b-quiet" data-cmd="unlock">Release hold</button>`:""))
+        `<button class="b-outline" data-cmd="lock open" data-confirm="Open the door and take manual control? It opens now, and nothing automatic will move it again — not the collar, not the close dwell, not the schedule. This SURVIVES A REBOOT. Hand it back with Auto.">Hold open</button>`
+       +`<button class="act-lock" data-cmd="lock close" data-confirm="Close the door and take manual control? An animal outside WILL NOT BE ABLE TO GET IN, and nothing will correct that. This survives a reboot and a power cut. Hand it back with Auto. Are you sure?">Hold closed</button>`
+       +(holdOn?`<button class="b-quiet" data-cmd="door auto">Back to auto</button>`:""))
     +group("Sound",
         b("mute","Mute","b-quiet",st.mute==="1")
        +b("unmute","Unmute","b-quiet",st.mute!=="1"))
