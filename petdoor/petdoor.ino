@@ -2037,6 +2037,16 @@ void handleSerial(uint32_t nowMs) {
       }
       case 'C': {
         String msg;
+        // Calibration drives the door twice with force=true, which would walk
+        // it straight out of the position it was pinned in and leave the hold
+        // claiming something untrue. Refused rather than silently winning.
+        if (g_hold != 0) {
+          Con.printf("[cal] refused: the door is HELD %s. Release it with "
+                     "'unlock' first — calibration has to move the door.\r\n",
+                     holdName(g_hold));
+          Chime::play(CHIME_REFUSED);
+          break;
+        }
         const bool ok = Actuator::startCalibration(nowMs, Maintenance::active(nowMs), msg);
         Con.printf("[cal] %s\r\n", msg.c_str());
         if (!ok) Chime::play(CHIME_REFUSED);
@@ -3879,6 +3889,11 @@ bool applyRemoteCommand(const char *line, String &result) {
   }
   if (strcmp(verb, "calibrate") == 0) {
     String msg;
+    if (g_hold != 0) {
+      result = String("the door is HELD ") + holdName(g_hold) +
+               " — release it with `unlock` first, calibration has to move it";
+      return false;
+    }
     const bool ok = Actuator::startCalibration(millis(), Maintenance::active(millis()), msg);
     result = msg;
     return ok;
@@ -4215,7 +4230,22 @@ void controlTask(void *) {
     // vibration count or a limit-switch arrival missed because the WiFi task
     // had the antenna would turn a good travel into a reported stall — which
     // for a close means reversing a door that was closing perfectly well.
-    const bool idle = (Maintenance::active(now) ||
+    // `g_hold` short-circuits this for the same reason `Maintenance::active`
+    // does, and the symmetry is the point: both make the automatic path inert,
+    // so both remove the reason the clause below exists.
+    //
+    // That clause protects BLE sampling — it refuses to spend radio time on
+    // WiFi while the door is OPEN, because an open door means the animal is
+    // out and the scan has to stay sharp enough to notice it coming back.
+    // Under a hold nothing can act on that observation: the beacon cannot
+    // close the door, and will not until somebody releases it. So the sampling
+    // is being protected for a decision that cannot be taken.
+    //
+    // Without this a HELD OPEN door is never idle, and therefore only ever
+    // calls in on the 30-minute heartbeat instead of every 5 — it goes
+    // half-deaf to commands at exactly the moment the only way to release it
+    // is to send it one. Found on a door held open that stopped answering.
+    const bool idle = (Maintenance::active(now) || g_hold != 0 ||
                        (!g_tracker.isPresent() && g_door.state() != DOOR_OPEN &&
                         g_entry == ENTRY_NONE && !WifiLogger::otaWindowOpen())) &&
                       !Actuator::busy();

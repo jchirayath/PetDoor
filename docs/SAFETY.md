@@ -338,6 +338,10 @@ way it can:
 | the boot banner | stated on every restart |
 | the log | a `HOLD` event, so the moment it began is timestamped |
 
+**Calibration is refused while a hold is set.** `calibrate` drives the door
+twice, which would walk it straight out of the position you pinned it in and
+leave the hold claiming something untrue. Release the hold first.
+
 **Use `lock open` freely; treat `lock close` as a tool you are holding.** An open
 door is the safe failure — the animal can always get through it. A closed one is
 not, which is why only one of the two shouts at you.
