@@ -197,6 +197,30 @@ RESET_REASON = {1: "power-on", 3: "software", 4: "panic", 5: "interrupt watchdog
 # 3 is not an ordinary movement: the firmware reverses a stalled close by itself,
 # so a "fail-safe reversal" in this column is the visible trace of a close that
 # did not complete. Rendered loudly for that reason.
+# HOW manual control was taken: OverrideSource in petdoor/eventlog.h, carried
+# in a MANUAL event's spare column.
+#
+# 0 means NOT RECORDED, not "unknown source" — every MANUAL row written before
+# the firmware carried this has 0 there, and rendering it as a real source
+# would invent a fact about history. Same rule as the actuation details below.
+OVERRIDE_SOURCE = {
+    1: ("at the console", "somebody standing at the door with a cable"),
+    2: ("from the dashboard", "a command sent over the network"),
+    3: ("BY HAND — the door was physically moved",
+        "a travel nothing commanded: the door is no longer where it was left. "
+        "The limit switches and the vibration sensor saw it move; nothing "
+        "asked it to"),
+    4: ("by a position hold", "`lock open` or `lock close`"),
+}
+
+
+def override_source(src):
+    """(what, why) for a MANUAL event's spare column, or None if not recorded."""
+    if not src:
+        return None
+    return OVERRIDE_SOURCE.get(src)
+
+
 ACT_SOURCE = {0: "beacon", 1: "console", 2: "network",
               3: "fail-safe reversal"}
 
@@ -1170,17 +1194,37 @@ def notify_events(device, rows):
             # reason an abnormal reset does: the cost lands on an animal that
             # cannot report it, and unlike every other state this door can be
             # left in, this one never expires.
+            # Say HOW, when the door told us. A door moved BY HAND is a
+            # different message from one somebody opened on the dashboard, and
+            # conflating them is what let a hand on the door get reported as a
+            # sensor that had "stopped telling the truth".
+            how = override_source(r["src"] if "src" in r.keys() else 0)
+            by_hand = how is not None and r["src"] == 3
+            rows = [("door", device),
+                    ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))]
+            if how:
+                rows.insert(1, ("how", how[0]))
             ok, why = send_notification(
                 f"door is under MANUAL control on {device}",
-                title="Somebody took control of this door",
-                lede="Nothing automatic will open or close it — not the collar, "
-                     "not the close dwell, not the schedule — and this survives "
-                     "a reboot.",
-                rows=[("door", device),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="Send `door auto` to hand it back. You will be reminded "
-                     "while it stays set, because manual control does not end by "
-                     "itself the way a maintenance window does.",
+                title=("This door was moved by hand"
+                       if by_hand else "Somebody took control of this door"),
+                lede=(("The door is no longer where it was left — a travel "
+                       "nothing commanded. It is now under MANUAL control, so "
+                       "nothing automatic will move it: not the collar, not the "
+                       "close dwell, not the schedule. This survives a reboot.")
+                      if by_hand else
+                      ("Nothing automatic will open or close it — not the "
+                       "collar, not the close dwell, not the schedule — and "
+                       "this survives a reboot.")),
+                rows=rows,
+                note=(("The sensors saw this: a limit switch measured it, or "
+                       "the vibration sensor felt the travel. Nothing is wrong "
+                       "with the hardware. Send `door auto` to hand the door "
+                       "back, and you will be reminded while it stays set.")
+                      if by_hand else
+                      ("Send `door auto` to hand it back. You will be reminded "
+                       "while it stays set, because manual control does not end "
+                       "by itself the way a maintenance window does.")),
                 accent="bad")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for hold closed: {why}\n")
@@ -1568,8 +1612,14 @@ def render():
             detail = ('<strong style="color:var(--bad)">relay fired, door never moved</strong>')
         elif r["type"] == "MANUAL":
             if r["detail"] == 1:
+                # The spare column says HOW. Rows written before the firmware
+                # carried it have 0 and must stay unannotated rather than being
+                # attributed to a channel that was never recorded.
+                how = override_source(r["src"] if "src" in r.keys() else 0)
                 detail = ('<strong style="color:var(--bad)">a person took '
                           "control — nothing automatic will move this door</strong>")
+                if how:
+                    detail += f' <span class="muted">({how[0]})</span>'
             else:
                 detail = "released — the door decides for itself again"
         elif r["type"] == "MAINT":

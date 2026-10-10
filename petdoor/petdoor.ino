@@ -124,7 +124,7 @@ void printScheduleMenu();
 bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message);
 // Defined below, used by the console keys and the uncommanded-travel path
 // above it. Declared here for the same reason beginMaintenance is.
-void enterOverride(const char *why, uint32_t nowMs);
+void enterOverride(const char *why, uint32_t nowMs, uint8_t src);
 void clearOverride(uint32_t nowMs);
 void endMaintenance(String &message);
 void publishStatusLines();
@@ -2029,7 +2029,7 @@ void handleSerial(uint32_t nowMs) {
           break;
         }
         announceMovement(SRC_MANUAL, DOOR_OPEN);
-        enterOverride("opened at the console", nowMs);
+        enterOverride("opened at the console", nowMs, OVR_SRC_CONSOLE);
         if (MANUAL_HOLD_MS > 0) {
           g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
           if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;  // 0 means "off"
@@ -2060,7 +2060,7 @@ void handleSerial(uint32_t nowMs) {
           break;
         }
         announceMovement(SRC_MANUAL, DOOR_CLOSED);
-        enterOverride("closed at the console", nowMs);
+        enterOverride("closed at the console", nowMs, OVR_SRC_CONSOLE);
         break;
       }
       case 'C': {
@@ -2356,7 +2356,8 @@ void updateVibrationNoise(uint32_t nowMs) {
   const SensorVerdict verdict =
       judgeIdleNoise(seen, VIBRATION_IDLE_NOISE_PULSES,
                      g_lastKnownEnd != g_vibIdleEndAtStart, g_vibRunsThisWindow,
-                     g_vibRunRanAway, g_sensorFault == SF_VIBRATION_NOISY);
+                     g_vibRunRanAway, g_vibRunActive,
+                     g_sensorFault == SF_VIBRATION_NOISY);
 
   if (verdict == SV_RAISE) {
     // The explanation once, the measurement every window.
@@ -2690,7 +2691,7 @@ void updatePosition(uint32_t nowMs) {
       // travel is a person. On a door where that is not true this would be the
       // wrong rule, because a gust would silently stop the door working; see
       // docs/SAFETY.md.
-      enterOverride("the door was moved by hand", millis());
+      enterOverride("the door was moved by hand", millis(), OVR_SRC_BY_HAND);
 #if PETDOOR_ENABLE_WIFI
       // Worth a radio burst of its own. A door moving by itself is the kind of
       // thing you want to find in the dashboard the same evening, not at the
@@ -3543,12 +3544,16 @@ void serviceMaintenance(uint32_t nowMs) {
 
 // Record that a person moved this door. One entry point, so a future caller
 // cannot take manual control without the door noticing it has been taken.
-void enterOverride(const char *why, uint32_t nowMs) {
+void enterOverride(const char *why, uint32_t nowMs, uint8_t src) {
   if (!g_override) {
     g_override = true;
     g_overrideSinceMs = nowMs;
     BleScanner::storeOverride(true);
-    EventLog::record(LOG_OVERRIDE, 1, g_tracker.filteredRssi());
+    // `src` rides in the spare column so the email can say HOW this happened.
+    // A hand on the door and a press on the dashboard are the same flag here
+    // and very different things to be told about — see OverrideSource.
+    EventLog::record(LOG_OVERRIDE, 1, g_tracker.filteredRssi(),
+                     static_cast<int16_t>(src));
     Con.printf("[manual] %s — this door is now under MANUAL control. Nothing "
                "automatic will open or close it until `door auto`.\r\n", why);
   }
@@ -3935,7 +3940,7 @@ bool applyRemoteCommand(const char *line, String &result) {
     }
     announceMovement(SRC_REMOTE, want);
     enterOverride(wantOpen ? "opened from the portal" : "closed from the portal",
-                  millis());
+                  millis(), OVR_SRC_PORTAL);
     if (wantOpen) {
       if (MANUAL_HOLD_MS > 0) {
         g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
@@ -4042,7 +4047,7 @@ bool applyRemoteCommand(const char *line, String &result) {
       else if (strcmp(a, "close") == 0 || strcmp(a, "closed") == 0) want = 2;
       else { result = "lock takes nothing, 'open' or 'close'"; return false; }
 
-      enterOverride(want == 1 ? "lock open" : "lock close", millis());
+      enterOverride(want == 1 ? "lock open" : "lock close", millis(), OVR_SRC_LOCK);
       // Drive it to the held position now rather than waiting for somebody to
       // ask. `force` because the ordinary lockout and "already there" gates
       // would otherwise make this silently do nothing, and a hold that leaves

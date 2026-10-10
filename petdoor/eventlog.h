@@ -122,6 +122,31 @@ enum LogEventType : uint8_t {
   LOG_OVERRIDE = 17,
 };
 
+// HOW manual control was taken, in a LOG_OVERRIDE's spare column.
+//
+// "Somebody took control" and "the wind, an animal or a person shoved the
+// door" are the same flag in the firmware and very different things to read in
+// an email at midnight. Without this the only place the distinction existed
+// was the console, which on a mounted door nobody is attached to — a sensor
+// fault got blamed for a hand on the door because the hand left no trace any
+// sink carried.
+//
+// `OVR_SRC_UNRECORDED = 0` is load-bearing: every LOG_OVERRIDE already in a
+// log server's database has 0 in that column, and it must keep meaning "not
+// recorded" rather than being rendered as one of the real sources. Same rule
+// as invariants 17 and 20 — adding a value must not re-label history.
+enum OverrideSource : uint8_t {
+  OVR_SRC_UNRECORDED = 0,
+  OVR_SRC_CONSOLE = 1,
+  OVR_SRC_PORTAL = 2,
+  // A travel nothing commanded: the door is not where it was left. On this
+  // door that means a hand, because the flap is a motorised vertical panel
+  // that wind cannot blow and an animal cannot push — see invariant 24, which
+  // says to re-examine that assumption before copying the rule.
+  OVR_SRC_BY_HAND = 3,
+  OVR_SRC_LOCK = 4,
+};
+
 // Which sensor, and how it failed. Each is diagnosed by cross-checking against
 // the other sensor, so these name a part rather than a symptom.
 enum SensorFault : uint8_t {

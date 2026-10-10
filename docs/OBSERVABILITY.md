@@ -69,12 +69,12 @@ Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
 | `NO_MOVE` | ✓ | ✓ | ✓ | — | ! nothing moved, so nothing is trapped |
 | `STALLED` | ✓ | ✓ (5 fast — most urgent) | ✓ | — | ✓ rate-limited |
 | `GAVE_UP` | ✓ | ✓ | ✓ | `gaveup` | ✓ **never** rate-limited |
-| `UNCOMMANDED` | ✓ | ✓ | ✓ | — | ! most are a hand on the door |
+| `UNCOMMANDED` | ✓ | ✓ | ✓ | — | ! not directly — but it takes manual control, and that `MANUAL` mails as **moved by hand** |
 | `SENSOR_FAULT` | ✓ | ✓ **repeats** every 15 min | ✓ | `sfault` | ✓ |
 | `SENSOR_OK` | ✓ | — | ✓ | `sfault=0` | ✓ **only if the fault emailed** |
 | `BEACON_LOW` | ✓ | — | ✓ | `battlow` | ✓ on the falling edge |
 | `MAINT` | ✓ | — | ✓ | `maint` | ✓ |
-| `MANUAL` | ✓ (and in the boot banner) | — | ✓ | `ovr` | ✓ **on arrival, no cooldown, and repeated for as long as it lasts** |
+| `MANUAL` | ✓ (and in the boot banner) | — | ✓ **with HOW in the spare column** | `ovr` | ✓ **on arrival, no cooldown, and repeated for as long as it lasts** — titled *"This door was moved by hand"* when the source is a hand |
 | `CONSOLE` | ✓ | — | ✓ | — | ✓ — a network console can open the door |
 | `FIX_GOT` / `FIX_LOST` | ✓ | — | ✓ | `present` | ! several a day |
 | *door goes silent* | n/a | n/a | n/a | n/a | ✓ server-side watchdog, 2 h, plus one recovery mail |
@@ -120,3 +120,30 @@ the reasoning is in the right-hand column; a new row needs the same.
 
 If the answer to 4 is "no" and the answer to 1 is "yes", stop and check you are not
 about to repeat the `drop=` mistake: console-only means invisible on a mounted door.
+
+## A worked example of getting this wrong
+
+On 2026-10-10 the reference door was moved by hand. A limit switch measured it.
+What the owner received was an email headed **"A door sensor has stopped telling
+the truth"**, advising them to check a connector and a magnet-to-reed gap that
+were both fine.
+
+Two separate failures produced it, and they are worth keeping as a pair because
+neither alone would have:
+
+1. **A verdict that could fire mid-travel.** `judgeIdleNoise()` stood down for a
+   commanded travel (`Actuator::busy()` invalidates the window before it opens)
+   and for a *concluded* run, but not for one still in flight. Mid-move the door
+   has left one end and not reached the other, so `endChanged` was false and
+   `runs` was 0 while the sensor correctly reported 12,642 real edges. The window
+   expired one second before the switch confirmed the door had moved.
+2. **The right answer reached no sink a person reads.** The door *did* know: it
+   logged `UNCOMMANDED` and took manual control. But `enterOverride()`'s reason
+   string — "the door was moved by hand" — went only to the console, and the
+   door was on a bench with nobody attached to it. `LOG_OVERRIDE` carried no
+   source, so the email could not tell a hand from a dashboard press.
+
+The second is this file's own failure mode, and the fourth instance of it: the
+door knew something and the only sink carrying it was one nobody was reading.
+Ask the five questions above for the *explanation* of an event, not just for the
+event — "which sink says WHY" is the one that was missed here.
