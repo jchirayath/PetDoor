@@ -192,6 +192,27 @@ was "about eight seconds after collecting an `ota` command", and it means the
 suspect is the same `radioUp()`-plus-listening-socket path a maintenance window
 takes — not the image transfer.
 
+**2026-10-10: three OTA pushes, no panic — and the firmware had changed.** The
+morning after the cluster above, the whole OTA path was exercised deliberately
+with a cable attached and the console captured throughout: five windows opened,
+eight authentications rejected (a wrong password), and **three complete ~1.4 MB
+pushes**, each rebooting the door and self-confirming. Boots #1057, #1058 and
+#1059 all arrived over the air. No panic at any point, and boot #1056 ran
+**15.5 hours** clean through two of those windows.
+
+So the provocation that looked reliable on 9 Oct did not reproduce at all on
+10 Oct. The obvious confound is that the firmware is not the same: every
+panicking boot (#1049–#1052) predates the manual-override rework, and everything
+from #1054 on is the rebuilt code, which among other things **deleted
+`serviceHoldReassert()`**. That is a candidate, not a cause — nothing here
+isolates it, and a periodic re-assert interacting with the radio is a guess.
+
+**Do not close this entry on that.** Two theories on this door have already died
+on n=2, and "it stopped happening after we changed something" is the weakest
+evidence shape there is. What would actually settle it is a long clean run on
+the current build — days, not hours — and if a panic does recur, the console is
+the only place the backtrace exists.
+
 **It is not deterministic, though, so do not over-read the table.** On 9 Oct
 boot #1056 was given two full 300 s OTA windows — 600 s with the radio up and a
 socket listening, both opened the same way — with no panic and free heap flat at
