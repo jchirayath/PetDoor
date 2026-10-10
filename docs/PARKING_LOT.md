@@ -145,13 +145,75 @@ for it, only an absence of coverage.
 and a USB flash each restarted the door, and each one postponed the very failure
 being hunted. Once a watch is running, leave the door alone.
 
+### The radio-up correlation, measured per boot (9 Oct)
+
+The whole history is in the server's database, so the association can be counted
+rather than argued about. Every panic in the NimBLE era, with whatever brought
+the radio up during the boot it terminated:
+
+| boot that died | duration | radio activity in it |
+|---|---|---|
+| #1036 | 0.0 h | none found — but only 2 events uploaded, so weak either way |
+| #1041 | 0.5 h | **MAINT ×2**, no OTA |
+| #1049 | 15.0 h | **OTA ×5** |
+| #1050 | 1.1 h | **OTA ×2** |
+| #1051 | 0.0 h | **OTA ×1** — one event logged, then gone |
+| #1052 | 0.2 h | **OTA ×1** |
+
+Five of six had a radio-up event, and #1049–#1052 are four **consecutive** panics
+during an evening of repeated pushes. That is far stronger than the single
+coincidence this entry once dismissed.
+
+**But the control group refuses the simple reading.** Boot **#1044 ran 20.1 hours
+clean with `ota=1 maint=2`**, and #1045 and #1048 also took OTA commands and did
+not panic. So OTA is neither necessary (#1041 had only maintenance windows) nor
+sufficient (#1044 survived both).
+
+**The honest framing is therefore the shared path, not the feature.** A
+maintenance window and an OTA window both call `radioUp()` and both leave a
+socket listening; #1041 is the boot that separates "OTA" from "the radio and a
+listening socket", and it points at the latter. That is what the
+`panic-ota-correlation` branch argues, and this is the evidence for it.
+
+**And radio-up alone is not enough either.** On 9 Oct boot #1056 was given two
+full 300 s OTA windows — 600 s with the radio up and a socket listening — with
+**no push**, and did not panic; free heap sat flat at ~119.5 KB. So the suspicion
+now falls on the **transfer itself** rather than the window, which is a much
+narrower thing to go looking at. One unpushed boot is n=1; do not promote it.
+
+**Re-run the count instead of trusting this table.** It took one query, and the
+numbers move every time the door reboots:
+
+```bash
+# on the log-server VM, against /data/petdoor.sqlite3 in the container
+sudo docker exec -i podcast-petdoor-1 python3 -I /tmp/panic-correlation.py
+```
+
+Join `events` (a `BOOT` row's `detail` is the reset reason) to `commands`
+(`delivered` timestamps) over each boot's `MIN(epoch)`/`MAX(epoch)` span. Two
+traps: a `BOOT` row's own `epoch` is useless because the clock is not synced that
+early, so bound each boot by the span of all its events; and **the September
+panics are a different fault** — the Bluedroid heap exhaustion that made NimBLE
+the default — so filter to ~#1036 and later or the counts are meaningless.
+
 **Still blocked on:** a backtrace. It exists only on the serial console, so it
 needs a cable attached at the moment it happens. The cable was deliberately kept
 on rather than mounting the door, precisely to catch the next one. There is no
 bound on that wait — the uptime theory that appeared to give one is dead — so the
-practical move is to make the fault more likely rather than to sit and watch: run
-the door for a long stretch with the collar **close**, which is the one condition
-the clean 16.4-hour boot never reproduced.
+practical move is to make the fault more likely rather than to sit and watch.
+
+**The best provocation now is a push, not patience.** Boot #1051 panicked with a
+single event logged, right after collecting an `ota` command, so the fault can
+arrive in seconds rather than hours. The experiment that costs nothing is
+therefore: cable attached, console captured across the whole operation, and push
+a real image over OTA. Two windows were opened on 9 Oct with the console held
+open and nothing to show, because neither was actually pushed to — opening the
+window is not the test.
+
+The older candidate, **sustained uptime with the collar close**, is still
+uncovered and still worth doing; it is simply slower. Boot #1044's clean 20 hours
+had the beacon at ~4 m, while #1041 had it at ~0.4 m producing hundreds of
+samples a minute.
 
 ---
 
