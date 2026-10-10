@@ -161,6 +161,37 @@ things about it that cost time to learn:
   open or shut. A session was spent watching a window that had in fact opened on
   time and acked `applied`. **Use `espota.py` itself as the probe**, in a retry
   loop: its own handshake is the only honest test of whether the window is up.
+* **`espota.py`'s EXIT STATUS IS NOT A SUCCESS SIGNAL — in either direction.**
+  It reports `No response from device after upload completion` and says so
+  itself: *"This could indicate device reboot (normal) or network issues"*. The
+  door reboots the instant it has written the image, so espota often never gets
+  its final reply. Measured 2026-10-10 on two consecutive, equally successful
+  pushes: one exited **1**, the next exited **0**. This is the mirror image of
+  the `| grep -q Wrote` trap above, and the lesson is the opposite one: for a
+  `compile --upload` over the cable the exit status is authoritative, and for
+  `espota.py` it is not.
+
+  **What IS authoritative:** `[ota] written; rebooting into the new firmware`
+  followed by `[ota] image confirmed good` on the console, or — on a mounted
+  door with no cable — the **boot number incrementing** on the log server
+  (`--doors`). Prefer the boot number to the build string, for the reason in
+  the next bullet.
+
+* **The OTA window is REFUSED while the beacon is present**, and this is the
+  one that will waste an afternoon on a mounted door. `beginOtaWindow()` checks
+  `petPresent` and declines with *"the beacon is present. An update reboots the
+  door and shares the radio — wait until they are away."* It is correct — an
+  update reboots a door an animal may be standing in — but it means a door that
+  cannot be flashed is usually a door with the collar nearby, not a broken OTA.
+  The other three refusals are no `WIFI_SSID`, an empty `OTA_PASSWORD` (OTA is
+  disabled without one), and a window already open.
+
+* **Neither a lock nor manual control blocks OTA.** Verified on a door that was
+  simultaneously LOCKED, under MANUAL and OPEN: it collected a queued `ota` in
+  173 s and opened the window. `g_override` is in the idle test precisely so a
+  held door keeps calling in on the fast cadence instead of the 30-minute
+  heartbeat.
+
 * **The build timestamp the dashboard shows does NOT tell you which source the
   image was built from.** `PETDOOR_BUILD` is `__DATE__ " " __TIME__`, and the
   copy the server sees is the one baked into `wifi_logger.cpp`, as the
