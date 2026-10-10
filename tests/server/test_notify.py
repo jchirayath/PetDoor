@@ -612,6 +612,87 @@ def test_override_source_covers_every_source_the_firmware_can_send():
           f"OVERRIDE_SOURCE covers every non-zero OVR_SRC_* (missing {missing})")
 
 
+def test_a_hand_move_mails_even_when_the_door_is_already_manual():
+    """The half of the 10 Oct incident the first fix did not reach.
+
+    enterOverride() is guarded by `if (!g_override)`, so a hand-move on a door
+    ALREADY under manual control writes no MANUAL event — and the MANUAL mail
+    was the only thing saying "moved by hand". On the reference door control had
+    been taken at the console at 16:31 and the hand-move happened at 16:38, so
+    the only mail that arrived was a sensor fault blaming the hardware.
+
+    UNCOMMANDED therefore mails on its own merits. It is the event the firmware
+    records unconditionally, so it is the one that cannot be swallowed.
+    """
+    SENT.clear()
+    srv._notified_at.clear()
+    seed_device("already-manual", int(time.time()))
+    # Control taken at the console first: this is what used to swallow it.
+    srv.notify_events("already-manual", [
+        {"type": "MANUAL", "detail": 1, "uptime": 485, "boot": 1059,
+         "rssi": -60, "src": 1},
+    ])
+    SENT.clear()
+    srv.notify_events("already-manual", [
+        {"type": "UNCOMMANDED", "detail": 1, "uptime": 919, "boot": 1059,
+         "rssi": -60, "src": 0},
+    ])
+    check(len(SENT) == 1,
+          f"a hand-move on an already-manual door still mails (got {len(SENT)})")
+    _sub, kw = SENT[0]
+    check("not where it was left" in kw["title"],
+          f"and says the door moved (got {kw['title']!r})")
+    blob = " ".join([kw.get("lede", ""), kw.get("note", "")]
+                    + [str(v) for _k, v in kw.get("rows", [])])
+    check("MEASURED" in blob,
+          "naming the evidence, because a switch saw this one")
+    check("sensors are working" in blob,
+          "and saying the hardware is fine, which is the bug it replaces")
+
+
+def test_an_inferred_uncommanded_move_is_not_mailed_as_measured():
+    """Invariant 20 in the mail, not just the table.
+
+    detail 11/12 mean the travel was INFERRED from how long the vibration
+    sensor felt movement, on a door whose switches could not see it. An email
+    that renders that identically to a measurement turns one into the other.
+    """
+    SENT.clear()
+    srv._notified_at.clear()
+    seed_device("inferred-mail", int(time.time()))
+    srv.notify_events("inferred-mail", [
+        {"type": "UNCOMMANDED", "detail": 12, "uptime": 50, "boot": 4,
+         "rssi": -60, "src": 12500},
+    ])
+    check(len(SENT) == 1, "an inferred move mails")
+    _sub, kw = SENT[0]
+    blob = " ".join([str(v) for _k, v in kw.get("rows", [])])
+    check("INFERRED" in blob, f"named as inferred (got {blob!r})")
+    check("MEASURED" not in blob, "and never as measured")
+    check("12.5 s" in blob, "with the duration it was inferred from")
+    check("CLOSED" in kw["title"] + blob, "and the end it reached")
+
+
+def test_uncommanded_mail_is_rate_limited():
+    """A controller with a mode of its own must not flood the inbox.
+
+    The vendor controller was watched leaving the open limit twice, ~15 s after
+    arriving, with nothing driving it. Unlike the MANUAL mail this one is
+    therefore on a cooldown.
+    """
+    SENT.clear()
+    srv._notified_at.clear()
+    seed_device("flood", int(time.time()))
+    for i in range(4):
+        srv.notify_events("flood", [
+            {"type": "UNCOMMANDED", "detail": 1, "uptime": 100 + i, "boot": 7,
+             "rssi": -60, "src": 0},
+        ])
+    check(len(SENT) == 1,
+          f"four uncommanded moves in a row send one mail (got {len(SENT)})")
+
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -642,6 +723,9 @@ def main():
     test_a_hand_on_the_door_is_mailed_as_that_and_not_as_a_sensor_fault()
     test_an_unrecorded_manual_source_invents_nothing()
     test_override_source_covers_every_source_the_firmware_can_send()
+    test_a_hand_move_mails_even_when_the_door_is_already_manual()
+    test_an_inferred_uncommanded_move_is_not_mailed_as_measured()
+    test_uncommanded_mail_is_rate_limited()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 

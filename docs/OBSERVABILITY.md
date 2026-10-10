@@ -69,7 +69,7 @@ Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
 | `NO_MOVE` | ✓ | ✓ | ✓ | — | ! nothing moved, so nothing is trapped |
 | `STALLED` | ✓ | ✓ (5 fast — most urgent) | ✓ | — | ✓ rate-limited |
 | `GAVE_UP` | ✓ | ✓ | ✓ | `gaveup` | ✓ **never** rate-limited |
-| `UNCOMMANDED` | ✓ | ✓ | ✓ | — | ! not directly — but it takes manual control, and that `MANUAL` mails as **moved by hand** |
+| `UNCOMMANDED` | ✓ | ✓ | ✓ | — | ✓ rate-limited — *"This door is not where it was left"*. Not left to the `MANUAL` mail: `enterOverride()` is guarded by `if (!g_override)`, so a hand-move on an already-manual door writes no `MANUAL` event at all |
 | `SENSOR_FAULT` | ✓ | ✓ **repeats** every 15 min | ✓ | `sfault` | ✓ |
 | `SENSOR_OK` | ✓ | — | ✓ | `sfault=0` | ✓ **only if the fault emailed** |
 | `BEACON_LOW` | ✓ | — | ✓ | `battlow` | ✓ on the falling edge |

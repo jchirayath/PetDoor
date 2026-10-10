@@ -1189,6 +1189,55 @@ def notify_events(device, rows):
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
 
+        elif r["type"] == "UNCOMMANDED" and notify_due(device, "UNCOMMANDED"):
+            # THE DOOR IS NOT WHERE IT WAS LEFT, and that deserves saying even
+            # though the door also takes manual control when it happens.
+            #
+            # This used to be deliberately silent, on the grounds that "most are
+            # a hand on the door". The hole was that enterOverride() is guarded
+            # by `if (!g_override)`: a hand-move on a door ALREADY under manual
+            # control writes no MANUAL event, so it produced no mail at all. On
+            # 10 Oct that is exactly what happened — control had been taken at
+            # the console seven minutes earlier — and the only mail that arrived
+            # was a sensor fault blaming the hardware for noticing.
+            #
+            # Rate-limited, unlike the MANUAL mail, because this one CAN repeat
+            # on its own: the vendor controller was watched leaving the open
+            # limit twice, about fifteen seconds after arriving, with nothing
+            # driving it.
+            d = r["detail"]
+            inferred = d >= 10
+            where = {1: "OPEN", 2: "CLOSED"}.get(d - 10 if inferred else d,
+                                                 f"state {d}")
+            if inferred:
+                ms = r["src"] if "src" in r.keys() and r["src"] else 0
+                # Invariant 20: an inference and a measurement are not the same
+                # claim, and an email that renders them identically turns one
+                # into the other.
+                how = ("INFERRED from %.1f s of movement — no limit switch saw "
+                       "it" % (ms / 1000.0)) if ms else \
+                      "INFERRED from the duration of the movement"
+            else:
+                how = "a limit switch MEASURED it"
+            ok, why = send_notification(
+                f"door moved to {where} with nothing commanding it on {device}",
+                title="This door is not where it was left",
+                lede=f"It moved to {where} and nothing asked it to. On this door "
+                     "that means a hand: the flap is a motorised vertical panel, "
+                     "so wind cannot blow it and an animal cannot push it.",
+                rows=[("door", device),
+                      ("now", where),
+                      ("evidence", how),
+                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+                note="The sensors are working — this is them doing their job. "
+                     "The door has also taken itself under MANUAL control, so "
+                     "nothing automatic will move it until `door auto`. Further "
+                     "uncommanded moves stay quiet for an hour so a controller "
+                     "with a mode of its own cannot flood your inbox.",
+                accent="bad")
+            if not ok:
+                sys.stderr.write(f"  NOTIFY FAILED for uncommanded move: {why}\n")
+
         elif r["type"] == "MANUAL" and r["detail"] == 1:
             # Held CLOSED earns a mail on arrival with NO cooldown, for the same
             # reason an abnormal reset does: the cost lands on an animal that
