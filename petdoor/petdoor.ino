@@ -528,10 +528,15 @@ void printHelp() {
   Con.println(F("    . .         locked"));
   Con.println(F("    -           unlocked"));
   Con.println(F("    .           setting applied"));
-  Con.println(F("  and the one tune that REPEATS, every 15 min until it clears:"));
+  Con.println(F("  and the two tunes that REPEAT, every 15 min until they clear:"));
   Con.println(F("    . . .       a SENSOR is not telling the truth. 's' says which."));
   Con.println(F("                Three low blips: the door clearing its throat, not"));
   Con.println(F("                an alarm. An alarm gets unplugged."));
+  Con.println(F("    - . . .     it TRAVELLED and no switch saw it ARRIVE. The long"));
+  Con.println(F("                beep first is the travel that did happen: the door"));
+  Con.println(F("                and the motor are fine and nothing is in the way."));
+  Con.println(F("                A MAGNET has come off or drifted — the capture"));
+  Con.println(F("                range is narrow. Fix it at the door, no cable needed."));
 }
 
 void printStatus(uint32_t nowMs) {
@@ -3222,7 +3227,13 @@ void updateSensorFaultBeep(uint32_t nowMs) {
   if (Chime::playing() != CHIME_NONE || Actuator::busy()) return;
   g_sensorFaultBeepMs = nowMs;
   if (g_sensorFaultBeepMs == 0) g_sensorFaultBeepMs = 1;   // 0 means "never yet"
-  Chime::play(CHIME_SENSOR_FAULT);
+  // SF_REED_MISSED gets its own tune. It is the one sensor fault whose remedy
+  // is a screwdriver at the door rather than a look at the console: the door
+  // and the motor are fine and nothing is in the way, a magnet has drifted out
+  // of its capture range. The generic three blips say only "some sensor",
+  // which on a mounted coop means walking back for a cable to find out which.
+  Chime::play(g_sensorFault == SF_REED_MISSED ? CHIME_REED_MISSED
+                                              : CHIME_SENSOR_FAULT);
 }
 
 void updateChime(uint32_t nowMs) {

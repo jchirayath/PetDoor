@@ -96,6 +96,21 @@ const Step kUncommanded[] = {{1500, 150}, {0, 450}, {1500, 150}};
 // kUncommanded, and the low register from that tune's high one.
 const Step kSensorFault[] = {{440, 120}, {0, 350}, {440, 120}, {0, 350}, {440, 120}};
 
+// "I travelled, and nothing confirmed I arrived." The long beep is the travel
+// that demonstrably happened; the three blips after it are kSensorFault's
+// complaint, unchanged. Hearing the long prefix is what tells somebody at the
+// door that this is the MAGNET and not the motor — the one sensor fault whose
+// fix is a screwdriver rather than a console.
+//
+// Same low register and wide spacing as kSensorFault because it repeats on the
+// same schedule. Nothing else in the set is a long followed by three shorts:
+// kGaveUp is a long and two shorts at 600 Hz, and the two long-long tunes have
+// no tail.
+const Step kReedMissed[] = {{440, 500}, {0, 250},
+                            {440, 120}, {0, 350},
+                            {440, 120}, {0, 350},
+                            {440, 120}};
+
 // Three even beeps: long enough to hear, distinctive enough that you know the
 // buzzer is responding to you and not to the door.
 const Step kTest[] = {{2000, 150}, {0, 150}, {2000, 150}, {0, 150}, {2000, 150}};
@@ -132,6 +147,7 @@ Pattern patternFor(ChimeTune t) {
     case CHIME_GAVE_UP:            return PETDOOR_TUNE(kGaveUp, false);
     case CHIME_UNCOMMANDED:        return PETDOOR_TUNE(kUncommanded, false);
     case CHIME_SENSOR_FAULT:       return PETDOOR_TUNE(kSensorFault, false);
+    case CHIME_REED_MISSED:        return PETDOOR_TUNE(kReedMissed, false);
     case CHIME_TEST:               return PETDOOR_TUNE(kTest, false);
     case CHIME_ACK_LOCK:           return PETDOOR_TUNE(kAckLock, false);
     case CHIME_ACK_UNLOCK:         return PETDOOR_TUNE(kAckUnlock, false);
@@ -320,6 +336,7 @@ const char *tuneName(ChimeTune t) {
     case CHIME_GAVE_UP:            return "gave-up";
     case CHIME_UNCOMMANDED:        return "uncommanded";
     case CHIME_SENSOR_FAULT:       return "sensor-fault";
+    case CHIME_REED_MISSED:        return "reed-missed";
     case CHIME_TEST:               return "test";
     case CHIME_ACK_LOCK:           return "ack-lock";
     case CHIME_ACK_UNLOCK:         return "ack-unlock";

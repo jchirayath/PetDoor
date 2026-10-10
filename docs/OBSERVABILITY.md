@@ -70,7 +70,7 @@ Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
 | `STALLED` | ✓ | ✓ (5 fast — most urgent) | ✓ | — | ✓ rate-limited |
 | `GAVE_UP` | ✓ | ✓ | ✓ | `gaveup` | ✓ **never** rate-limited |
 | `UNCOMMANDED` | ✓ | ✓ | ✓ | — | ✓ rate-limited — *"This door is not where it was left"*. Not left to the `MANUAL` mail: `enterOverride()` is guarded by `if (!g_override)`, so a hand-move on an already-manual door writes no `MANUAL` event at all |
-| `SENSOR_FAULT` | ✓ | ✓ **repeats** every 15 min | ✓ | `sfault` | ✓ |
+| `SENSOR_FAULT` | ✓ | ✓ **repeats** every 15 min — and `SF_REED_MISSED` has its OWN tune (one long, then three blips), because it is the only one whose remedy is a screwdriver at the door rather than a look at the console | ✓ | `sfault` | ✓ |
 | `SENSOR_OK` | ✓ | — | ✓ | `sfault=0` | ✓ **only if the fault emailed** |
 | `BEACON_LOW` | ✓ | — | ✓ | `battlow` | ✓ on the falling edge |
 | `MAINT` | ✓ | — | ✓ | `maint` | ✓ |
