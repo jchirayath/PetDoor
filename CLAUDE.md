@@ -580,6 +580,25 @@ comment above it explains why; keep the comment with the code.
     shut and an animal cannot push it. On a door where that is untrue, a gust
     would silently stop the door working. Say so before copying the rule.
 
+    **Only a MEASURED uncommanded travel takes control — an INFERRED one does
+    not**, and the asymmetry is deliberate. `updatePosition()` calls
+    `enterOverride()` when a limit switch saw the door move;
+    `concludeVibrationRun()` does not, because an inference from how long a
+    vibration sensor felt something is weaker evidence and this flag does not
+    expire. A wrong guess would make the door inert permanently, and a door
+    left inert CLOSED cannot let an animal in. Same shape as invariant 19:
+    being wrong is not equally bad in both directions, so the weaker evidence
+    buys the weaker consequence. An inferred move is still logged, still
+    chimes, and still mails — it just does not seize the door.
+
+    **A hand on an ALREADY-manual door writes no `MANUAL` event**, because
+    `enterOverride()` is guarded by `if (!g_override)`. That is why
+    `UNCOMMANDED` mails on its own merits rather than leaning on the `MANUAL`
+    mail: control taken at the console and a hand on the door seven minutes
+    later produced exactly one event, and the only mail that arrived was a
+    sensor fault blaming the hardware for noticing. Do not "simplify" the
+    uncommanded email away on the grounds that `MANUAL` already covers it.
+
     **It must count as IDLE for the uploader**, exactly as a maintenance window
     does — see the idle test. Omit that and an overridden door calls in only on
     the 30-minute heartbeat, going half-deaf to commands at the moment the only
