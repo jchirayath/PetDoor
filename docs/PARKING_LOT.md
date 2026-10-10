@@ -175,11 +175,35 @@ socket listening; #1041 is the boot that separates "OTA" from "the radio and a
 listening socket", and it points at the latter. That is what the
 `panic-ota-correlation` branch argues, and this is the evidence for it.
 
-**And radio-up alone is not enough either.** On 9 Oct boot #1056 was given two
-full 300 s OTA windows — 600 s with the radio up and a socket listening — with
-**no push**, and did not panic; free heap sat flat at ~119.5 KB. So the suspicion
-now falls on the **transfer itself** rather than the window, which is a much
-narrower thing to go looking at. One unpushed boot is n=1; do not promote it.
+**The timing points at the window OPENING, not at a transfer.** Each of the four
+consecutive panics died within seconds to minutes of an `ota` command being
+*delivered* — the moment `beginOtaWindow()` leads to `radioUp()` and
+`ArduinoOTA.begin()` on the uploader task:
+
+| boot | last event | `ota` delivered | gap |
+|---|---|---|---|
+| #1049 | 16:53:33 | 16:53:31 | **2 s** |
+| #1050 | 18:00:49 | 18:01:23 | ~34 s |
+| #1051 | 18:27:27 (1 event) | 18:27:58 | within ~3.5 min |
+| #1052 | 18:43:09 | 18:39:10 | ~4 min |
+
+None of those needed a push to arrive. That matches the original panic, which
+was "about eight seconds after collecting an `ota` command", and it means the
+suspect is the same `radioUp()`-plus-listening-socket path a maintenance window
+takes — not the image transfer.
+
+**It is not deterministic, though, so do not over-read the table.** On 9 Oct
+boot #1056 was given two full 300 s OTA windows — 600 s with the radio up and a
+socket listening, both opened the same way — with no panic and free heap flat at
+~119.5 KB. Whatever this is, opening a window is not sufficient to trigger it.
+
+**A figure to distrust if you see it repeated:** an earlier draft of this entry
+claimed boot #1049 "ran 13 hours clean with no OTA activity at all" and used it
+as the control. It is the opposite — #1049 ran 15.0 h, took five `ota` commands,
+and is the boot that died 2 s after the fifth. The error was attributing a
+`reset=4` to the boot that *reported* it rather than the boot before, which is
+the trap this entry already warns about two sections up. The real clean control
+is **#1044**.
 
 **Re-run the count instead of trusting this table.** It took one query, and the
 numbers move every time the door reboots:
@@ -202,13 +226,19 @@ on rather than mounting the door, precisely to catch the next one. There is no
 bound on that wait — the uptime theory that appeared to give one is dead — so the
 practical move is to make the fault more likely rather than to sit and watch.
 
-**The best provocation now is a push, not patience.** Boot #1051 panicked with a
-single event logged, right after collecting an `ota` command, so the fault can
-arrive in seconds rather than hours. The experiment that costs nothing is
-therefore: cable attached, console captured across the whole operation, and push
-a real image over OTA. Two windows were opened on 9 Oct with the console held
-open and nothing to show, because neither was actually pushed to — opening the
-window is not the test.
+**The best provocation is queueing `ota` repeatedly, not patience, and not a
+push.** Boot #1051 panicked with a single event logged right after collecting an
+`ota` command, so the fault can arrive in seconds rather than hours — and per
+the timing table above it arrives when the window OPENS, so no image needs to be
+transferred to provoke it. Cable attached, console captured across the whole
+operation, then queue `ota`, let it lapse, and queue it again. Two windows on
+9 Oct produced nothing, so it is not reliable; it is merely far faster than
+waiting.
+
+**Do not try to diagnose this over OTA.** Every attempt to push a fix is itself
+the suspected trigger, and a door restarting every few minutes cannot complete a
+30-second transfer. The 9 Oct wired session exists for exactly this reason: the
+backtrace is serial-only.
 
 The older candidate, **sustained uptime with the collar close**, is still
 uncovered and still worth doing; it is simply slower. Boot #1044's clean 20 hours
