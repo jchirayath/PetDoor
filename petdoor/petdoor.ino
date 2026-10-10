@@ -78,7 +78,10 @@ bool g_beaconLowLatched = false;
 uint8_t g_sensorFault = 0;            // SensorFault, 0 = nothing wrong
 uint8_t g_vibSilentStrikes = 0;       // verified travels the vibration missed
 uint8_t g_vibDeadStrikes = 0;         // attempts that produced not one edge
-uint8_t g_reedMissedStrikes = 0;      // travels that ran and never arrived
+// Travels that ran and never arrived, counted PER END (0 open, 1 closed).
+// One number for the whole door made SF_REED_MISSED unreachable; see
+// judgeReedMissed() in sensor_verdict.h.
+ReedMissedState g_reedMissed = {{0, 0}};
 uint32_t g_vibIdleBaseline = 0;       // edge count when the door went quiet
 uint32_t g_vibIdleSinceMs = 0;
 DoorState g_vibIdleEndAtStart = DOOR_UNKNOWN;
@@ -3047,32 +3050,40 @@ void reportOutcome(const Actuator::Result &r) {
         }
       } else {
         g_vibSilentStrikes = 0;
-        g_reedMissedStrikes = 0;        // it arrived, so the reeds are fine too
         clearSensorFault(SF_VIBRATION_SILENT);
-        clearSensorFault(SF_REED_MISSED);
       }
-    } else if (r.outcome == Actuator::OUT_STALLED) {
-      // It stalled. Vibration says which kind of stall this was, and the two
-      // need completely different responses:
-      //
-      //   lots of movement  the door ran its travel and the switch never saw
-      //                     it. A lost magnet or a broken wire.
-      //   little movement   the door stopped. An obstruction or a jam, which
-      //                     is what STALLED already reports — not a sensor
-      //                     fault, so it is left alone here.
-      if (felt >= VIBRATION_MOVING_PULSES) {
-        if (++g_reedMissedStrikes >= SENSOR_FAULT_STRIKES) {
-          Con.printf("[sensor] !! %u travels RAN (%lu edges) and never arrived.\r\n",
-                        g_reedMissedStrikes, static_cast<unsigned long>(felt));
-          Con.printf("[sensor] !! The door is moving, so the %s limit switch is\r\n",
-                        r.target == DOOR_OPEN ? "OPEN" : "CLOSED");
-          Con.println(F("[sensor] !! not making. Check the magnet has not come off"));
-          Con.println(F("[sensor] !! and that its gap has not opened up — the"));
-          Con.println(F("[sensor] !! capture range is narrow."));
+    }
+
+    // Whether a travel RAN and never arrived is judged PER END, in
+    // sensor_verdict.h. The reset rule is the whole subtlety and is where this
+    // was wrong: one counter for the door, cleared on any arrival, meant the
+    // fail-open reversal that invariant 14 mandates after a stalled close
+    // arrived on the OPEN switch and zeroed the evidence about the CLOSED one.
+    // See judgeReedMissed() for the sequence that could never trip.
+    if (r.target == DOOR_OPEN || r.target == DOOR_CLOSED) {
+      const uint8_t endIndex = (r.target == DOOR_OPEN) ? 0 : 1;
+      const SensorVerdict reedVerdict = judgeReedMissed(
+          g_reedMissed, r.outcome == Actuator::OUT_ARRIVED,
+          r.outcome == Actuator::OUT_STALLED, endIndex, felt,
+          VIBRATION_MOVING_PULSES, SENSOR_FAULT_STRIKES);
+      if (reedVerdict == SV_RAISE) {
+        Con.printf("[sensor] !! %u travels to %s RAN (%lu edges) and never "
+                      "arrived.\r\n",
+                      g_reedMissed.strikes[endIndex],
+                      r.target == DOOR_OPEN ? "OPEN" : "CLOSED",
+                      static_cast<unsigned long>(felt));
+        Con.printf("[sensor] !! The door is moving, so the %s limit switch is\r\n",
+                      r.target == DOOR_OPEN ? "OPEN" : "CLOSED");
+        Con.println(F("[sensor] !! not making. Check the magnet has not come off"));
+        Con.println(F("[sensor] !! and that its gap has not opened up — the"));
+        Con.println(F("[sensor] !! capture range is narrow."));
+        if (r.target == DOOR_CLOSED) {
           Con.println(F("[sensor] !! This matters tonight: every close now STALLS,"));
           Con.println(F("[sensor] !! which fails the door OPEN by design."));
-          raiseSensorFault(SF_REED_MISSED, static_cast<int16_t>(felt));
         }
+        raiseSensorFault(SF_REED_MISSED, static_cast<int16_t>(felt));
+      } else if (reedVerdict == SV_CLEAR) {
+        clearSensorFault(SF_REED_MISSED);
       }
     }
   }
