@@ -742,7 +742,8 @@ door is going.
 | **two long** low beeps | It **never moved**. The press was swallowed, or the door is jammed solid. Nothing is trapped — the door is still where it was |
 | **five fast** beeps | It **STALLED**: started and never arrived. A stalled *close* is reversed |
 | **long, then two short** | **Gave up** closing. The door is staying open until somebody clears the way |
-| **three short low blips**, repeating every 15 min | **A sensor has failed** — the only tune that repeats. See below |
+| **three short low blips**, repeating every 15 min | **A sensor has failed** — see below. One of the two tunes that repeat |
+| **one long, then three short low blips**, repeating every 15 min | **It travelled and no switch saw it arrive.** The long beep first is the travel that DID happen: the door, the motor and the path are all fine. A **magnet** has come off or drifted out of its narrow capture range. The one sensor fault you fix at the door with a screwdriver, which is why it does not share the tune above |
 | **blip … pause … blip** | The door moved and **nothing commanded it**. A hand, the wind, or a mode on the door's own controller |
 | one long low buzz | **Refused**: the door is locked by hand, or refused for some other reason. Once per arrival, not repeatedly |
 | **two long** low beeps, well separated | **Refused by a SCHEDULED WINDOW.** "Not… now." The wide gap is what tells it from the two-long "never moved" above, which stutters |
@@ -789,7 +790,20 @@ wrong default.
 
 It is kept sparse for exactly the reason the rule exists: three short low blips
 a quarter of an hour apart is a reminder, not an alarm, and it never becomes the
-thing somebody disconnects. It also never interrupts — if anything else is
+thing somebody disconnects.
+
+**`SF_REED_MISSED` sounds different on purpose**, and it is worth knowing why
+before you hear it. Every other sensor fault sends you to a console to ask which
+sensor; this one does not need to, because there is only one answer — the door
+ran its full travel, the vibration sensor is sure of it, and the switch at that
+end said nothing. Nothing is obstructing the door and nothing is wrong with the
+motor. A magnet has moved. So it gets a long beep in front of the usual three
+blips: the long one is the travel that happened, and hearing it means you can
+start unscrewing a bracket instead of walking back for a cable.
+
+It matters most on the CLOSE, where a stalled close fails open by design — so
+the symptom is a door that stands open all night and an animal that cannot be
+shut in, with the firmware behaving exactly as specified throughout. It also never interrupts — if anything else is
 playing, or a travel is in flight, it waits for the next interval. Set
 `SENSOR_FAULT_BEEP_MS` to 0 to silence it; raise it if the door is near a
 bedroom window. There is deliberately no quiet-hours logic: a fault that stays

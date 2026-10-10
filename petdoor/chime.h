@@ -109,6 +109,28 @@ enum ChimeTune : uint8_t {
   // the door clearing its throat, not an alarm. See SENSOR_FAULT_BEEP_MS in
   // config.h for why this one earns an exception to the play-once rule.
   CHIME_SENSOR_FAULT,
+  // THE DOOR TRAVELLED AND NO SWITCH SAW IT ARRIVE — specifically, the
+  // vibration sensor is sure the door moved its whole travel and the limit
+  // switch at that end never made. Its own tune because the remedy is its own:
+  // nothing is wrong with the door or the motor, and nothing is obstructing
+  // it. A magnet has come off or drifted out of its narrow capture range.
+  //
+  // Worth a sound of its own rather than sharing CHIME_SENSOR_FAULT, because
+  // this is the fault you diagnose STANDING AT THE DOOR with a screwdriver,
+  // and the generic three blips send you to a console to find out which sensor
+  // it was. On a mounted coop that console is not there.
+  //
+  // One long low beep, then the three blips of CHIME_SENSOR_FAULT. Deliberately
+  // compositional: the long prefix says "this is about a travel that actually
+  // happened", the three blips are the existing "something is wrong with me".
+  // Distinct from everything taken — kGaveUp is a long and TWO shorts in a
+  // higher register, kNoMove and kRefusedSchedule are long-then-long.
+  //
+  // Repeats on the same sparse schedule as CHIME_SENSOR_FAULT, and for the same
+  // reason: a door whose close silently fails is one an animal is shut out of,
+  // and the fault outlives anyone's attention span. Low and well spaced so it
+  // stays a statement rather than an alarm — an alarm gets unplugged.
+  CHIME_REED_MISSED,
 
   CHIME_TEST,     // once: prove the wiring, from the console or the server
 
