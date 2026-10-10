@@ -52,18 +52,18 @@ static void eq(SensorVerdict got, SensorVerdict want, const char *what) {
 // Signature: edges, threshold, endChanged, runs, runRanAway, faultLatched
 static void test_idle_noise_raises_only_on_real_chatter() {
   // Plenty of edges, nothing to excuse them: that is a chattering sensor.
-  eq(judgeIdleNoise(500, 200, false, 0, false, false), SV_RAISE,
+  eq(judgeIdleNoise(500, 200, false, 0, false, false, false), SV_RAISE,
      "edges over the threshold with no stand-down raises");
 
   // Exactly at the threshold counts — the comparison is >=, and an off-by-one
   // here would make the knob mean something other than what the docs say.
-  eq(judgeIdleNoise(200, 200, false, 0, false, false), SV_RAISE,
+  eq(judgeIdleNoise(200, 200, false, 0, false, false, false), SV_RAISE,
      "edges exactly at the threshold raises");
-  eq(judgeIdleNoise(199, 200, false, 0, false, false), SV_NOTHING,
+  eq(judgeIdleNoise(199, 200, false, 0, false, false, false), SV_NOTHING,
      "one edge below the threshold does not raise");
 
   // Ambient. The reference door reads 0 at rest.
-  eq(judgeIdleNoise(0, 200, false, 0, false, false), SV_NOTHING,
+  eq(judgeIdleNoise(0, 200, false, 0, false, false, false), SV_NOTHING,
      "a silent window raises nothing");
 }
 
@@ -71,15 +71,15 @@ static void test_a_moving_door_is_never_called_a_broken_sensor() {
   // A switch confirmed the door changed ends. Those edges were a DOOR. Blaming
   // the sensor would blame the one part that reported the truth. This is the
   // false positive that fired on the reference door at 15:50 with 9,655 edges.
-  eq(judgeIdleNoise(9655, 200, true, 0, false, false), SV_NOTHING,
+  eq(judgeIdleNoise(9655, 200, true, 0, false, false, false), SV_NOTHING,
      "a confirmed change of ends excuses any number of edges");
 
   // No switch saw it — an unplugged reed, or a build with none — but the
   // movement arrived in discrete runs, which is a door being handled rather
   // than a sensor chattering continuously.
-  eq(judgeIdleNoise(9655, 200, false, 1, false, false), SV_NOTHING,
+  eq(judgeIdleNoise(9655, 200, false, 1, false, false, false), SV_NOTHING,
      "one discrete run of movement excuses the edges with no switch involved");
-  eq(judgeIdleNoise(40000, 200, false, 3, false, false), SV_NOTHING,
+  eq(judgeIdleNoise(40000, 200, false, 3, false, false, false), SV_NOTHING,
      "several runs likewise");
 }
 
@@ -87,37 +87,67 @@ static void test_a_run_that_never_ends_is_chatter_not_a_door() {
   // The loophole that must stay shut: if a stuck sensor's endless "run" bought
   // a stand-down, a permanently-stuck sensor would excuse itself forever and
   // the fault could never be raised at all.
-  eq(judgeIdleNoise(40000, 200, false, 1, true, false), SV_RAISE,
+  eq(judgeIdleNoise(40000, 200, false, 1, true, false, false), SV_RAISE,
      "a run past VIBRATION_RUN_MAX_MS does NOT excuse the edges");
   // Belt and braces: a runaway run alongside ordinary ones still raises.
-  eq(judgeIdleNoise(40000, 200, false, 4, true, false), SV_RAISE,
+  eq(judgeIdleNoise(40000, 200, false, 4, true, false, false), SV_RAISE,
      "a runaway run is not laundered by other runs in the same window");
+}
+
+static void test_a_hand_move_in_flight_is_not_a_noisy_sensor() {
+  // THE REGRESSION THIS EXISTS FOR. Measured on the reference door: a door
+  // being moved by hand produced 12,642 edges in one idle window and raised
+  // SF_VIBRATION_NOISY one second before a limit switch confirmed the door had
+  // moved. Mid-move the door has left one end and not reached the other, so
+  // `endChanged` is still false, and the run has not concluded, so `runs` is
+  // still 0 — every stand-down the old signature had was blind to it.
+  eq(judgeIdleNoise(12642, 200, false, 0, false, true, false), SV_NOTHING,
+     "a hand-move still in flight is not a noisy sensor");
+
+  // The same window with the run finished and the far end reached is already
+  // covered by endChanged, but pin it so the two cannot drift apart.
+  eq(judgeIdleNoise(12642, 200, true, 1, false, false, false), SV_NOTHING,
+     "the same move, once concluded, still stands down");
+
+  // AND THE OTHER DIRECTION, which is the whole reason this is a table and not
+  // an if. A sensor stuck firing also holds a run "active"; if that bought a
+  // stand-down the fault would become unraisable and a door would go on
+  // deciding on evidence that stopped meaning anything. The ran-away flag is
+  // what separates the two, so an in-flight run that has ALREADY blown past
+  // VIBRATION_RUN_MAX_MS must still raise.
+  eq(judgeIdleNoise(40000, 200, false, 0, true, true, false), SV_RAISE,
+     "an in-flight run that has run away is still chatter");
+
+  // A latched fault must not be cleared by a hand-move either: the window was
+  // not quiet, it was busy, which says nothing about the sensor.
+  eq(judgeIdleNoise(0, 200, false, 0, false, true, true), SV_NOTHING,
+     "a hand-move does not clear a latched fault");
 }
 
 static void test_the_noise_fault_can_finally_clear() {
   // THE FIX. A full window at rest, below the threshold the fault was raised
   // on, with the fault latched: let it go. Before this, SF_VIBRATION_NOISY was
   // the only sensor fault with no way back and latched until a power cycle.
-  eq(judgeIdleNoise(0, 200, false, 0, false, true), SV_CLEAR,
+  eq(judgeIdleNoise(0, 200, false, 0, false, false, true), SV_CLEAR,
      "a quiet window clears a latched noise fault");
-  eq(judgeIdleNoise(199, 200, false, 0, false, true), SV_CLEAR,
+  eq(judgeIdleNoise(199, 200, false, 0, false, false, true), SV_CLEAR,
      "below-threshold, not merely zero, is enough to clear");
 
   // Still noisy: stay raised. Must not thrash between raise and clear.
-  eq(judgeIdleNoise(500, 200, false, 0, false, true), SV_RAISE,
+  eq(judgeIdleNoise(500, 200, false, 0, false, false, true), SV_RAISE,
      "a still-noisy window keeps the fault, it does not clear it");
 
   // Nothing latched, nothing to clear. A CLEAR here would be a spurious
   // "recovered" line on the console and an extra radio burst every window.
-  eq(judgeIdleNoise(0, 200, false, 0, false, false), SV_NOTHING,
+  eq(judgeIdleNoise(0, 200, false, 0, false, false, false), SV_NOTHING,
      "a quiet window with no fault latched does nothing");
 
   // A door that moved says nothing about the sensor either way, so a latched
   // fault must keep waiting for a genuinely quiet window rather than being
   // cleared by movement.
-  eq(judgeIdleNoise(9655, 200, true, 0, false, true), SV_NOTHING,
+  eq(judgeIdleNoise(9655, 200, true, 0, false, false, true), SV_NOTHING,
      "movement does not clear a latched fault; only a quiet window does");
-  eq(judgeIdleNoise(9655, 200, false, 2, false, true), SV_NOTHING,
+  eq(judgeIdleNoise(9655, 200, false, 2, false, false, true), SV_NOTHING,
      "discrete runs do not clear a latched fault either");
 }
 
@@ -172,6 +202,7 @@ int main() {
   test_idle_noise_raises_only_on_real_chatter();
   test_a_moving_door_is_never_called_a_broken_sensor();
   test_a_run_that_never_ends_is_chatter_not_a_door();
+  test_a_hand_move_in_flight_is_not_a_noisy_sensor();
   test_the_noise_fault_can_finally_clear();
   test_a_switch_that_stops_making_is_noticed();
   test_a_single_switch_build_is_never_nagged();

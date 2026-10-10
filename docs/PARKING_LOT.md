@@ -145,13 +145,126 @@ for it, only an absence of coverage.
 and a USB flash each restarted the door, and each one postponed the very failure
 being hunted. Once a watch is running, leave the door alone.
 
+### The radio-up correlation, measured per boot (9 Oct)
+
+The whole history is in the server's database, so the association can be counted
+rather than argued about. Every panic in the NimBLE era, with whatever brought
+the radio up during the boot it terminated:
+
+| boot that died | duration | radio activity in it |
+|---|---|---|
+| #1036 | 0.0 h | none found — but only 2 events uploaded, so weak either way |
+| #1041 | 0.5 h | **MAINT ×2**, no OTA |
+| #1049 | 15.0 h | **OTA ×5** |
+| #1050 | 1.1 h | **OTA ×2** |
+| #1051 | 0.0 h | **OTA ×1** — one event logged, then gone |
+| #1052 | 0.2 h | **OTA ×1** |
+
+Five of six had a radio-up event, and #1049–#1052 are four **consecutive** panics
+during an evening of repeated pushes. That is far stronger than the single
+coincidence this entry once dismissed.
+
+**But the control group refuses the simple reading.** Boot **#1044 ran 20.1 hours
+clean with `ota=1 maint=2`**, and #1045 and #1048 also took OTA commands and did
+not panic. So OTA is neither necessary (#1041 had only maintenance windows) nor
+sufficient (#1044 survived both).
+
+**The honest framing is therefore the shared path, not the feature.** A
+maintenance window and an OTA window both call `radioUp()` and both leave a
+socket listening; #1041 is the boot that separates "OTA" from "the radio and a
+listening socket", and it points at the latter. That is what the
+`panic-ota-correlation` branch argues, and this is the evidence for it.
+
+**The timing points at the window OPENING, not at a transfer.** Each of the four
+consecutive panics died within seconds to minutes of an `ota` command being
+*delivered* — the moment `beginOtaWindow()` leads to `radioUp()` and
+`ArduinoOTA.begin()` on the uploader task:
+
+| boot | last event | `ota` delivered | gap |
+|---|---|---|---|
+| #1049 | 16:53:33 | 16:53:31 | **2 s** |
+| #1050 | 18:00:49 | 18:01:23 | ~34 s |
+| #1051 | 18:27:27 (1 event) | 18:27:58 | within ~3.5 min |
+| #1052 | 18:43:09 | 18:39:10 | ~4 min |
+
+None of those needed a push to arrive. That matches the original panic, which
+was "about eight seconds after collecting an `ota` command", and it means the
+suspect is the same `radioUp()`-plus-listening-socket path a maintenance window
+takes — not the image transfer.
+
+**2026-10-10: three OTA pushes, no panic — and the firmware had changed.** The
+morning after the cluster above, the whole OTA path was exercised deliberately
+with a cable attached and the console captured throughout: five windows opened,
+eight authentications rejected (a wrong password), and **three complete ~1.4 MB
+pushes**, each rebooting the door and self-confirming. Boots #1057, #1058 and
+#1059 all arrived over the air. No panic at any point, and boot #1056 ran
+**15.5 hours** clean through two of those windows.
+
+So the provocation that looked reliable on 9 Oct did not reproduce at all on
+10 Oct. The obvious confound is that the firmware is not the same: every
+panicking boot (#1049–#1052) predates the manual-override rework, and everything
+from #1054 on is the rebuilt code, which among other things **deleted
+`serviceHoldReassert()`**. That is a candidate, not a cause — nothing here
+isolates it, and a periodic re-assert interacting with the radio is a guess.
+
+**Do not close this entry on that.** Two theories on this door have already died
+on n=2, and "it stopped happening after we changed something" is the weakest
+evidence shape there is. What would actually settle it is a long clean run on
+the current build — days, not hours — and if a panic does recur, the console is
+the only place the backtrace exists.
+
+**It is not deterministic, though, so do not over-read the table.** On 9 Oct
+boot #1056 was given two full 300 s OTA windows — 600 s with the radio up and a
+socket listening, both opened the same way — with no panic and free heap flat at
+~119.5 KB. Whatever this is, opening a window is not sufficient to trigger it.
+
+**A figure to distrust if you see it repeated:** an earlier draft of this entry
+claimed boot #1049 "ran 13 hours clean with no OTA activity at all" and used it
+as the control. It is the opposite — #1049 ran 15.0 h, took five `ota` commands,
+and is the boot that died 2 s after the fifth. The error was attributing a
+`reset=4` to the boot that *reported* it rather than the boot before, which is
+the trap this entry already warns about two sections up. The real clean control
+is **#1044**.
+
+**Re-run the count instead of trusting this table.** It took one query, and the
+numbers move every time the door reboots:
+
+```bash
+# on the log-server VM, against /data/petdoor.sqlite3 in the container
+sudo docker exec -i podcast-petdoor-1 python3 -I /tmp/panic-correlation.py
+```
+
+Join `events` (a `BOOT` row's `detail` is the reset reason) to `commands`
+(`delivered` timestamps) over each boot's `MIN(epoch)`/`MAX(epoch)` span. Two
+traps: a `BOOT` row's own `epoch` is useless because the clock is not synced that
+early, so bound each boot by the span of all its events; and **the September
+panics are a different fault** — the Bluedroid heap exhaustion that made NimBLE
+the default — so filter to ~#1036 and later or the counts are meaningless.
+
 **Still blocked on:** a backtrace. It exists only on the serial console, so it
 needs a cable attached at the moment it happens. The cable was deliberately kept
 on rather than mounting the door, precisely to catch the next one. There is no
 bound on that wait — the uptime theory that appeared to give one is dead — so the
-practical move is to make the fault more likely rather than to sit and watch: run
-the door for a long stretch with the collar **close**, which is the one condition
-the clean 16.4-hour boot never reproduced.
+practical move is to make the fault more likely rather than to sit and watch.
+
+**The best provocation is queueing `ota` repeatedly, not patience, and not a
+push.** Boot #1051 panicked with a single event logged right after collecting an
+`ota` command, so the fault can arrive in seconds rather than hours — and per
+the timing table above it arrives when the window OPENS, so no image needs to be
+transferred to provoke it. Cable attached, console captured across the whole
+operation, then queue `ota`, let it lapse, and queue it again. Two windows on
+9 Oct produced nothing, so it is not reliable; it is merely far faster than
+waiting.
+
+**Do not try to diagnose this over OTA.** Every attempt to push a fix is itself
+the suspected trigger, and a door restarting every few minutes cannot complete a
+30-second transfer. The 9 Oct wired session exists for exactly this reason: the
+backtrace is serial-only.
+
+The older candidate, **sustained uptime with the collar close**, is still
+uncovered and still worth doing; it is simply slower. Boot #1044's clean 20 hours
+had the beacon at ~4 m, while #1041 had it at ~0.4 m producing hundreds of
+samples a minute.
 
 ---
 

@@ -536,6 +536,82 @@ def test_a_recovery_only_mails_if_the_fault_did():
     check("SENSOR_OK" in srv.EVENT_LABEL, "SENSOR_OK has a human label")
 
 
+def test_a_hand_on_the_door_is_mailed_as_that_and_not_as_a_sensor_fault():
+    """The incident this exists for, on the reference door, 10 Oct.
+
+    The door was moved by hand. A limit switch MEASURED it. What arrived was an
+    email titled "A door sensor has stopped telling the truth", telling the
+    owner to go and check a connector and a magnet gap that were both fine —
+    because the only place "a hand moved this door" was written was the console,
+    and the door was on a bench with nobody reading it.
+
+    Two things had to change. The firmware stopped raising SF_VIBRATION_NOISY
+    for a travel still in flight (tests/host/test_sensor_verdict.cpp), and a
+    MANUAL event now carries HOW in its spare column so this mail can say it.
+    """
+    SENT.clear()
+    seed_device("hand-mail", int(time.time()))
+    srv.notify_events("hand-mail", [
+        {"type": "MANUAL", "detail": 1, "uptime": 919, "boot": 1059,
+         "rssi": -60, "src": 3},
+    ])
+    check(len(SENT) == 1, f"a hand-move mails exactly once (got {len(SENT)})")
+    _sub, kw = SENT[0]
+    check("moved by hand" in kw["title"],
+          f"the title names the hand, not the sensor (got {kw['title']!r})")
+    check("sensor" not in kw["title"].lower(),
+          "and does NOT blame a sensor, which is the whole bug")
+    blob = " ".join([kw.get("lede", ""), kw.get("note", "")])
+    check("no longer where it was left" in blob,
+          "the lede says the door's position no longer matches what was commanded")
+    check("Nothing is wrong with the hardware" in blob,
+          "and the note stops the reader going to inspect working hardware")
+    check(any("by hand" in str(v).lower() for _k, v in kw.get("rows", [])),
+          "the rows carry the how")
+
+
+def test_an_unrecorded_manual_source_invents_nothing():
+    """src=0 is NOT a source, it is silence.
+
+    Every MANUAL row written before the firmware carried a source has 0 there.
+    Rendering that as a channel would be inventing a fact about history — the
+    same rule as invariants 17 and 20, which exist because an added enum value
+    once re-labelled rows already in this database.
+    """
+    SENT.clear()
+    seed_device("old-manual", int(time.time()))
+    srv.notify_events("old-manual", [
+        {"type": "MANUAL", "detail": 1, "uptime": 10, "boot": 3, "rssi": -60},
+    ])
+    check(len(SENT) == 1, "an unattributed hold still mails")
+    _sub, kw = SENT[0]
+    check(kw["title"] == "Somebody took control of this door",
+          f"and keeps the neutral title (got {kw['title']!r})")
+    check(not any(k == "how" for k, _v in kw.get("rows", [])),
+          "with no 'how' row invented")
+    check(srv.override_source(0) is None, "override_source(0) is None, not a guess")
+
+
+def test_override_source_covers_every_source_the_firmware_can_send():
+    """OVERRIDE_SOURCE must stay in step with OverrideSource in eventlog.h.
+
+    Parsed rather than restated, for the same reason as ACT_SOURCE above: a
+    copy of the enum here drifts silently, and the symptom is an email that
+    describes the wrong thing happening to a door.
+    """
+    hdr = os.path.join(HERE, "..", "..", "petdoor", "eventlog.h")
+    with open(hdr, encoding="utf-8") as fh:
+        found = {int(m.group(2)): m.group(1)
+                 for m in re.finditer(r"\bOVR_SRC_([A-Z_]+)\s*=\s*(\d+)", fh.read())}
+    check(len(found) >= 5,
+          f"found the OverrideSource enum in eventlog.h (got {sorted(found)})")
+    check(found.get(0) == "UNRECORDED",
+          "0 is UNRECORDED in the firmware too, so silence stays silence")
+    missing = sorted(v for v in found if v and v not in srv.OVERRIDE_SOURCE)
+    check(not missing,
+          f"OVERRIDE_SOURCE covers every non-zero OVR_SRC_* (missing {missing})")
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -563,6 +639,9 @@ def main():
     test_a_lost_reed_is_rendered_and_explained()
     test_a_crashed_door_emails_but_a_normal_restart_does_not()
     test_a_recovery_only_mails_if_the_fault_did()
+    test_a_hand_on_the_door_is_mailed_as_that_and_not_as_a_sensor_fault()
+    test_an_unrecorded_manual_source_invents_nothing()
+    test_override_source_covers_every_source_the_firmware_can_send()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 

@@ -124,7 +124,7 @@ void printScheduleMenu();
 bool beginMaintenance(uint32_t nowMs, uint32_t durationMs, String &message);
 // Defined below, used by the console keys and the uncommanded-travel path
 // above it. Declared here for the same reason beginMaintenance is.
-void enterOverride(const char *why, uint32_t nowMs);
+void enterOverride(const char *why, uint32_t nowMs, uint8_t src);
 void clearOverride(uint32_t nowMs);
 void endMaintenance(String &message);
 void publishStatusLines();
@@ -486,7 +486,7 @@ void printHelp() {
 #if ALLOW_MANUAL_SERIAL_CONTROL
   Con.println(F("  o  OPEN the door now, and hold it open (see 'O')"));
   Con.println(F("  x  CLOSE the door now, and clear any hold"));
-  Con.println(F("  O  clear the manual hold, handing control back to the beacon"));
+  Con.println(F("  O  release MANUAL control, handing the door back to the beacon"));
   Con.println(F("  C  calibrate the travel time, both directions (needs 'M' first)"));
   Con.println(F("  k  LOCK — the beacon may no longer open the door"));
   Con.println(F("  M  MAINTENANCE — the door listens but does not move, for a"));
@@ -694,7 +694,8 @@ void printStatus(uint32_t nowMs) {
     // is the state that keeps an animal outside, and it does not expire.
     Con.println(F("  MANUAL       : a person moved this door. Nothing automatic"));
     Con.println(F("                 will open or close it, in either direction,"));
-    Con.println(F("                 and this survives a reboot. `door auto` ends it."));
+    Con.println(F("                 and this survives a reboot. 'O' here, or "
+                  "`door auto`, ends it."));
     if (Position::enabled() && Position::state() == DOOR_CLOSED) {
       Con.println(F("  !!             The door is CLOSED, so an animal outside "
                     "cannot get in."));
@@ -2028,7 +2029,7 @@ void handleSerial(uint32_t nowMs) {
           break;
         }
         announceMovement(SRC_MANUAL, DOOR_OPEN);
-        enterOverride("opened at the console", nowMs);
+        enterOverride("opened at the console", nowMs, OVR_SRC_CONSOLE);
         if (MANUAL_HOLD_MS > 0) {
           g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
           if (g_manualHoldUntilMs == 0) g_manualHoldUntilMs = 1;  // 0 means "off"
@@ -2059,7 +2060,7 @@ void handleSerial(uint32_t nowMs) {
           break;
         }
         announceMovement(SRC_MANUAL, DOOR_CLOSED);
-        enterOverride("closed at the console", nowMs);
+        enterOverride("closed at the console", nowMs, OVR_SRC_CONSOLE);
         break;
       }
       case 'C': {
@@ -2104,14 +2105,23 @@ void handleSerial(uint32_t nowMs) {
       case 'K':
         g_locked = false;
         BleScanner::storeLock(false);
+        // Clears manual control too, exactly as the remote `unlock` verb does.
+        // The same word must mean the same thing on both channels: a `K` that
+        // left the override standing printed "the beacon controls the door
+        // again" about a door that would still refuse every automatic move.
+        clearOverride(nowMs);
         Con.println(F("[cmd] unlocked — the beacon controls the door again"));
         break;
       case 'O':
-        if (g_manualHoldUntilMs != 0) {
-          g_manualHoldUntilMs = 0;
-          Con.println(F("[cmd] manual hold cleared; automatic control resumed."));
+        // The only way to hand a cabled door back to the beacon. Before this
+        // existed, `clearOverride()` was reachable from the network verbs and
+        // from nowhere else, so a door on the bench stayed under manual
+        // control for the rest of its boot.
+        if (g_override || g_manualHoldUntilMs != 0) {
+          clearOverride(nowMs);  // clears the timed hold too
+          Con.println(F("[cmd] automatic control resumed."));
         } else {
-          Con.println(F("[cmd] no manual hold was active."));
+          Con.println(F("[cmd] already automatic; nothing was held."));
         }
         break;
 #endif
@@ -2346,7 +2356,8 @@ void updateVibrationNoise(uint32_t nowMs) {
   const SensorVerdict verdict =
       judgeIdleNoise(seen, VIBRATION_IDLE_NOISE_PULSES,
                      g_lastKnownEnd != g_vibIdleEndAtStart, g_vibRunsThisWindow,
-                     g_vibRunRanAway, g_sensorFault == SF_VIBRATION_NOISY);
+                     g_vibRunRanAway, g_vibRunActive,
+                     g_sensorFault == SF_VIBRATION_NOISY);
 
   if (verdict == SV_RAISE) {
     // The explanation once, the measurement every window.
@@ -2680,7 +2691,7 @@ void updatePosition(uint32_t nowMs) {
       // travel is a person. On a door where that is not true this would be the
       // wrong rule, because a gust would silently stop the door working; see
       // docs/SAFETY.md.
-      enterOverride("the door was moved by hand", millis());
+      enterOverride("the door was moved by hand", millis(), OVR_SRC_BY_HAND);
 #if PETDOOR_ENABLE_WIFI
       // Worth a radio burst of its own. A door moving by itself is the kind of
       // thing you want to find in the dashboard the same evening, not at the
@@ -3533,18 +3544,30 @@ void serviceMaintenance(uint32_t nowMs) {
 
 // Record that a person moved this door. One entry point, so a future caller
 // cannot take manual control without the door noticing it has been taken.
-void enterOverride(const char *why, uint32_t nowMs) {
+void enterOverride(const char *why, uint32_t nowMs, uint8_t src) {
   if (!g_override) {
     g_override = true;
     g_overrideSinceMs = nowMs;
     BleScanner::storeOverride(true);
-    EventLog::record(LOG_OVERRIDE, 1, g_tracker.filteredRssi());
+    // `src` rides in the spare column so the email can say HOW this happened.
+    // A hand on the door and a press on the dashboard are the same flag here
+    // and very different things to be told about — see OverrideSource.
+    EventLog::record(LOG_OVERRIDE, 1, g_tracker.filteredRssi(),
+                     static_cast<int16_t>(src));
     Con.printf("[manual] %s — this door is now under MANUAL control. Nothing "
                "automatic will open or close it until `door auto`.\r\n", why);
   }
 }
 
 void clearOverride(uint32_t nowMs) {
+  // Outside the guard below, and that is the point: the timed hold is a SECOND
+  // suppressor of automatic closing, and releasing manual control while it
+  // still ran left a door that had just printed "the beacon controls this door
+  // again" refusing to close for up to another five minutes. Nothing showed it
+  // but one line of `s`. Every release path routes through here, so clearing it
+  // here is what makes "released" mean released on all four of them — the two
+  // console keys, `unlock` and `door auto`.
+  g_manualHoldUntilMs = 0;
   if (g_override) {
     g_override = false;
     g_overrideSinceMs = 0;
@@ -3917,7 +3940,7 @@ bool applyRemoteCommand(const char *line, String &result) {
     }
     announceMovement(SRC_REMOTE, want);
     enterOverride(wantOpen ? "opened from the portal" : "closed from the portal",
-                  millis());
+                  millis(), OVR_SRC_PORTAL);
     if (wantOpen) {
       if (MANUAL_HOLD_MS > 0) {
         g_manualHoldUntilMs = millis() + MANUAL_HOLD_MS;
@@ -4024,7 +4047,7 @@ bool applyRemoteCommand(const char *line, String &result) {
       else if (strcmp(a, "close") == 0 || strcmp(a, "closed") == 0) want = 2;
       else { result = "lock takes nothing, 'open' or 'close'"; return false; }
 
-      enterOverride(want == 1 ? "lock open" : "lock close", millis());
+      enterOverride(want == 1 ? "lock open" : "lock close", millis(), OVR_SRC_LOCK);
       // Drive it to the held position now rather than waiting for somebody to
       // ask. `force` because the ordinary lockout and "already there" gates
       // would otherwise make this silently do nothing, and a hold that leaves
@@ -4045,9 +4068,6 @@ bool applyRemoteCommand(const char *line, String &result) {
     }
 
     const bool want = (verb[0] == 'l');
-    // `unlock` means "decide for yourself again", so it clears the hold as well
-    // as the lock. Clearing only one would leave a door that still refuses to
-    // move with nothing on the dashboard obviously set.
     // `unlock` means "decide for yourself again", so it also hands manual
     // control back. Clearing one and not the other would leave a door that
     // still refuses to move with nothing obviously set.

@@ -45,7 +45,28 @@ enum SensorVerdict : uint8_t {
 //                 permanently-stuck sensor would excuse itself forever.
 inline SensorVerdict judgeIdleNoise(uint32_t edges, uint32_t threshold,
                                     bool endChanged, uint8_t runs,
-                                    bool runRanAway, bool faultLatched) {
+                                    bool runRanAway, bool runInProgress,
+                                    bool faultLatched) {
+  // A TRAVEL STILL IN FLIGHT, and the one case this decision used to get
+  // backwards. The COMMANDED version never reaches here — `Actuator::busy()`
+  // invalidates the window before it can open — but a door moved BY HAND has
+  // no actuation to notice, and nothing stood down for it.
+  //
+  // The window could therefore expire in the middle of a hand-move: the door
+  // has left one end and not yet reached the other, so `endChanged` is still
+  // false and the run has not concluded, so `runs` is still 0 — while the
+  // sensor is correctly reporting thousands of real edges. Measured on the
+  // reference door: 12,642 edges raised SF_VIBRATION_NOISY one second before a
+  // limit switch confirmed the door had in fact moved. The door had the
+  // evidence and blamed the sensor for telling the truth.
+  //
+  // `!runRanAway` matters as much as the flag: a sensor stuck firing keeps a
+  // run "active" too, and standing down for that would make the fault
+  // unraisable — the exact silent failure in the other direction that this
+  // decision table exists to keep walkable. A run past VIBRATION_RUN_MAX_MS is
+  // abandoned and marked ran-away precisely so it still counts as noise.
+  if (runInProgress && !runRanAway) return SV_NOTHING;
+
   // The door demonstrably moved. Says nothing about the sensor either way, so
   // neither raise nor clear — a latched fault keeps waiting for a quiet window.
   if (endChanged) return SV_NOTHING;
