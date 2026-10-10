@@ -1230,10 +1230,18 @@ def notify_events(device, rows):
                       ("evidence", how),
                       ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
                 note="The sensors are working — this is them doing their job. "
-                     "The door has also taken itself under MANUAL control, so "
-                     "nothing automatic will move it until `door auto`. Further "
-                     "uncommanded moves stay quiet for an hour so a controller "
-                     "with a mode of its own cannot flood your inbox.",
+                     + ("A limit switch saw this, so the door has also taken "
+                        "itself under MANUAL control: nothing automatic will "
+                        "move it until `door auto`. "
+                        if not inferred else
+                        "This one was INFERRED, and an inferred travel "
+                        "deliberately does NOT take manual control — a wrong "
+                        "inference would make the door inert for good, and a "
+                        "door stuck CLOSED cannot let an animal in. So the "
+                        "collar can still move this door. ")
+                     + "Further uncommanded moves stay quiet for an hour so a "
+                       "controller with a mode of its own cannot flood your "
+                       "inbox.",
                 accent="bad")
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for uncommanded move: {why}\n")

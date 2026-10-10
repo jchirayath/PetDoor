@@ -2532,6 +2532,15 @@ static void concludeVibrationRun(uint32_t durationMs, uint32_t nowMs) {
     Con.println(F("[vib] !! out. UNKNOWN refuses nothing."));
   }
 
+  // DELIBERATELY NO enterOverride() HERE, unlike the measured path in
+  // updatePosition(). A measured uncommanded travel is a person, and treating
+  // it as manual control is invariant 24. An INFERRED one is a guess made from
+  // how long a vibration sensor felt something, and manual control does not
+  // expire — so a wrong guess makes the door inert permanently, and a door
+  // left inert CLOSED cannot let an animal in. Exactly the asymmetry the
+  // belief above is handled with: being wrong is not equally bad in both
+  // directions, so the weaker evidence buys the weaker consequence. The move
+  // is still logged, still chimes, and still mails.
   EventLog::record(LOG_UNCOMMANDED,
                    static_cast<uint8_t>(kUncommandedInferred + static_cast<uint8_t>(to)),
                    g_tracker.filteredRssi(),

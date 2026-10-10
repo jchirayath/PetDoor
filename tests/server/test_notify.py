@@ -648,6 +648,8 @@ def test_a_hand_move_mails_even_when_the_door_is_already_manual():
           "naming the evidence, because a switch saw this one")
     check("sensors are working" in blob,
           "and saying the hardware is fine, which is the bug it replaces")
+    check("taken itself under MANUAL control" in kw.get("note", ""),
+          "a MEASURED move does take manual control, and the mail says so")
 
 
 def test_an_inferred_uncommanded_move_is_not_mailed_as_measured():
@@ -671,6 +673,14 @@ def test_an_inferred_uncommanded_move_is_not_mailed_as_measured():
     check("MEASURED" not in blob, "and never as measured")
     check("12.5 s" in blob, "with the duration it was inferred from")
     check("CLOSED" in kw["title"] + blob, "and the end it reached")
+    # And it must NOT claim manual control was taken. concludeVibrationRun()
+    # deliberately does not call enterOverride(): manual control never expires,
+    # so a wrong inference would leave the door inert for good, and a door
+    # stuck CLOSED cannot let an animal in. Same asymmetry as invariant 19.
+    check("does NOT take manual control" in kw.get("note", ""),
+          "an inferred move says the collar can still move the door")
+    check("the collar can still move this door" in kw.get("note", ""),
+          "spelled out, because the opposite claim would be the dangerous one")
 
 
 def test_uncommanded_mail_is_rate_limited():
