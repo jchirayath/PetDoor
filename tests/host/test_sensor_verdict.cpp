@@ -124,6 +124,61 @@ static void test_a_hand_move_in_flight_is_not_a_noisy_sensor() {
      "a hand-move does not clear a latched fault");
 }
 
+// ---------------------------------------------------------------------------
+// judgeReedMissed — strikes are per END
+// ---------------------------------------------------------------------------
+
+static void test_a_failing_close_reed_can_actually_latch() {
+  // THE SEQUENCE THAT COULD NEVER TRIP. Invariant 14 reverses a stalled close,
+  // and that reversal ARRIVES on the open switch. With one counter for the
+  // whole door, reset on any arrival, the count went 1 -> 0 -> 1 -> 0 and
+  // SF_REED_MISSED was unreachable for a failing CLOSED reed whenever the OPEN
+  // reed worked — which, because a stalled close always fails open, is the
+  // normal case. Measured on the reference door 2026-10-10: three stalled
+  // closes, the door gave up and stayed open, and nothing ever named the
+  // closed switch.
+  const uint8_t kOpen = 0, kClosed = 1;
+  ReedMissedState st = {{0, 0}};
+
+  // Close stalls with the door plainly moving: one strike against CLOSED.
+  eq(judgeReedMissed(st, false, true, kClosed, 9000, 200, 2), SV_NOTHING,
+     "one stalled close is not yet a fault");
+  // The fail-open reversal arrives on the OPEN switch. That clears OPEN only.
+  eq(judgeReedMissed(st, true, false, kOpen, 9000, 200, 2), SV_CLEAR,
+     "the reversal arriving clears the OPEN end");
+  check(st.strikes[kClosed] == 1,
+        "and must NOT wipe what is known about the CLOSED end");
+  // Second stalled close: now it trips.
+  eq(judgeReedMissed(st, false, true, kClosed, 9000, 200, 2), SV_RAISE,
+     "the second stalled close raises the fault it could never reach before");
+}
+
+static void test_an_obstruction_is_not_a_sensor_fault() {
+  // A stall with little movement means the door STOPPED. STALLED already
+  // reports that, and faulting the sensor would blame the wrong part — the
+  // door is the thing that did not move.
+  ReedMissedState st = {{0, 0}};
+  eq(judgeReedMissed(st, false, true, 1, 10, 200, 2), SV_NOTHING,
+     "a stall with no movement is an obstruction, not a reed");
+  eq(judgeReedMissed(st, false, true, 1, 199, 200, 2), SV_NOTHING,
+     "just below the moving threshold still is not");
+  check(st.strikes[1] == 0, "and banks no strike against the switch");
+}
+
+static void test_arriving_clears_only_the_end_that_arrived() {
+  ReedMissedState st = {{0, 0}};
+  // Bank a strike at each end.
+  eq(judgeReedMissed(st, false, true, 0, 9000, 200, 3), SV_NOTHING, "open strike 1");
+  eq(judgeReedMissed(st, false, true, 1, 9000, 200, 3), SV_NOTHING, "closed strike 1");
+  eq(judgeReedMissed(st, true, false, 0, 9000, 200, 3), SV_CLEAR, "open arrives");
+  check(st.strikes[0] == 0, "the open end is cleared");
+  check(st.strikes[1] == 1, "the closed end is untouched — the bug, in one check");
+  // An out-of-range end index must do nothing rather than scribble.
+  eq(judgeReedMissed(st, false, true, 7, 9000, 200, 3), SV_NOTHING,
+     "an impossible end index is ignored");
+  check(st.strikes[0] == 0 && st.strikes[1] == 1, "and changes nothing");
+}
+
 static void test_the_noise_fault_can_finally_clear() {
   // THE FIX. A full window at rest, below the threshold the fault was raised
   // on, with the fault latched: let it go. Before this, SF_VIBRATION_NOISY was
@@ -203,6 +258,9 @@ int main() {
   test_a_moving_door_is_never_called_a_broken_sensor();
   test_a_run_that_never_ends_is_chatter_not_a_door();
   test_a_hand_move_in_flight_is_not_a_noisy_sensor();
+  test_a_failing_close_reed_can_actually_latch();
+  test_an_obstruction_is_not_a_sensor_fault();
+  test_arriving_clears_only_the_end_that_arrived();
   test_the_noise_fault_can_finally_clear();
   test_a_switch_that_stops_making_is_noticed();
   test_a_single_switch_build_is_never_nagged();

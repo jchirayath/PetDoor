@@ -108,3 +108,54 @@ inline SensorVerdict judgeReedAtRest(bool fitted, bool made,
   if (made) return faultLatched ? SV_CLEAR : SV_NOTHING;
   return disagreeForMs >= limitMs ? SV_RAISE : SV_NOTHING;
 }
+
+// ---------------------------------------------------------------------------
+// A travel that RAN and never arrived — per END, which is the whole point
+// ---------------------------------------------------------------------------
+//
+// A stall with plenty of movement means the door ran its travel and the switch
+// at the far end never saw it: a lost magnet, a drifted gap, a broken wire. A
+// stall with little movement means the door stopped — an obstruction — which
+// `STALLED` already reports and which is not a sensor fault.
+//
+// THE STRIKES ARE PER END, and that is the bug this replaces. The counter used
+// to be one number for the whole door, reset on ANY arrival with the reasoning
+// "it arrived, so the reeds are fine too". But invariant 14 says a stalled
+// CLOSE is reversed, and that reversal arrives on the OPEN switch — which says
+// nothing whatsoever about the CLOSED one. So the sequence ran
+//
+//     close stalls -> 1,  reversal arrives -> 0,  close stalls -> 1,  ...
+//
+// and the count could never reach the threshold. `SF_REED_MISSED` was
+// unreachable for a failing CLOSED reed whenever the OPEN reed worked, which —
+// because a stalled close always fails open — is the normal case. Measured on
+// the reference door 2026-10-10: three stalled closes, the door gave up and
+// stayed open exactly as designed, and nothing ever named the closed switch.
+// The message for it had been written and could not fire.
+//
+// `endIndex` is 0 or 1 — this header knows nothing of DoorState, by design.
+struct ReedMissedState {
+  uint8_t strikes[2];
+};
+
+inline SensorVerdict judgeReedMissed(ReedMissedState &st, bool arrived,
+                                     bool stalled, uint8_t endIndex,
+                                     uint32_t feltEdges,
+                                     uint32_t movingThreshold, uint8_t limit) {
+  if (endIndex > 1) return SV_NOTHING;
+
+  if (arrived) {
+    // Only THIS end is now known good. Clearing the other end's strikes is
+    // what made the fault unreachable.
+    st.strikes[endIndex] = 0;
+    return SV_CLEAR;
+  }
+  if (!stalled) return SV_NOTHING;
+
+  // The door stopped rather than ran: an obstruction, not a sensor. STALLED
+  // already says so, and a sensor fault here would blame the wrong part.
+  if (feltEdges < movingThreshold) return SV_NOTHING;
+
+  if (st.strikes[endIndex] < 255) st.strikes[endIndex]++;
+  return st.strikes[endIndex] >= limit ? SV_RAISE : SV_NOTHING;
+}
