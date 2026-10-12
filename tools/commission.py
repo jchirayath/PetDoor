@@ -226,20 +226,95 @@ def say(text):
     print(f"\n=== {text}")
 
 
-def ask(question):
-    """A yes/no the software cannot answer for itself."""
+# ---------------------------------------------------------------------------
+# Prompting
+# ---------------------------------------------------------------------------
+#
+# THREE KINDS, kept visually distinct, because one kind was ambiguous and that
+# is a real defect in a test somebody runs once while holding a screwdriver.
+# A single "[y/n]" was being used both for "do this, then answer" and for "did
+# you see that?" — and if the operator cannot tell which, half the answers are
+# about the wrong moment.
+#
+#   DO THIS NOW   prepare()  — an action by you, BEFORE anything is checked.
+#                              Nothing is being asked; it waits for Enter.
+#   SAFE?         gate()     — a yes/no that must be YES to go on. No retry:
+#                              "not sure" about a clear doorway is a no.
+#   WHAT HAPPENED confirm()  — about something that has ALREADY happened, and
+#                              therefore retryable. "Not sure" repeats it,
+#                              because the honest answer to an ambiguous beep
+#                              is to hear it again, not to guess.
+
+
+def prepare(text):
+    """An action the OPERATOR performs, before anything is measured."""
+    print(f"\n   ┌─ DO THIS NOW ──────────────────────────────────────────")
+    for line in text.split("\n"):
+        print(f"   │  {line}")
+    print(f"   └─ then press Enter. Type 's' to skip this step.")
+    a = input("   > ").strip().lower()
+    return None if a in ("s", "skip") else True
+
+
+def gate(question):
+    """A yes/no that must be YES to continue. Safety, not observation."""
     while True:
-        a = input(f"   ?  {question} [y/n/s=skip] ").strip().lower()
+        print(f"\n   ┌─ CONFIRM BEFORE CONTINUING ────────────────────────────")
+        print(f"   │  {question}")
+        print(f"   └─ [y = yes, go on / n = no, skip this]")
+        a = input("   > ").strip().lower()
+        if a in ("y", "yes"):
+            return True
+        if a in ("n", "no", "s", "skip"):
+            return False
+
+
+def confirm(question, retry=None, tries=3):
+    """Did you observe it? Asked AFTER the thing happened, and retryable.
+
+    `retry` re-performs the action. 'r' and '?' both use it — "not sure" is a
+    request to see it again, which is the only honest thing to do with an
+    ambiguous beep. Capped, so a stuck answer cannot loop forever.
+    """
+    attempt = 0
+    while True:
+        print(f"\n   ┌─ WHAT HAPPENED? (this has already run) ────────────────")
+        print(f"   │  {question}")
+        opts = "[y = yes / n = no"
+        if retry is not None and attempt < tries:
+            opts += " / r = do it again / ? = not sure, do it again"
+        opts += " / s = skip]"
+        print(f"   └─ {opts}")
+        a = input("   > ").strip().lower()
         if a in ("y", "yes"):
             return True
         if a in ("n", "no"):
             return False
         if a in ("s", "skip"):
             return None
+        if a in ("r", "retry", "?", "unsure", "not sure"):
+            if retry is None:
+                print("   (this step cannot be repeated — answer y, n or s)")
+                continue
+            if attempt >= tries:
+                print(f"   (already repeated {tries} times; answer y, n or s)")
+                continue
+            attempt += 1
+            print(f"   repeating ({attempt} of {tries})...")
+            try:
+                retry()
+            except Exception as exc:                        # noqa: BLE001
+                print(f"   !! could not repeat it: {exc}")
+
+
+def ask(question):
+    """Deprecated shim: prefer gate() or confirm(). Kept so nothing silently
+    changes meaning if a call site is missed."""
+    return gate(question)
 
 
 def pause(text):
-    input(f"   >  {text} (press Enter) ")
+    prepare(text)
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +446,8 @@ def group_reeds(con, args):
             record("reeds", f"{end} reed (not fitted)", SKIP,
                    "single-switch builds are legal")
             continue
-        go = ask(f"Push the panel fully onto its {label} stop and hold it there. Ready?")
+        go = prepare(f"Push the panel fully onto its {label} stop.\n"
+                     f"Hold it there — the switch is read while you hold it.")
         if go is None or go is False:
             record("reeds", f"{end} reed makes at its stop", SKIP)
             continue
@@ -427,11 +503,20 @@ def group_beeps(con, args):
             record("beeps", "timing menu opens", FAIL, "no menu header; aborting this group")
             return
         record("beeps", "timing menu opens", PASS)
+        def replay_beep():
+            con.key("w", settle=2.0)
+            con.line("beep", settle=3.0)
+
         con.line("beep", settle=3.0)
-        heard = ask("Did you hear THREE even beeps?")
+        heard = confirm("Did you hear THREE even beeps?", retry=replay_beep)
         record("beeps", "buzzer sounds", PASS if heard else (SKIP if heard is None else FAIL))
+        def replay_led():
+            con.key("w", settle=2.0)
+            con.line("led", settle=3.0)
+
+        con.key("w", settle=2.0)
         con.line("led", settle=3.0)
-        seen = ask("Did you see THREE flashes of the status LED?")
+        seen = confirm("Did you see THREE flashes of the status LED?", retry=replay_led)
         record("beeps", "status LED flashes", PASS if seen else (SKIP if seen is None else FAIL))
         con.line("q", settle=1.5)          # leave the submenu deliberately
         f2, _fl, t2 = con.status()
@@ -447,7 +532,12 @@ def group_lock(con, args):
         record("lock", "'k' locks", PASS)
     else:
         record("lock", "'k' locks", FAIL, "no LOCKED banner in 's'")
-    heard = ask("Did you hear the lock acknowledgement (two short low beeps)?")
+    def relock():
+        con.key("K", settle=1.2)      # off, so locking again re-sounds the ack
+        con.key("k", settle=1.8)
+
+    heard = confirm("Did you hear the LOCK acknowledgement — two short low beeps?",
+                    retry=relock)
     record("lock", "lock is audible", PASS if heard else (SKIP if heard is None else WARN),
            "" if heard else "the ack exists so a remote command is not silent")
 
@@ -482,48 +572,60 @@ def group_manual(con, args):
 
 
 def group_mute(con, args):
-    say("MUTE — portal-only, so this one is prompted rather than driven")
-    print("      There is deliberately no console key for mute: it was added as")
-    print("      a dashboard control. So this step asks you to send it.")
-    _f, flags, text = con.status()
-    was_muted = "MUTED" in flags or "MUTED" in text
-    if was_muted:
-        record("mute", "starting state", WARN, "already MUTED — will restore to unmuted")
+    """Mute and unmute, driven from the console.
 
-    go = ask("Send `mute` from the dashboard now. Ready to check?")
-    if go is None:
-        record("mute", "mute takes effect", SKIP)
-    else:
-        found = None
-        print("      waiting up to 6 min for the door to collect the command...")
-        end = time.time() + 360
-        while time.time() < end and not found:
-            con.read_for(5.0)
-            _f2, fl2, t2 = con.status()
-            if "MUTED" in fl2 or "MUTED" in t2:
-                found = True
-        record("mute", "mute takes effect", PASS if found else FAIL,
-               "status shows MUTED" if found else "no MUTED banner within 6 min")
-        if found:
-            ok = ask("A FAULT sound should still be audible when muted. "
-                     "Routine sounds off, alarms on — does that match the "
-                     "acknowledgement you just heard (or did not hear)?")
-            record("mute", "mute spares the alarms", PASS if ok else
-                   (SKIP if ok is None else WARN),
-                   "" if ok else "faults and CHIME_TEST are deliberately not routine")
+    This was a prompted step for as long as mute existed only as a dashboard
+    control — which meant the one function you could not exercise with a cable
+    was the one you most want when the buzzer itself is the problem. It now
+    lives in the timing menu beside `buzzer` and `beep`, so the suite can drive
+    it and a person at the door can reach it.
+    """
+    say("MUTE / UNMUTE — from the console, beside the other buzzer settings")
+    _f0, flags0, text0 = con.status()
+    was_muted = "MUTED" in flags0 or "MUTED" in text0
 
-    back = ask("Now send `unmute`. Ready to check?")
-    if back is None:
-        record("mute", "unmute restores sound", SKIP)
+    out = con.key("w", settle=2.5)
+    if "dwell / timing" not in out:
+        record("mute", "timing menu opens", FAIL, "no menu header; aborting this group")
         return
-    cleared = None
-    end = time.time() + 360
-    while time.time() < end and not cleared:
-        con.read_for(5.0)
-        _f3, fl3, t3 = con.status()
-        if "MUTED" not in fl3 and "MUTED" not in t3:
-            cleared = True
-    record("mute", "unmute restores sound", PASS if cleared else FAIL)
+    record("mute", "timing menu opens", PASS)
+
+    con.line("mute", settle=2.5)
+    _f, flags, text = con.status()
+    now_muted = "MUTED" in flags or "MUTED" in text
+    record("mute", "'mute' takes effect", PASS if now_muted else FAIL,
+           "status shows MUTED" if now_muted else "no MUTED banner after muting")
+
+    # The promise mute makes is specifically that it spares the alarms. Checked
+    # by ear, because the distinction is audible and nothing else can see it.
+    if now_muted:
+        con.key("w", settle=2.0)
+        con.line("beep", settle=3.0)
+        def replay_muted_beep():
+            con.key("w", settle=2.0)
+            con.line("beep", settle=3.0)
+
+        heard = confirm("The test beep is deliberately NOT a routine sound, so it "
+                        "should STILL sound even though the door is muted. "
+                        "Did you hear three beeps?",
+                        retry=replay_muted_beep)
+        record("mute", "mute spares the test and the alarms",
+               PASS if heard else (SKIP if heard is None else FAIL),
+               "" if heard else "a mute that silences the test makes the buzzer "
+                               "look broken, and one that silences faults hides "
+                               "a door that cannot shut an animal in")
+
+    con.key("w", settle=2.0)
+    con.line("unmute", settle=2.5)
+    _f2, flags2, text2 = con.status()
+    still = "MUTED" in flags2 or "MUTED" in text2
+    record("mute", "'unmute' restores sound", PASS if not still else FAIL)
+
+    # Put it back if the door arrived muted; restore() handles the warning if
+    # this cannot be done.
+    if was_muted and not still:
+        con.key("w", settle=2.0)
+        con.line("mute", settle=2.0)
 
 
 def group_movement(con, args):
@@ -534,7 +636,7 @@ def group_movement(con, args):
     print("      The door will OPEN and then CLOSE. A travel takes about twelve")
     print("      seconds and resolves asynchronously: the request prints first,")
     print("      the verdict up to ~15 s later.")
-    go = ask("Is the doorway CLEAR of animals, hands and obstructions?")
+    go = gate("Is the doorway CLEAR of animals, hands and obstructions?")
     if not go:
         record("movement", "whole group", SKIP, "doorway not confirmed clear")
         return
@@ -573,8 +675,9 @@ def group_movement(con, args):
                 record("movement", "a console move takes MANUAL control", FAIL,
                        "no MANUAL banner after opening by hand")
 
-    heard = ask("Did each movement beep, and did you hear a different pattern "
-                "for the console than you would for the collar?")
+    heard = confirm("Did each movement beep? (The console's pattern is three "
+                    "beeps; the collar's is two.) Repeating this would mean "
+                    "moving the door again, so there is no retry here.")
     record("movement", "movement is audible", PASS if heard else
            (SKIP if heard is None else WARN))
 
@@ -613,8 +716,9 @@ def group_beacon(con, args):
     if args.no_move:
         record("beacon", "collar opens the door", SKIP, "--no-move")
         return
-    go = ask("Bring the collar to the door to test a beacon-driven OPEN. Ready?")
-    if go is None or go is False:
+    go = prepare("Bring the collar/beacon to the door.\n"
+                 "Leave it there — the door should notice and OPEN by itself.")
+    if go is None:
         record("beacon", "collar opens the door", SKIP)
         return
     # Automatic control has to be live for this to mean anything.
@@ -671,7 +775,7 @@ def group_cycles(con, args):
     if args.no_move:
         record("cycles", "whole group", SKIP, "--no-move")
         return
-    if not ask("Is the doorway CLEAR of animals, hands and obstructions?"):
+    if not gate("Is the doorway CLEAR of animals, hands and obstructions?"):
         record("cycles", "whole group", SKIP, "doorway not confirmed clear")
         return
 
@@ -736,9 +840,10 @@ def group_uncommanded(con, args):
     record("uncommanded", "door is locked for the test", PASS)
 
     other = "CLOSED" if start.startswith("OPEN") else "OPEN"
-    go = ask(f"Now move the panel BY HAND fully to its {other} stop. "
-             f"Take a few seconds over it. Done?")
-    if go is None or go is False:
+    go = prepare(f"Move the panel BY HAND fully to its {other} stop.\n"
+                 f"Take a few seconds over it — a quick shove is too short to\n"
+                 f"be inferred from vibration if no switch sees it.")
+    if go is None:
         con.key("K", settle=1.5)
         record("uncommanded", "hand move is detected", SKIP)
         return
@@ -790,10 +895,15 @@ def group_obstruction(con, args):
         return
     print("      !! Use a SOLID OBJECT. Never a hand, an arm or a foot.")
     print("      !! The motor will drive against it for the full travel time.")
-    print("      !! Something soft and rigid, placed where the panel closes.")
-    go = ask("Open the door, place an obstruction in the doorway, and stand clear. Ready?")
-    if go is None or go is False:
+    print("      !! Use something RIGID that you do not mind marking — a block")
+    print("      !! of wood, a broom handle — placed where the panel closes.")
+    if not gate("Have you read the warning above, and is everyone clear of the door?"):
         record("obstruction", "whole group", SKIP, "not confirmed")
+        return
+    go = prepare("Place a SOLID OBJECT where the panel closes, so the door\n"
+                 "cannot complete a close. Then stand clear.")
+    if go is None:
+        record("obstruction", "whole group", SKIP, "skipped at the obstruction step")
         return
 
     # Make sure we are starting from open, so the close has somewhere to go.
@@ -843,7 +953,7 @@ def group_obstruction(con, args):
             record("obstruction", "a retry is scheduled", WARN,
                    "no retry and no give-up state visible")
 
-    pause("Now REMOVE the obstruction and stand clear")
+    prepare("REMOVE the obstruction and stand clear.")
     ok = _travel(con, "x", "CLOSED — ARRIVED", "close after clearing", "obstruction",
                  note="still stalling with the obstruction removed — this is no "
                       "longer about the obstruction")
@@ -928,10 +1038,7 @@ GROUPS = [
     ("uncommanded", group_uncommanded, "LOCKED, then moved by hand — prompted"),
     ("obstruction", group_obstruction, "a blocked close must FAIL OPEN — prompted"),
     ("beacon", group_beacon, "scanning, and a collar-driven open"),
-    # Late, because it is the slowest: the door collects a dashboard command on
-    # its own upload cadence, which ran to minutes, and there is no console key
-    # for mute to shortcut it with.
-    ("mute", group_mute, "mute and unmute — prompted, portal-only"),
+    ("mute", group_mute, "mute and unmute, from the console"),
     # Last, because it checks the footprints of everything above.
     ("logging", group_logging, "did the door record it, and can it send it"),
 ]
@@ -945,7 +1052,7 @@ NEEDS = {
     "uncommanded": "to move the panel BY HAND while the door is locked",
     "obstruction": "a SOLID OBJECT to block the doorway — never a hand",
     "beacon": "the collar/beacon, to bring near the door",
-    "mute": "the dashboard open, to send `mute` and `unmute` (slow: minutes)",
+    "mute": "to hear whether the test beep still sounds while muted",
 }
 
 
@@ -1185,7 +1292,10 @@ def main():
         print("\n  YOU WILL NEED:")
         for name, what in needed:
             print(f"    - {what}   ({name})")
-    print("\n  Steps that need you say so and wait. Answer 's' to skip any of them.")
+    print("\n  Prompts come in three kinds, and they say which: DO THIS NOW is an")
+    print("  action for you; CONFIRM BEFORE CONTINUING must be answered yes to go")
+    print("  on; WHAT HAPPENED asks about something that has ALREADY run, and")
+    print("  takes 'r' or '?' to repeat it. 's' skips any step.")
     print("  Ctrl-C is safe at any point: the door is put back as it was found.")
 
     if not args.no_move and any(n in moving for n, _f, _b in todo):

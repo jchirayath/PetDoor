@@ -855,6 +855,63 @@ def test_one_bad_row_does_not_silence_the_rest_of_the_batch():
 
 
 
+def test_console_and_remote_command_sets_do_not_silently_diverge():
+    """Every remote verb should be reachable from the console, or be listed here.
+
+    The gap is invisible until somebody is standing at a door with a cable and
+    discovers the one thing they need is dashboard-only. That happened with
+    `mute`: a sensor fault repeats every quarter of an hour, and the only way
+    to stop it required a browser — which is no use to the person holding the
+    screwdriver.
+
+    So the exceptions are enumerated, with a reason each. Adding a remote verb
+    without a console route now fails this test rather than being found in the
+    field.
+    """
+    ino = os.path.join(HERE, "..", "..", "petdoor", "petdoor.ino")
+    with open(ino, encoding="utf-8") as fh:
+        src = fh.read()
+    remote = set(re.findall(r'strcmp\(verb, "([a-z]+)"\)', src))
+    check(len(remote) > 20, f"found the remote verb list ({len(remote)} verbs)")
+
+    # Reachable from the console: a top-level key, or a word in a submenu.
+    console_keys = set(re.findall(r"^\s+case '(.)':", src, re.M))
+    console_words = set(re.findall(r'strcmp\(line, "([a-z]+)"\)', src))
+    console_words |= set(re.findall(r'strncmp\(line, "([a-z]+)"', src))
+
+    # verb -> how the console reaches it. A value of None means deliberately not.
+    ROUTE = {
+        "door": "o / x / O", "lock": "k", "unlock": "K", "maint": "M",
+        "ota": "p", "thresholds": "t", "macs": "m", "schedule": "n",
+        "filter": "f", "openfilter": "f", "dwell": "w", "upload": "u",
+        "scan": "d", "resetstats": "r", "calibrate": "C or w/calibrate",
+        "defaults": "w/clear", "travel": "w/travel", "pulse": "w/pulse",
+        "presses": "w/presses", "wake": "w/wake", "retry": "w/retry",
+        "gap": "w/gap", "sensors": "w/sensors", "vibration": "w/vibration",
+        "buzzer": "w/buzzer", "beep": "w/beep", "led": "w/led",
+        "mute": "w/mute", "unmute": "w/unmute",
+        # Deliberately remote-only, with the reason:
+        "reboot": None,   # '!' reboots to FLASH mode, which is a different act;
+                          # a plain restart from a cable is just unplugging it
+    }
+    missing = sorted(v for v in remote if v not in ROUTE)
+    check(not missing,
+          "every remote verb has a console route recorded, or is listed as "
+          f"deliberately remote-only (unrecorded: {missing})")
+
+    # The two that prompted this must really be there now.
+    for word in ("mute", "unmute"):
+        check(word in console_words,
+              f"the console parses '{word}' (it was dashboard-only)")
+
+    remote_only = sorted(v for v in remote if ROUTE.get(v, "") is None)
+    check(remote_only == ["reboot"],
+          f"the remote-only set is exactly what we think it is (got {remote_only})")
+    check("k" in console_keys and "K" in console_keys,
+          "the lock keys are still single top-level characters")
+
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -890,6 +947,7 @@ def main():
     test_a_swept_watchdog_reports_its_age_and_staleness()
     test_the_sweep_stamp_means_both_checks_ran()
     test_one_bad_row_does_not_silence_the_rest_of_the_batch()
+    test_console_and_remote_command_sets_do_not_silently_diverge()
     test_a_hand_move_mails_even_when_the_door_is_already_manual()
     test_an_inferred_uncommanded_move_is_not_mailed_as_measured()
     test_uncommanded_mail_is_rate_limited()

@@ -1450,6 +1450,9 @@ void printTimingMenu() {
   Con.println(F("    buzzer 27 passive      a bare transducer that needs a tone, not DC"));
   Con.println(F("    buzzer 27 active low   one that sounds when pulled to GND"));
   Con.println(F("    beep             three beeps now — find the pin by trying it"));
+  Con.println(F("    mute / unmute    silence the ROUTINE sounds (saved on device)"));
+  Con.println(F("      faults, stalls and uncommanded travel still sound: a door"));
+  Con.println(F("      that cannot shut an animal in is not silenced for quiet"));
   Con.println(F("    led              three flashes now — the same trick for the LED"));
   Con.println(F("    upload 60000 300000 1800000   how often the door calls in:"));
   Con.println(F("      <quiet before uploading> <minimum gap> <heartbeat>, all ms."));
@@ -1572,6 +1575,35 @@ void processTimingLine(char *line) {
     Con.printf("\r\n[dwell] three flashes on GPIO %d. Nothing at all means the\r\n",
                   PIN_STATUS_LED);
     Con.println(F("[dwell] wrong pin; lit solid and then dark means it is reversed."));
+    g_entry = ENTRY_NONE;
+    return;
+  }
+  // MUTE, which used to be reachable only from the dashboard.
+  //
+  // It lives here rather than on a top-level key for two reasons. It is a
+  // SAVED SETTING, like everything else in this menu, and the convention is
+  // that top-level keys are actions; and every new single-character key is
+  // another letter that does something when a word is typed at the top level
+  // by mistake, which is how `vibration 33` once became 'r' then 't' on a live
+  // door. Two keystrokes is a fair price for not adding that hazard.
+  //
+  // Being console-reachable matters most when the buzzer IS the problem: a
+  // sensor fault repeats every SENSOR_FAULT_BEEP_MS, and before this the only
+  // way to stop it was a dashboard — no help to somebody standing at the door
+  // with a cable and a screwdriver.
+  if (strcmp(line, "mute") == 0 || strcmp(line, "unmute") == 0) {
+    const bool want = (line[0] == 'm');
+    Chime::setMuted(want);
+    BleScanner::storeMute(want);
+    if (want) {
+      Con.println(F("\r\n[dwell] MUTED — the ticking, the arrival chime and the"));
+      Con.println(F("[dwell] acknowledgements are silent. STALLS, a door that never"));
+      Con.println(F("[dwell] moved, exhausted close retries, uncommanded travel and"));
+      Con.println(F("[dwell] sensor faults still sound: a door that cannot shut an"));
+      Con.println(F("[dwell] animal in is not something to silence for quiet."));
+    } else {
+      Con.println(F("\r\n[dwell] unmuted — the buzzer is back."));
+    }
     g_entry = ENTRY_NONE;
     return;
   }
