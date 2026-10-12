@@ -621,6 +621,288 @@ def group_beacon(con, args):
                PASS if arrived == "OPEN — ARRIVED" else FAIL, arrived or "no verdict")
 
 
+def _travel(con, key, arrived, label, group, note=""):
+    """Drive one leg and report. Returns the measured ms, or None."""
+    con.buf = ""
+    con.key(key, settle=2.0)
+    hit = con.await_text([arrived, "STALLED", "NEVER MOVED"], 45.0)
+    if hit == arrived:
+        m = re.search(r"in (\d+) ms", con.buf)
+        ms = int(m.group(1)) if m else None
+        tight = "within a second of the" in con.buf
+        record(group, f"{label} arrives", PASS,
+               (f"{ms} ms" if ms else "verified") + (" — ONLY JUST" if tight else ""))
+        if tight:
+            record(group, f"{label} has deadline margin", WARN,
+                   "the door says it only just made it; run 'calibrate'")
+        return ms
+    if hit == "STALLED":
+        record(group, f"{label} arrives", FAIL,
+               note or "STALLED: it started and never arrived")
+    elif hit == "NEVER MOVED":
+        record(group, f"{label} arrives", FAIL,
+               "nothing moved at all — the press was swallowed, or it is jammed")
+    else:
+        record(group, f"{label} arrives", FAIL, "no verdict within 45 s")
+    return None
+
+
+def group_cycles(con, args):
+    """Several full cycles, because one of anything proves nothing here.
+
+    Repeatability is the number that matters, not a single travel. The
+    reference door measured a close at 15,192 ms and then 11,901 ms minutes
+    apart on the same orientation — a 3.3 s spread against a documented
+    repeatability of 175 ms. One cycle would have reported either figure with a
+    straight face.
+    """
+    say(f"CYCLES — {args.cycles} full open/close cycles, timed")
+    if args.no_move:
+        record("cycles", "whole group", SKIP, "--no-move")
+        return
+    if not ask("Is the doorway CLEAR of animals, hands and obstructions?"):
+        record("cycles", "whole group", SKIP, "doorway not confirmed clear")
+        return
+
+    opens, closes = [], []
+    for n in range(1, args.cycles + 1):
+        print(f"      cycle {n} of {args.cycles}")
+        o = _travel(con, "o", "OPEN — ARRIVED", f"cycle {n} open", "cycles")
+        c = _travel(con, "x", "CLOSED — ARRIVED", f"cycle {n} close", "cycles")
+        if o:
+            opens.append(o)
+        if c:
+            closes.append(c)
+
+    for label, vals in (("open", opens), ("close", closes)):
+        if len(vals) < 2:
+            record("cycles", f"{label} repeatability", SKIP,
+                   f"only {len(vals)} good measurement(s)")
+            continue
+        spread = max(vals) - min(vals)
+        mean = sum(vals) // len(vals)
+        detail = f"mean {mean} ms, spread {spread} ms over {len(vals)} ({min(vals)}-{max(vals)})"
+        # A door that wanders by seconds blunts stall detection, because the
+        # deadline has to be set wide enough for the slowest travel.
+        if spread > 1500:
+            record("cycles", f"{label} repeatability", FAIL, detail +
+                   " — this door is ERRATIC. A travel time that wanders by "
+                   "seconds forces a wide deadline, which is what blunts stall "
+                   "detection. Suspect friction or a magnet near its capture limit")
+        elif spread > 700:
+            record("cycles", f"{label} repeatability", WARN, detail)
+        else:
+            record("cycles", f"{label} repeatability", PASS, detail)
+
+
+def group_uncommanded(con, args):
+    """LOCK the door, then move it by hand. Both halves are the test.
+
+    A lock stops the BEACON opening the door; it must not stop the door
+    noticing that somebody moved it. And a hand on the door is treated as that
+    person taking control, which is the behaviour that makes a held door stay
+    where it was left.
+    """
+    say("UNCOMMANDED — locked, then moved BY HAND")
+    if args.no_move:
+        print("      (--no-move only skips the MOTOR; you move this one yourself)")
+
+    fields, _fl, _t = con.status()
+    start = fields.get("position", "?")
+    if start.startswith("UNKNOWN"):
+        record("uncommanded", "starts from a known end", SKIP,
+               "the panel is between the ends; put it on a stop first")
+        return
+    record("uncommanded", "starts from a known end", PASS, start)
+
+    con.key("k", settle=2.0)
+    _f, flags, text = con.status()
+    if not ("LOCKED" in flags or "LOCKED" in text):
+        record("uncommanded", "door is locked for the test", FAIL, "'k' did not take")
+        return
+    record("uncommanded", "door is locked for the test", PASS)
+
+    other = "CLOSED" if start.startswith("OPEN") else "OPEN"
+    go = ask(f"Now move the panel BY HAND fully to its {other} stop. "
+             f"Take a few seconds over it. Done?")
+    if go is None or go is False:
+        con.key("K", settle=1.5)
+        record("uncommanded", "hand move is detected", SKIP)
+        return
+
+    con.buf = ""
+    hit = con.await_text(["NOTHING commanded it", "uncommanded",
+                          "moved to", "[vib]"], 30.0)
+    if hit:
+        record("uncommanded", "hand move is detected", PASS,
+               "the door noticed and said so")
+    else:
+        record("uncommanded", "hand move is detected", FAIL,
+               "nothing on the console. With no reed at that end the move can "
+               "only be INFERRED from vibration, and only if it took between "
+               "the band shown in 's' — a quick shove is invisible to both paths")
+
+    f2, flags2, text2 = con.status()
+    record("uncommanded", "lock did not suppress detection",
+           PASS if hit else FAIL,
+           "a lock gates the BEACON, never the door's own senses")
+    if "MANUAL" in flags2 or "MANUAL " in text2:
+        record("uncommanded", "a hand takes MANUAL control", PASS)
+    else:
+        record("uncommanded", "a hand takes MANUAL control", WARN,
+               "no MANUAL banner. Expected for a MEASURED move; an INFERRED one "
+               "deliberately does not seize the door, because acting on a guess "
+               "would make it inert for good")
+    newpos = f2.get("position", "?")
+    record("uncommanded", "position followed the panel",
+           PASS if not newpos.startswith("UNKNOWN") else WARN, newpos)
+
+    con.key("K", settle=1.5)
+    _f3, flags3, text3 = con.status()
+    record("uncommanded", "unlocked again",
+           PASS if not ("LOCKED" in flags3 or "LOCKED" in text3) else FAIL)
+
+
+def group_obstruction(con, args):
+    """Block the door and find out what it does. The point of the project.
+
+    A stalled close must FAIL OPEN — reversed, not retried — because a door
+    stopped partway shut is exactly when something may be under it. This is
+    invariant 14, it is the behaviour an animal's safety rests on, and it has
+    never been tested by anything but accident.
+    """
+    say("OBSTRUCTION — a blocked close must FAIL OPEN")
+    if args.no_move:
+        record("obstruction", "whole group", SKIP, "--no-move")
+        return
+    print("      !! Use a SOLID OBJECT. Never a hand, an arm or a foot.")
+    print("      !! The motor will drive against it for the full travel time.")
+    print("      !! Something soft and rigid, placed where the panel closes.")
+    go = ask("Open the door, place an obstruction in the doorway, and stand clear. Ready?")
+    if go is None or go is False:
+        record("obstruction", "whole group", SKIP, "not confirmed")
+        return
+
+    # Make sure we are starting from open, so the close has somewhere to go.
+    fields, _fl, _t = con.status()
+    if not fields.get("position", "").startswith("OPEN"):
+        _travel(con, "o", "OPEN — ARRIVED", "open before the test", "obstruction")
+
+    con.buf = ""
+    con.key("x", settle=2.0)
+    hit = con.await_text(["STALLED", "NEVER MOVED", "CLOSED — ARRIVED"], 45.0)
+    if hit == "CLOSED — ARRIVED":
+        record("obstruction", "the obstruction was detected", FAIL,
+               "the door closed anyway — the obstruction was not in its path, "
+               "or it is strong enough to push through. Re-site it and re-run")
+        return
+    if hit == "NEVER MOVED":
+        record("obstruction", "the obstruction was detected", PASS,
+               "NEVER MOVED — nothing moved, so nothing is trapped")
+    elif hit == "STALLED":
+        record("obstruction", "the obstruction was detected", PASS,
+               "STALLED — it started and never arrived")
+    else:
+        record("obstruction", "the obstruction was detected", FAIL,
+               "no verdict within 45 s")
+        return
+
+    if hit == "STALLED":
+        # The safety behaviour itself.
+        if "being reopened" in con.buf or "It was CLOSING" in con.buf:
+            record("obstruction", "a stalled close FAILS OPEN", PASS,
+                   "the door said it was reopening")
+        else:
+            record("obstruction", "a stalled close FAILS OPEN", FAIL,
+                   "no sign of a reversal — invariant 14 is not holding")
+        back = con.await_text(["OPEN — ARRIVED"], 45.0)
+        record("obstruction", "the reversal reaches OPEN",
+               PASS if back else FAIL,
+               "" if back else "it reversed but never got back to open")
+        f2, _fl2, t2 = con.status()
+        if "retrying in" in t2 or f2.get("retrying in"):
+            record("obstruction", "a retry is scheduled", PASS,
+                   f2.get("retrying in", "see 's'"))
+        elif "GIVEN UP" in t2 or f2.get("gave up"):
+            record("obstruction", "attempts are capped", PASS,
+                   "it has given up and is staying open, which is the designed end")
+        else:
+            record("obstruction", "a retry is scheduled", WARN,
+                   "no retry and no give-up state visible")
+
+    pause("Now REMOVE the obstruction and stand clear")
+    ok = _travel(con, "x", "CLOSED — ARRIVED", "close after clearing", "obstruction",
+                 note="still stalling with the obstruction removed — this is no "
+                      "longer about the obstruction")
+    record("obstruction", "recovers once cleared", PASS if ok else FAIL)
+
+
+def group_logging(con, args):
+    """Did any of the above reach the log, and does it leave the door?
+
+    The recurring failure in this project is not a door that misbehaves, it is
+    a door that knew something and told nobody. So the suite checks its own
+    footprints.
+    """
+    say("LOGGING — did the door record what just happened, and can it send it")
+    con.buf = ""
+    os.write(con.fd, b"l")
+    text = ""
+    end = time.time() + 20.0
+    while time.time() < end:
+        text += con.read_for(0.5)
+        if "---- event log" in text and re.search(r"\n\s*\n", text[-80:] or ""):
+            break
+    if "---- event log" not in text:
+        record("logging", "event log dumps", FAIL, "no log header from 'l'")
+        return
+    m = re.search(r"event log \((\d+)/(\d+)\)", text)
+    record("logging", "event log dumps", PASS,
+           f"{m.group(1)} of {m.group(2)} entries" if m else "dumped")
+
+    seen = set(re.findall(
+        r"\b(BOOT|OPEN|CLOSE|REFUSED|STALLED|UNCOMMANDED|RETRY|GAVE_UP|WAKE|"
+        r"SENSOR_FAULT|SENSOR_OK|MAINT|MANUAL|CONSOLE|NO_MOVE|FIX_LOST|FIX_GOT)\b",
+        text))
+    record("logging", "log carries event types", PASS if seen else FAIL,
+           ", ".join(sorted(seen)) if seen else "none recognised")
+    # The suite has just opened and closed the door at least twice; if none of
+    # that is in the ring, the ring is not recording what the door does.
+    did_move = {"OPEN", "CLOSE"} & seen
+    if args.no_move:
+        record("logging", "this run's movements are in the log", SKIP, "--no-move")
+    else:
+        record("logging", "this run's movements are in the log",
+               PASS if did_move else FAIL,
+               ", ".join(sorted(did_move)) if did_move else
+               "no OPEN/CLOSE in the ring after moving the door")
+
+    con.buf = ""
+    os.write(con.fd, b"u")
+    # Wait ONLY for the terminal outcomes. "radio up" is printed first and
+    # would short-circuit the wait — await_text checks its needles in order on
+    # every pass, so a needle that arrives early beats one that matters more.
+    # It is still useful afterwards, to tell "the radio tried and the upload
+    # did not finish" from "nothing happened at all".
+    hit = con.await_text(["uploaded", "no WIFI_SSID", "not compiled in"], 120.0)
+    if hit == "uploaded":
+        m2 = re.search(r"uploaded (\d+) events", con.buf)
+        record("logging", "the log reaches the server", PASS,
+               f"{m2.group(1)} events" if m2 else "upload reported")
+    elif hit:
+        record("logging", "the log reaches the server", SKIP,
+               f"WiFi is not configured on this door ({hit})")
+    elif "radio up" in con.buf:
+        record("logging", "the log reaches the server", FAIL,
+               "the radio came up and no upload completed within 120 s — it is "
+               "reaching the air but not the server. Check the endpoint and the "
+               "shared key; 's' shows the last HTTP response")
+    else:
+        record("logging", "the log reaches the server", FAIL,
+               "the radio never even came up within 120 s. The ring is durable, "
+               "so nothing is lost — but nothing remote can see it either")
+
+
 GROUPS = [
     ("console", group_console, "does the door talk, and what is it running"),
     ("sensors", group_sensors, "reeds and vibration, at rest"),
@@ -629,8 +911,12 @@ GROUPS = [
     ("lock", group_lock, "lock and unlock"),
     ("manual", group_manual, "manual override, and that it can be released"),
     ("mute", group_mute, "mute and unmute — prompted, portal-only"),
-    ("movement", group_movement, "open and close, driving the motor"),
+    ("movement", group_movement, "one open and close, driving the motor"),
+    ("cycles", group_cycles, "several timed cycles, and repeatability"),
+    ("uncommanded", group_uncommanded, "LOCKED, then moved by hand — prompted"),
+    ("obstruction", group_obstruction, "a blocked close must FAIL OPEN — prompted"),
     ("beacon", group_beacon, "scanning, and a collar-driven open"),
+    ("logging", group_logging, "did the door record it, and can it send it"),
 ]
 
 
@@ -818,6 +1104,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", default="/dev/cu.usbserial-0001")
+    ap.add_argument("--cycles", type=int, default=3,
+                    help="how many open/close cycles the cycles group runs (default 3)")
     ap.add_argument("--no-move", action="store_true",
                     help="skip every test that drives the motor")
     ap.add_argument("--only", default="",
@@ -835,7 +1123,7 @@ def main():
 
     if args.list:
         for name, _fn, blurb in GROUPS:
-            print(f"  {name:<10} {blurb}")
+            print(f"  {name:<12} {blurb}")
         return 0
 
     wanted = [g.strip() for g in args.only.split(",") if g.strip()] or None
@@ -850,7 +1138,8 @@ def main():
     print(f"\nport      : {args.port}")
     print(f"groups    : {', '.join(n for n, _f, _b in todo)}")
     print(f"motor     : {'SKIPPED (--no-move)' if args.no_move else 'WILL BE DRIVEN'}")
-    if not args.no_move and any(n in ("movement", "beacon") for n, _f, _b in todo):
+    moving = ("movement", "cycles", "obstruction", "beacon")
+    if not args.no_move and any(n in moving for n, _f, _b in todo):
         print("\n  !! This will drive the door. Keep hands and animals clear.")
         if input("  Type 'go' to continue: ").strip().lower() != "go":
             print("  cancelled")
