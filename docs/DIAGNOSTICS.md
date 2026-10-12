@@ -1421,3 +1421,37 @@ firmware.
   open"
 - [TUNING.md](TUNING.md) — choosing thresholds from calibration output
 - [BEACON-SETUP.md](BEACON-SETUP.md) — finding and configuring a beacon
+
+## Which reed is faulty? (`tools/commission.py --only reeds`)
+
+**At rest this question has no answer.** Two switches both reading `open` means
+either a dead reed or a panel parked between the two ends, and nothing in the
+firmware can tell those apart — it only knows that neither switch is made. The
+status line says `position : UNKNOWN (measured)` and is being perfectly honest.
+
+The way to find out is to put the panel somewhere **known** and ask the switch:
+
+```bash
+tools/commission.py --only reeds
+```
+
+It prompts you to push the panel onto each stop **by hand**, then reads the
+switch and names the faulty one.
+
+**By hand, not with the motor, and that distinction is the whole point.** On
+2026-10-10 the closed reed made perfectly when the panel was pressed home and
+never made when the motor drove it — four stalled closes in a row. The reed was
+fine; the fault was *where the motor parks the panel*, a couple of millimetres
+short of the magnet's capture range. A test that used the motor would have
+condemned a working reed. This one separates them:
+
+| hand-moved onto the stop | motor-driven travel | what it is |
+|---|---|---|
+| reed MADE | arrives | working |
+| reed MADE | STALLS | the motor stops short, or the capture range is too tight — **move the magnet**, the reed is fine |
+| reed NOT made | STALLS | **that reed, its magnet, or its connector** |
+| both MADE at once | — | shorted wire, stuck switch, or a stray magnet |
+
+A bad **closed** reed is the worse half. Every close stalls, and a stalled close
+fails the door OPEN by design — so the door stands open, an animal cannot be
+shut in, and the firmware is behaving exactly as specified throughout.
