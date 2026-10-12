@@ -482,48 +482,54 @@ def group_manual(con, args):
 
 
 def group_mute(con, args):
-    say("MUTE — portal-only, so this one is prompted rather than driven")
-    print("      There is deliberately no console key for mute: it was added as")
-    print("      a dashboard control. So this step asks you to send it.")
-    _f, flags, text = con.status()
-    was_muted = "MUTED" in flags or "MUTED" in text
-    if was_muted:
-        record("mute", "starting state", WARN, "already MUTED — will restore to unmuted")
+    """Mute and unmute, driven from the console.
 
-    go = ask("Send `mute` from the dashboard now. Ready to check?")
-    if go is None:
-        record("mute", "mute takes effect", SKIP)
-    else:
-        found = None
-        print("      waiting up to 6 min for the door to collect the command...")
-        end = time.time() + 360
-        while time.time() < end and not found:
-            con.read_for(5.0)
-            _f2, fl2, t2 = con.status()
-            if "MUTED" in fl2 or "MUTED" in t2:
-                found = True
-        record("mute", "mute takes effect", PASS if found else FAIL,
-               "status shows MUTED" if found else "no MUTED banner within 6 min")
-        if found:
-            ok = ask("A FAULT sound should still be audible when muted. "
-                     "Routine sounds off, alarms on — does that match the "
-                     "acknowledgement you just heard (or did not hear)?")
-            record("mute", "mute spares the alarms", PASS if ok else
-                   (SKIP if ok is None else WARN),
-                   "" if ok else "faults and CHIME_TEST are deliberately not routine")
+    This was a prompted step for as long as mute existed only as a dashboard
+    control — which meant the one function you could not exercise with a cable
+    was the one you most want when the buzzer itself is the problem. It now
+    lives in the timing menu beside `buzzer` and `beep`, so the suite can drive
+    it and a person at the door can reach it.
+    """
+    say("MUTE / UNMUTE — from the console, beside the other buzzer settings")
+    _f0, flags0, text0 = con.status()
+    was_muted = "MUTED" in flags0 or "MUTED" in text0
 
-    back = ask("Now send `unmute`. Ready to check?")
-    if back is None:
-        record("mute", "unmute restores sound", SKIP)
+    out = con.key("w", settle=2.5)
+    if "dwell / timing" not in out:
+        record("mute", "timing menu opens", FAIL, "no menu header; aborting this group")
         return
-    cleared = None
-    end = time.time() + 360
-    while time.time() < end and not cleared:
-        con.read_for(5.0)
-        _f3, fl3, t3 = con.status()
-        if "MUTED" not in fl3 and "MUTED" not in t3:
-            cleared = True
-    record("mute", "unmute restores sound", PASS if cleared else FAIL)
+    record("mute", "timing menu opens", PASS)
+
+    con.line("mute", settle=2.5)
+    _f, flags, text = con.status()
+    now_muted = "MUTED" in flags or "MUTED" in text
+    record("mute", "'mute' takes effect", PASS if now_muted else FAIL,
+           "status shows MUTED" if now_muted else "no MUTED banner after muting")
+
+    # The promise mute makes is specifically that it spares the alarms. Checked
+    # by ear, because the distinction is audible and nothing else can see it.
+    if now_muted:
+        con.key("w", settle=2.0)
+        con.line("beep", settle=3.0)
+        heard = ask("CHIME_TEST is deliberately NOT routine, so the test beeps "
+                    "should STILL sound while muted. Did you hear three beeps?")
+        record("mute", "mute spares the test and the alarms",
+               PASS if heard else (SKIP if heard is None else FAIL),
+               "" if heard else "a mute that silences the test makes the buzzer "
+                               "look broken, and one that silences faults hides "
+                               "a door that cannot shut an animal in")
+
+    con.key("w", settle=2.0)
+    con.line("unmute", settle=2.5)
+    _f2, flags2, text2 = con.status()
+    still = "MUTED" in flags2 or "MUTED" in text2
+    record("mute", "'unmute' restores sound", PASS if not still else FAIL)
+
+    # Put it back if the door arrived muted; restore() handles the warning if
+    # this cannot be done.
+    if was_muted and not still:
+        con.key("w", settle=2.0)
+        con.line("mute", settle=2.0)
 
 
 def group_movement(con, args):
@@ -928,10 +934,7 @@ GROUPS = [
     ("uncommanded", group_uncommanded, "LOCKED, then moved by hand — prompted"),
     ("obstruction", group_obstruction, "a blocked close must FAIL OPEN — prompted"),
     ("beacon", group_beacon, "scanning, and a collar-driven open"),
-    # Late, because it is the slowest: the door collects a dashboard command on
-    # its own upload cadence, which ran to minutes, and there is no console key
-    # for mute to shortcut it with.
-    ("mute", group_mute, "mute and unmute — prompted, portal-only"),
+    ("mute", group_mute, "mute and unmute, from the console"),
     # Last, because it checks the footprints of everything above.
     ("logging", group_logging, "did the door record it, and can it send it"),
 ]
@@ -945,7 +948,7 @@ NEEDS = {
     "uncommanded": "to move the panel BY HAND while the door is locked",
     "obstruction": "a SOLID OBJECT to block the doorway — never a hand",
     "beacon": "the collar/beacon, to bring near the door",
-    "mute": "the dashboard open, to send `mute` and `unmute` (slow: minutes)",
+    "mute": "to hear whether the test beep still sounds while muted",
 }
 
 

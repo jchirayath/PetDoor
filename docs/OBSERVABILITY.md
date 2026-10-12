@@ -55,6 +55,22 @@ found, and a mute that silenced the test would make the buzzer look broken.
 Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
 `mute` is a flag; `buzzer off` is a configuration change.
 
+**Reachable from the console as well as the dashboard** — `w` then `mute` or
+`unmute`, beside `buzzer` and `beep`. It was dashboard-only to begin with, which
+got the priority exactly backwards: a sensor fault repeats every
+`SENSOR_FAULT_BEEP_MS`, and the person most likely to want it quiet is the one
+standing at the door with a cable and a screwdriver, who had no way to do it.
+
+It sits in the timing menu rather than on a top-level key because it is a saved
+setting like everything else there, and because every new single-character key
+is another letter that does something when a word is mistyped at the top level.
+
+**The only thing now reachable remotely and not from the console is `reboot`**,
+and that is deliberate: `!` reboots into FLASH mode, which is a different act,
+and a plain restart from a cable is unplugging it. A test in
+`tests/server/run.sh` asserts that list stays exactly one entry long, so a new
+remote verb cannot quietly become dashboard-only.
+
 ## Producer × sink
 
 `✓` carried, `—` not carried, `!` deliberately not.
