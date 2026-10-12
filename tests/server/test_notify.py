@@ -820,6 +820,41 @@ def test_the_sweep_stamp_means_both_checks_ran():
 
 
 
+def test_one_bad_row_does_not_silence_the_rest_of_the_batch():
+    """A door uploads its whole ring at once, so one upload carries many alerts.
+
+    Without per-row isolation the first row whose branch raised took every
+    later alert in the batch with it, and the exception surfaced as a 500 on
+    /ingest — so the door retried the upload and the same row silenced it
+    again. Nothing in the logs named the alert that went missing.
+
+    Driven by making the sender itself throw for one specific event, which is
+    the only way to exercise the handler without a deliberately malformed row.
+    """
+    SENT.clear()
+    srv._notified_at.clear()
+    seed_device("batch", int(time.time()))
+    real = srv.send_notification
+
+    def explode_on_gave_up(subject, **kw):
+        if "given up" in subject or "GAVE_UP" in subject:
+            raise RuntimeError("renderer blew up on this one")
+        return real(subject, **kw)
+
+    srv.send_notification = explode_on_gave_up
+    try:
+        srv.notify_events("batch", [
+            {"type": "GAVE_UP", "detail": 3, "uptime": 10, "boot": 9, "rssi": -60},
+            {"type": "BOOT", "detail": 9, "uptime": 11, "boot": 9, "rssi": 0},
+        ])
+    finally:
+        srv.send_notification = real
+    titles = [kw.get("title") for _s, kw in SENT]
+    check(any("fell over" in (t or "") for t in titles),
+          f"the BOOT alert after the failing row still went out (got {titles})")
+
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -854,6 +889,7 @@ def main():
     test_a_watchdog_that_never_ran_does_not_look_healthy()
     test_a_swept_watchdog_reports_its_age_and_staleness()
     test_the_sweep_stamp_means_both_checks_ran()
+    test_one_bad_row_does_not_silence_the_rest_of_the_batch()
     test_a_hand_move_mails_even_when_the_door_is_already_manual()
     test_an_inferred_uncommanded_move_is_not_mailed_as_measured()
     test_uncommanded_mail_is_rate_limited()

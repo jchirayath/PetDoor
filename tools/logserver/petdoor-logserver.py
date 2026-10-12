@@ -1044,304 +1044,324 @@ def notify_events(device, rows):
     if not NOTIFY_TO:
         return
     for r in rows:
-        # A wrong password against the network console. That port can open the
-        # door, so a failed attempt is the single event here you would want to
-        # hear about the same day rather than next time you open a dashboard.
-        if r["type"] == "CONSOLE" and r["detail"] == 0:
-            ok, why = send_notification(
-                f"wrong console password on {device}",
-                title="Wrong password on the door's console",
-                lede="Somebody tried the door's network console and gave the "
-                     "wrong password.",
-                rows=[("door", device),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"])),
-                      ("from", ("an address ending .%s on your network" % r["src"])
-                               if r.get("src") else
-                               "not reported (door firmware predates this)")],
-                note="The console only listens during a maintenance window, and "
-                     "it drops a client that fails to authenticate. If you were "
-                     "not calibrating the door just now, something on your "
-                     "network was knocking on it.",
-                cta_label="Open the dashboard",
-                accent="alert")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for console reject: {why}\n")
-
-        # The beacon's battery went low. The second event here that earns a mail,
-        # and it earns it for an unobvious reason: a flat beacon does NOT shut
-        # the door. The firmware refuses to act until it has heard the collar
-        # once since boot, so a cell that dies overnight leaves the door stuck
-        # wherever it was, with the animal on the wrong side and nothing
-        # obviously broken. You want days of notice, and a coin cell gives them.
+        # ONE BAD ROW MUST NOT SILENCE THE REST OF THE BATCH.
         #
-        # Safe to mail because the firmware latches with a recovery margin and
-        # INSERT OR IGNORE dedupes the ring: one crossing, one row, one message.
-        elif r["type"] == "BEACON_LOW" and r["detail"] == 1:
-            mv = r["src"] if "src" in r.keys() and r["src"] else None
-            ok, why = send_notification(
-                f"beacon battery low on {device}",
-                title="The beacon's battery is going flat",
-                lede="The door's beacon reported a low battery. Replace the "
-                     "cell in the next few days.",
-                rows=[("door", device),
-                      ("battery", f"{mv} mV" if mv else "below the threshold"),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="A flat beacon does not close the door on anything — the "
-                     "door will not act at all until it has heard the collar "
-                     "once since starting up. What it does instead is stop "
-                     "working, without looking broken, which is why this is "
-                     "worth an email rather than a line in a log. A CR2032 "
-                     "reads about 3000 mV fresh.",
-                cta_label="Open the dashboard",
-                accent="warn")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for beacon battery: {why}\n")
-
-        # A sensor went bad. The third event to earn a mail, and the most
-        # urgent of the three.
+        # A door uploads its whole ring at once, so a single upload can carry
+        # a boot, a stall and a sensor fault together. Without this, the first
+        # row whose branch raised took every later alert in the batch with it
+        # and the exception surfaced as a 500 on /ingest — so the door would
+        # also retry the upload, and the same row would silence it again.
+        # Nothing in the logs would name the alert that went missing.
         #
-        # Once the limit switches are fitted the firmware TRUSTS them, so a
-        # switch that stops making does not degrade gracefully: every close
-        # becomes a STALL, and a stalled close fails OPEN by design. The door
-        # then sits open night after night, having done exactly the right thing
-        # with wrong information, and nothing about it looks broken. Same shape
-        # for a vibration sensor firing at idle — the wake probe reads it as
-        # "already moving" and suppresses the actuating press.
+        # Never observed firing, and that is the point: it is the alerting path
+        # that must keep working on the day something unexpected arrives in it.
+        try:
+            _notify_one(device, r)
+        except Exception as exc:                        # noqa: BLE001
+            sys.stderr.write(
+                "  NOTIFY ERROR on %s %s/detail=%s (continuing): %r\n"
+                % (device, r.get("type"), r.get("detail"), exc))
+
+
+def _notify_one(device, r):
+    # A wrong password against the network console. That port can open the
+    # door, so a failed attempt is the single event here you would want to
+    # hear about the same day rather than next time you open a dashboard.
+    if r["type"] == "CONSOLE" and r["detail"] == 0:
+        ok, why = send_notification(
+            f"wrong console password on {device}",
+            title="Wrong password on the door's console",
+            lede="Somebody tried the door's network console and gave the "
+                 "wrong password.",
+            rows=[("door", device),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"])),
+                  ("from", ("an address ending .%s on your network" % r["src"])
+                           if r.get("src") else
+                           "not reported (door firmware predates this)")],
+            note="The console only listens during a maintenance window, and "
+                 "it drops a client that fails to authenticate. If you were "
+                 "not calibrating the door just now, something on your "
+                 "network was knocking on it.",
+            cta_label="Open the dashboard",
+            accent="alert")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for console reject: {why}\n")
+
+    # The beacon's battery went low. The second event here that earns a mail,
+    # and it earns it for an unobvious reason: a flat beacon does NOT shut
+    # the door. The firmware refuses to act until it has heard the collar
+    # once since boot, so a cell that dies overnight leaves the door stuck
+    # wherever it was, with the animal on the wrong side and nothing
+    # obviously broken. You want days of notice, and a coin cell gives them.
+    #
+    # Safe to mail because the firmware latches with a recovery margin and
+    # INSERT OR IGNORE dedupes the ring: one crossing, one row, one message.
+    elif r["type"] == "BEACON_LOW" and r["detail"] == 1:
+        mv = r["src"] if "src" in r.keys() and r["src"] else None
+        ok, why = send_notification(
+            f"beacon battery low on {device}",
+            title="The beacon's battery is going flat",
+            lede="The door's beacon reported a low battery. Replace the "
+                 "cell in the next few days.",
+            rows=[("door", device),
+                  ("battery", f"{mv} mV" if mv else "below the threshold"),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="A flat beacon does not close the door on anything — the "
+                 "door will not act at all until it has heard the collar "
+                 "once since starting up. What it does instead is stop "
+                 "working, without looking broken, which is why this is "
+                 "worth an email rather than a line in a log. A CR2032 "
+                 "reads about 3000 mV fresh.",
+            cta_label="Open the dashboard",
+            accent="warn")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for beacon battery: {why}\n")
+
+    # A sensor went bad. The third event to earn a mail, and the most
+    # urgent of the three.
+    #
+    # Once the limit switches are fitted the firmware TRUSTS them, so a
+    # switch that stops making does not degrade gracefully: every close
+    # becomes a STALL, and a stalled close fails OPEN by design. The door
+    # then sits open night after night, having done exactly the right thing
+    # with wrong information, and nothing about it looks broken. Same shape
+    # for a vibration sensor firing at idle — the wake probe reads it as
+    # "already moving" and suppresses the actuating press.
+    #
+    # Latched in the firmware, so this is one message per failure and not
+    # one per travel.
+    elif r["type"] == "SENSOR_FAULT":
+        what, why_txt = SENSOR_FAULT.get(
+            r["detail"], (f"fault code {r['detail']}", "unrecognised"))
+        ev = sensor_fault_evidence(
+            r["detail"], r["src"] if "src" in r.keys() else 0)
+        ok, why = send_notification(
+            f"sensor fault on {device}",
+            title="A door sensor has stopped telling the truth",
+            lede=what.capitalize() + ".",
+            rows=[("door", device),
+                  ("likely cause", why_txt),
+                  ("evidence", ev or "n/a"),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="This is worth looking at today. The door trusts these "
+                 "sensors: a limit switch that stops making turns every "
+                 "close into a stall, and a stalled close deliberately "
+                 "fails OPEN — so the door ends up standing open all night "
+                 "having followed its rules correctly on bad information. "
+                 "The door keeps working; what it has lost is the ability "
+                 "to know whether it did.",
+            cta_label="Open the dashboard",
+            accent="alert")
+        # Record that somebody WAS told, which is what entitles the
+        # recovery below to mail. A fault nobody heard about needs no
+        # all-clear.
+        if ok:
+            _fault_alerted[(device, r["detail"])] = True
+        else:
+            sys.stderr.write(f"  NOTIFY FAILED for sensor fault: {why}\n")
+
+    # The door has STOPPED TRYING TO CLOSE and is standing open until a
+    # person deals with it. The most important thing this system produces:
+    # every other event is a record of something that happened, and this one
+    # is a request. No cooldown — it is terminal and it is rare, and a door
+    # that gave up twice in one night is a door you want told about twice.
+    # A door that fell over and came back.
+    #
+    # Deliberately NOT behind notify_due(): repeated crashes are the signal,
+    # not noise. The history that forced the NimBLE default was three
+    # consecutive reset=4 boots, and a cooldown would have hidden two of them
+    # — which is precisely the information that identified the cause.
+    elif r["type"] == "BOOT" and r["detail"] in ABNORMAL_RESET:
+        reason = RESET_REASON.get(r["detail"], f'reset {r["detail"]}')
+        ok, why = send_notification(
+            f"{device} restarted unexpectedly ({reason})",
+            title="A door fell over and came back",
+            lede=f"{device} came up on boot #{r['boot']} after {reason}. It is "
+                 "running again, so this is a report rather than an outage — "
+                 "but nothing asked it to restart.",
+            rows=[("door", device),
+                  ("reset reason", reason),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note=RESET_ADVICE.get(r["detail"], "Unrecognised reset reason."),
+            cta_label="Open the dashboard",
+            accent="alert")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for abnormal boot: {why}\n")
+
+    # The same sensor telling the truth again. Only mailed if the fault
+    # itself was mailed: being told a door is broken and never told it
+    # recovered is how somebody drives out to a coop for nothing.
+    elif (r["type"] == "SENSOR_OK"
+          and _fault_alerted.pop((device, r["detail"]), False)):
+        what, _why = SENSOR_FAULT.get(
+            r["detail"], (f"fault code {r['detail']}", "unrecognised"))
+        ok, why = send_notification(
+            f"sensor recovered on {device}",
+            title="That door sensor is reporting again",
+            lede="It is no longer true that " + what + ".",
+            rows=[("door", device),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="Nothing needs doing. This is the counterpart to the fault "
+                 "mail you had earlier, sent so a door that fixed itself does "
+                 "not leave you assuming it is still broken. A sensor that "
+                 "recovers and fails repeatedly is worth a look even so.",
+            accent="calm")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
+
+    elif r["type"] == "UNCOMMANDED" and notify_due(device, "UNCOMMANDED"):
+        # THE DOOR IS NOT WHERE IT WAS LEFT, and that deserves saying even
+        # though the door also takes manual control when it happens.
         #
-        # Latched in the firmware, so this is one message per failure and not
-        # one per travel.
-        elif r["type"] == "SENSOR_FAULT":
-            what, why_txt = SENSOR_FAULT.get(
-                r["detail"], (f"fault code {r['detail']}", "unrecognised"))
-            ev = sensor_fault_evidence(
-                r["detail"], r["src"] if "src" in r.keys() else 0)
-            ok, why = send_notification(
-                f"sensor fault on {device}",
-                title="A door sensor has stopped telling the truth",
-                lede=what.capitalize() + ".",
-                rows=[("door", device),
-                      ("likely cause", why_txt),
-                      ("evidence", ev or "n/a"),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="This is worth looking at today. The door trusts these "
-                     "sensors: a limit switch that stops making turns every "
-                     "close into a stall, and a stalled close deliberately "
-                     "fails OPEN — so the door ends up standing open all night "
-                     "having followed its rules correctly on bad information. "
-                     "The door keeps working; what it has lost is the ability "
-                     "to know whether it did.",
-                cta_label="Open the dashboard",
-                accent="alert")
-            # Record that somebody WAS told, which is what entitles the
-            # recovery below to mail. A fault nobody heard about needs no
-            # all-clear.
-            if ok:
-                _fault_alerted[(device, r["detail"])] = True
-            else:
-                sys.stderr.write(f"  NOTIFY FAILED for sensor fault: {why}\n")
-
-        # The door has STOPPED TRYING TO CLOSE and is standing open until a
-        # person deals with it. The most important thing this system produces:
-        # every other event is a record of something that happened, and this one
-        # is a request. No cooldown — it is terminal and it is rare, and a door
-        # that gave up twice in one night is a door you want told about twice.
-        # A door that fell over and came back.
+        # This used to be deliberately silent, on the grounds that "most are
+        # a hand on the door". The hole was that enterOverride() is guarded
+        # by `if (!g_override)`: a hand-move on a door ALREADY under manual
+        # control writes no MANUAL event, so it produced no mail at all. On
+        # 10 Oct that is exactly what happened — control had been taken at
+        # the console seven minutes earlier — and the only mail that arrived
+        # was a sensor fault blaming the hardware for noticing.
         #
-        # Deliberately NOT behind notify_due(): repeated crashes are the signal,
-        # not noise. The history that forced the NimBLE default was three
-        # consecutive reset=4 boots, and a cooldown would have hidden two of them
-        # — which is precisely the information that identified the cause.
-        elif r["type"] == "BOOT" and r["detail"] in ABNORMAL_RESET:
-            reason = RESET_REASON.get(r["detail"], f'reset {r["detail"]}')
-            ok, why = send_notification(
-                f"{device} restarted unexpectedly ({reason})",
-                title="A door fell over and came back",
-                lede=f"{device} came up on boot #{r['boot']} after {reason}. It is "
-                     "running again, so this is a report rather than an outage — "
-                     "but nothing asked it to restart.",
-                rows=[("door", device),
-                      ("reset reason", reason),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note=RESET_ADVICE.get(r["detail"], "Unrecognised reset reason."),
-                cta_label="Open the dashboard",
-                accent="alert")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for abnormal boot: {why}\n")
+        # Rate-limited, unlike the MANUAL mail, because this one CAN repeat
+        # on its own: the vendor controller was watched leaving the open
+        # limit twice, about fifteen seconds after arriving, with nothing
+        # driving it.
+        d = r["detail"]
+        inferred = d >= 10
+        where = {1: "OPEN", 2: "CLOSED"}.get(d - 10 if inferred else d,
+                                             f"state {d}")
+        if inferred:
+            ms = r["src"] if "src" in r.keys() and r["src"] else 0
+            # Invariant 20: an inference and a measurement are not the same
+            # claim, and an email that renders them identically turns one
+            # into the other.
+            how = ("INFERRED from %.1f s of movement — no limit switch saw "
+                   "it" % (ms / 1000.0)) if ms else \
+                  "INFERRED from the duration of the movement"
+        else:
+            how = "a limit switch MEASURED it"
+        ok, why = send_notification(
+            f"door moved to {where} with nothing commanding it on {device}",
+            title="This door is not where it was left",
+            lede=f"It moved to {where} and nothing asked it to. On this door "
+                 "that means a hand: the flap is a motorised vertical panel, "
+                 "so wind cannot blow it and an animal cannot push it.",
+            rows=[("door", device),
+                  ("now", where),
+                  ("evidence", how),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="The sensors are working — this is them doing their job. "
+                 + ("A limit switch saw this, so the door has also taken "
+                    "itself under MANUAL control: nothing automatic will "
+                    "move it until `door auto`. "
+                    if not inferred else
+                    "This one was INFERRED, and an inferred travel "
+                    "deliberately does NOT take manual control — a wrong "
+                    "inference would make the door inert for good, and a "
+                    "door stuck CLOSED cannot let an animal in. So the "
+                    "collar can still move this door. ")
+                 + "Further uncommanded moves stay quiet for an hour so a "
+                   "controller with a mode of its own cannot flood your "
+                   "inbox.",
+            accent="bad")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for uncommanded move: {why}\n")
 
-        # The same sensor telling the truth again. Only mailed if the fault
-        # itself was mailed: being told a door is broken and never told it
-        # recovered is how somebody drives out to a coop for nothing.
-        elif (r["type"] == "SENSOR_OK"
-              and _fault_alerted.pop((device, r["detail"]), False)):
-            what, _why = SENSOR_FAULT.get(
-                r["detail"], (f"fault code {r['detail']}", "unrecognised"))
-            ok, why = send_notification(
-                f"sensor recovered on {device}",
-                title="That door sensor is reporting again",
-                lede="It is no longer true that " + what + ".",
-                rows=[("door", device),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="Nothing needs doing. This is the counterpart to the fault "
-                     "mail you had earlier, sent so a door that fixed itself does "
-                     "not leave you assuming it is still broken. A sensor that "
-                     "recovers and fails repeatedly is worth a look even so.",
-                accent="calm")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for sensor recovery: {why}\n")
+    elif r["type"] == "MANUAL" and r["detail"] == 1:
+        # Held CLOSED earns a mail on arrival with NO cooldown, for the same
+        # reason an abnormal reset does: the cost lands on an animal that
+        # cannot report it, and unlike every other state this door can be
+        # left in, this one never expires.
+        # Say HOW, when the door told us. A door moved BY HAND is a
+        # different message from one somebody opened on the dashboard, and
+        # conflating them is what let a hand on the door get reported as a
+        # sensor that had "stopped telling the truth".
+        how = override_source(r["src"] if "src" in r.keys() else 0)
+        by_hand = how is not None and r["src"] == 3
+        rows = [("door", device),
+                ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))]
+        if how:
+            rows.insert(1, ("how", how[0]))
+        ok, why = send_notification(
+            f"door is under MANUAL control on {device}",
+            title=("This door was moved by hand"
+                   if by_hand else "Somebody took control of this door"),
+            lede=(("The door is no longer where it was left — a travel "
+                   "nothing commanded. It is now under MANUAL control, so "
+                   "nothing automatic will move it: not the collar, not the "
+                   "close dwell, not the schedule. This survives a reboot.")
+                  if by_hand else
+                  ("Nothing automatic will open or close it — not the "
+                   "collar, not the close dwell, not the schedule — and "
+                   "this survives a reboot.")),
+            rows=rows,
+            note=(("The sensors saw this: a limit switch measured it, or "
+                   "the vibration sensor felt the travel. Nothing is wrong "
+                   "with the hardware. Send `door auto` to hand the door "
+                   "back, and you will be reminded while it stays set.")
+                  if by_hand else
+                  ("Send `door auto` to hand it back. You will be reminded "
+                   "while it stays set, because manual control does not end "
+                   "by itself the way a maintenance window does.")),
+            accent="bad")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for hold closed: {why}\n")
 
-        elif r["type"] == "UNCOMMANDED" and notify_due(device, "UNCOMMANDED"):
-            # THE DOOR IS NOT WHERE IT WAS LEFT, and that deserves saying even
-            # though the door also takes manual control when it happens.
-            #
-            # This used to be deliberately silent, on the grounds that "most are
-            # a hand on the door". The hole was that enterOverride() is guarded
-            # by `if (!g_override)`: a hand-move on a door ALREADY under manual
-            # control writes no MANUAL event, so it produced no mail at all. On
-            # 10 Oct that is exactly what happened — control had been taken at
-            # the console seven minutes earlier — and the only mail that arrived
-            # was a sensor fault blaming the hardware for noticing.
-            #
-            # Rate-limited, unlike the MANUAL mail, because this one CAN repeat
-            # on its own: the vendor controller was watched leaving the open
-            # limit twice, about fifteen seconds after arriving, with nothing
-            # driving it.
-            d = r["detail"]
-            inferred = d >= 10
-            where = {1: "OPEN", 2: "CLOSED"}.get(d - 10 if inferred else d,
-                                                 f"state {d}")
-            if inferred:
-                ms = r["src"] if "src" in r.keys() and r["src"] else 0
-                # Invariant 20: an inference and a measurement are not the same
-                # claim, and an email that renders them identically turns one
-                # into the other.
-                how = ("INFERRED from %.1f s of movement — no limit switch saw "
-                       "it" % (ms / 1000.0)) if ms else \
-                      "INFERRED from the duration of the movement"
-            else:
-                how = "a limit switch MEASURED it"
-            ok, why = send_notification(
-                f"door moved to {where} with nothing commanding it on {device}",
-                title="This door is not where it was left",
-                lede=f"It moved to {where} and nothing asked it to. On this door "
-                     "that means a hand: the flap is a motorised vertical panel, "
-                     "so wind cannot blow it and an animal cannot push it.",
-                rows=[("door", device),
-                      ("now", where),
-                      ("evidence", how),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="The sensors are working — this is them doing their job. "
-                     + ("A limit switch saw this, so the door has also taken "
-                        "itself under MANUAL control: nothing automatic will "
-                        "move it until `door auto`. "
-                        if not inferred else
-                        "This one was INFERRED, and an inferred travel "
-                        "deliberately does NOT take manual control — a wrong "
-                        "inference would make the door inert for good, and a "
-                        "door stuck CLOSED cannot let an animal in. So the "
-                        "collar can still move this door. ")
-                     + "Further uncommanded moves stay quiet for an hour so a "
-                       "controller with a mode of its own cannot flood your "
-                       "inbox.",
-                accent="bad")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for uncommanded move: {why}\n")
+    elif (r["type"] == "MANUAL" and r["detail"] == 0
+          and notify_due(device, "MANUAL_RELEASED")):
+        ok, why = send_notification(
+            f"manual control released on {device}",
+            title="The door is back under automatic control",
+            lede="The collar decides again.",
+            rows=[("door", device),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="Sent so the reminders stopping is explained rather than "
+                 "just noticed.")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for hold open: {why}\n")
 
-        elif r["type"] == "MANUAL" and r["detail"] == 1:
-            # Held CLOSED earns a mail on arrival with NO cooldown, for the same
-            # reason an abnormal reset does: the cost lands on an animal that
-            # cannot report it, and unlike every other state this door can be
-            # left in, this one never expires.
-            # Say HOW, when the door told us. A door moved BY HAND is a
-            # different message from one somebody opened on the dashboard, and
-            # conflating them is what let a hand on the door get reported as a
-            # sensor that had "stopped telling the truth".
-            how = override_source(r["src"] if "src" in r.keys() else 0)
-            by_hand = how is not None and r["src"] == 3
-            rows = [("door", device),
-                    ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))]
-            if how:
-                rows.insert(1, ("how", how[0]))
-            ok, why = send_notification(
-                f"door is under MANUAL control on {device}",
-                title=("This door was moved by hand"
-                       if by_hand else "Somebody took control of this door"),
-                lede=(("The door is no longer where it was left — a travel "
-                       "nothing commanded. It is now under MANUAL control, so "
-                       "nothing automatic will move it: not the collar, not the "
-                       "close dwell, not the schedule. This survives a reboot.")
-                      if by_hand else
-                      ("Nothing automatic will open or close it — not the "
-                       "collar, not the close dwell, not the schedule — and "
-                       "this survives a reboot.")),
-                rows=rows,
-                note=(("The sensors saw this: a limit switch measured it, or "
-                       "the vibration sensor felt the travel. Nothing is wrong "
-                       "with the hardware. Send `door auto` to hand the door "
-                       "back, and you will be reminded while it stays set.")
-                      if by_hand else
-                      ("Send `door auto` to hand it back. You will be reminded "
-                       "while it stays set, because manual control does not end "
-                       "by itself the way a maintenance window does.")),
-                accent="bad")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for hold closed: {why}\n")
+    elif r["type"] == "GAVE_UP":
+        ok, why = send_notification(
+            f"door is staying OPEN on {device}",
+            title="The door has given up closing and is standing open",
+            lede=f"{r['detail']} close attempts stalled in a row, so the door "
+                 "has stopped trying and is deliberately staying open.",
+            rows=[("door", device),
+                  ("attempts", r["detail"]),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="This is deliberate, not a crash. A door that stops partway "
+                 "while closing is exactly when something may be underneath "
+                 "it, so the firmware reverses and retries a few times and "
+                 "then stops rather than driving onto whatever is in the way. "
+                 "It will not close again by itself: clear the obstruction "
+                 "and press 'x' on the console, or send `door close`. Until "
+                 "then the doorway is open.",
+            cta_label="Open the dashboard",
+            accent="alert")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for gave-up: {why}\n")
 
-        elif (r["type"] == "MANUAL" and r["detail"] == 0
-              and notify_due(device, "MANUAL_RELEASED")):
-            ok, why = send_notification(
-                f"manual control released on {device}",
-                title="The door is back under automatic control",
-                lede="The collar decides again.",
-                rows=[("door", device),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="Sent so the reminders stopping is explained rather than "
-                     "just noticed.")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for hold open: {why}\n")
-
-        elif r["type"] == "GAVE_UP":
-            ok, why = send_notification(
-                f"door is staying OPEN on {device}",
-                title="The door has given up closing and is standing open",
-                lede=f"{r['detail']} close attempts stalled in a row, so the door "
-                     "has stopped trying and is deliberately staying open.",
-                rows=[("door", device),
-                      ("attempts", r["detail"]),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="This is deliberate, not a crash. A door that stops partway "
-                     "while closing is exactly when something may be underneath "
-                     "it, so the firmware reverses and retries a few times and "
-                     "then stops rather than driving onto whatever is in the way. "
-                     "It will not close again by itself: clear the obstruction "
-                     "and press 'x' on the console, or send `door close`. Until "
-                     "then the doorway is open.",
-                cta_label="Open the dashboard",
-                accent="alert")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for gave-up: {why}\n")
-
-        # A travel started and never arrived. Rate limited, because a persistent
-        # cause produces one of these per attempt — and the attempts that follow
-        # end in GAVE_UP above, which is not rate limited and says more.
-        elif r["type"] == "STALLED" and notify_due(device, "STALLED"):
-            going = {1: "opening", 2: "closing"}.get(r["detail"], "moving")
-            ok, why = send_notification(
-                f"door stalled while {going} on {device}",
-                title=f"The door stalled while {going}",
-                lede="It started moving and never reached the other end.",
-                rows=[("door", device),
-                      ("direction", going),
-                      ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
-                note="An obstruction, a jam, or a limit switch that has stopped "
-                     "making. A stalled CLOSE is reversed automatically and "
-                     "retried after a delay; if the retries run out you will get "
-                     "a second message saying the door is staying open. Further "
-                     "stalls on this door are suppressed for an hour so a "
-                     "persistent fault cannot bury that one.",
-                cta_label="Open the dashboard",
-                accent="alert")
-            if not ok:
-                sys.stderr.write(f"  NOTIFY FAILED for stall: {why}\n")
+    # A travel started and never arrived. Rate limited, because a persistent
+    # cause produces one of these per attempt — and the attempts that follow
+    # end in GAVE_UP above, which is not rate limited and says more.
+    elif r["type"] == "STALLED" and notify_due(device, "STALLED"):
+        going = {1: "opening", 2: "closing"}.get(r["detail"], "moving")
+        ok, why = send_notification(
+            f"door stalled while {going} on {device}",
+            title=f"The door stalled while {going}",
+            lede="It started moving and never reached the other end.",
+            rows=[("door", device),
+                  ("direction", going),
+                  ("uptime", "%ss (boot #%s)" % (r["uptime"], r["boot"]))],
+            note="An obstruction, a jam, or a limit switch that has stopped "
+                 "making. A stalled CLOSE is reversed automatically and "
+                 "retried after a delay; if the retries run out you will get "
+                 "a second message saying the door is staying open. Further "
+                 "stalls on this door are suppressed for an hour so a "
+                 "persistent fault cannot bury that one.",
+            cta_label="Open the dashboard",
+            accent="alert")
+        if not ok:
+            sys.stderr.write(f"  NOTIFY FAILED for stall: {why}\n")
 
 
 # ---------------------------------------------------------------- watchdog
