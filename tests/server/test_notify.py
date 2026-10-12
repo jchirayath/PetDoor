@@ -748,6 +748,78 @@ def test_the_firmware_hurries_for_exactly_the_resets_the_server_mails_on():
 
 
 
+def test_a_watchdog_that_never_ran_does_not_look_healthy():
+    """The gap that made a 9.6-hour outage unprovable.
+
+    On 2026-10-11 the reference door was gone for 9.6 hours against a 2-hour
+    threshold and no alert could afterwards be confirmed or ruled out, because
+    the watchdog recorded nothing per sweep. A dead thread and a healthy quiet
+    one were indistinguishable. "Unknown" must therefore read as NOT healthy —
+    the alternative is a reassuring dash next to a watchdog that died.
+    """
+    srv.set_setting(srv.WATCHDOG_SWEEP_KEY, "")
+    with srv.db() as conn:
+        conn.execute("DELETE FROM settings WHERE k=?", (srv.WATCHDOG_SWEEP_KEY,))
+    age, err, stalled = srv.watchdog_health()
+    check(age is None, "a watchdog that never swept reports no age")
+    check(stalled is True, "and is reported as STALLED, not as fine")
+
+    # Garbage in the column must not crash the one check that reports breakage.
+    srv.set_setting(srv.WATCHDOG_SWEEP_KEY, "not-a-number")
+    age, err, stalled = srv.watchdog_health()
+    check(age is None and stalled is True,
+          "an unparseable stamp is stalled rather than an exception")
+
+
+def test_a_swept_watchdog_reports_its_age_and_staleness():
+    now = int(time.time())
+    srv.set_setting(srv.WATCHDOG_SWEEP_KEY, now)
+    age, err, stalled = srv.watchdog_health()
+    check(age is not None and age < 5, f"a fresh sweep reports a small age (got {age})")
+    check(not stalled, "and is not stalled")
+
+    # Three intervals is the line: one interval of slack would cry wolf about
+    # the thing whose job is crying wolf, and both would then be ignored.
+    srv.set_setting(srv.WATCHDOG_SWEEP_KEY, now - (srv.WATCHDOG_EVERY_S * 2))
+    _age, _err, stalled = srv.watchdog_health()
+    check(not stalled, "two intervals is slow, not broken")
+    srv.set_setting(srv.WATCHDOG_SWEEP_KEY, now - (srv.WATCHDOG_EVERY_S * 4))
+    _age, _err, stalled = srv.watchdog_health()
+    check(stalled, "four intervals is broken")
+
+
+def test_the_sweep_stamp_means_both_checks_ran():
+    """Stamped after the work, never before.
+
+    A thread that wakes up and throws every time is not a working watchdog, and
+    a stamp written at the top of the loop would claim it was. So a sweep that
+    raises must leave the OLD timestamp in place and record the error.
+    """
+    now = int(time.time())
+    srv.set_setting(srv.WATCHDOG_SWEEP_KEY, now - 9999)
+    srv.set_setting(srv.WATCHDOG_ERROR_KEY, "")
+    boom = lambda: (_ for _ in ()).throw(RuntimeError("database is on fire"))
+    real = srv.check_stale_doors
+    srv.check_stale_doors = boom
+    try:
+        # One iteration of the loop body, without the sleep.
+        try:
+            srv.check_stale_doors()
+            srv.check_overridden_doors()
+            srv.set_setting(srv.WATCHDOG_SWEEP_KEY, int(time.time()))
+            srv.set_setting(srv.WATCHDOG_ERROR_KEY, "")
+        except Exception as exc:                        # noqa: BLE001
+            srv.set_setting(srv.WATCHDOG_ERROR_KEY, "test: %s" % exc)
+    finally:
+        srv.check_stale_doors = real
+    stamp = srv.get_setting(srv.WATCHDOG_SWEEP_KEY)
+    check(int(stamp) == now - 9999,
+          "a throwing sweep leaves the previous timestamp alone")
+    check("on fire" in (srv.get_setting(srv.WATCHDOG_ERROR_KEY) or ""),
+          "and records why, durably, because stderr scrolls away")
+
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -779,6 +851,9 @@ def main():
     test_an_unrecorded_manual_source_invents_nothing()
     test_override_source_covers_every_source_the_firmware_can_send()
     test_the_firmware_hurries_for_exactly_the_resets_the_server_mails_on()
+    test_a_watchdog_that_never_ran_does_not_look_healthy()
+    test_a_swept_watchdog_reports_its_age_and_staleness()
+    test_the_sweep_stamp_means_both_checks_ran()
     test_a_hand_move_mails_even_when_the_door_is_already_manual()
     test_an_inferred_uncommanded_move_is_not_mailed_as_measured()
     test_uncommanded_mail_is_rate_limited()

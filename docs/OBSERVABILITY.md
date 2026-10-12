@@ -147,3 +147,41 @@ The second is this file's own failure mode, and the fourth instance of it: the
 door knew something and the only sink carrying it was one nobody was reading.
 Ask the five questions above for the *explanation* of an event, not just for the
 event — "which sink says WHY" is the one that was missed here.
+
+## The watchdog's own health
+
+Everything in the email column above that is *not* triggered by an arriving
+event — a door gone quiet, a door still held — depends on one background thread
+in the log server. For a long time nothing reported whether that thread was
+alive.
+
+That cost a real diagnosis. On 2026-10-11 the reference door was gone for
+**9.6 hours** against a two-hour threshold, and afterwards it was impossible to
+establish whether the watchdog had fired and the mail was lost, or the watchdog
+had never run. A dead thread and a healthy quiet one produced identical
+evidence: nothing.
+
+So each sweep now stamps `settings.watchdog_last_sweep`, and
+`--doors` prints it first, before any door:
+
+```
+  watchdog   : swept 42s ago (every 5 min, stale after 2h)
+```
+
+Three rules it is built on, each of which was a choice:
+
+* **Stamped AFTER the work, not before.** A thread that wakes and throws every
+  time is not a working watchdog; a stamp at the top of the loop would claim it
+  was. A failing sweep leaves the old timestamp and writes
+  `watchdog_last_error` instead.
+* **In the database, not in memory.** The useful question after a crash is
+  "when did this last work", and an in-memory marker is erased by the very
+  restart being investigated.
+* **Unknown reads as NOT healthy.** A watchdog that has never swept reports
+  stalled, because the alternative is a reassuring blank beside something dead.
+  Stale is three intervals, not one — crying wolf about the thing whose job is
+  crying wolf gets both ignored.
+
+**The general rule this is an instance of:** a sink that reports on other
+things has to report on itself, or its silence is ambiguous. Ask the five
+questions above of the *monitor*, not just of the event.

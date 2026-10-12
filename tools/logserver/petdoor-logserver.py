@@ -1450,6 +1450,54 @@ def check_stale_doors():
                 sys.stderr.write(f"  NOTIFY FAILED for stale recovery {dev}: {why}\n")
 
 
+# ---------------------------------------------------------------------------
+# Is the watchdog itself alive?
+# ---------------------------------------------------------------------------
+#
+# It had no answer, and that is how a 9.6-hour outage on 2026-10-11 produced no
+# alert that anyone could later confirm or rule out. The thread logs nothing per
+# sweep, so a dead watchdog and a healthy quiet one look identical — and the
+# only evidence it ever ran was an email arriving, which is exactly what was in
+# question. Same failure class as the rest of OBSERVABILITY.md: the system knew
+# something and no sink a person reads carried it.
+#
+# So every sweep stamps the database. In `settings` rather than memory, on
+# purpose: the useful question after a crash is "when did this LAST work", and
+# an in-memory marker is cleared by the very restart you are investigating.
+WATCHDOG_SWEEP_KEY = "watchdog_last_sweep"
+WATCHDOG_ERROR_KEY = "watchdog_last_error"
+
+
+def set_setting(key, value):
+    with db() as conn:
+        conn.execute("INSERT INTO settings(k,v) VALUES(?,?) "
+                     "ON CONFLICT(k) DO UPDATE SET v=excluded.v", (key, str(value)))
+
+
+def get_setting(key, default=None):
+    with db() as conn:
+        row = conn.execute("SELECT v FROM settings WHERE k=?", (key,)).fetchone()
+    return row["v"] if row else default
+
+
+def watchdog_health():
+    """(age_seconds_or_None, last_error_or_None, looks_stalled).
+
+    Stalled means the last sweep is older than three intervals. Three rather
+    than one because a sweep can be slow or a clock can jitter, and crying wolf
+    about the thing that cries wolf is how both get ignored.
+    """
+    raw = get_setting(WATCHDOG_SWEEP_KEY)
+    err = get_setting(WATCHDOG_ERROR_KEY)
+    if raw is None:
+        return None, err, True          # never swept: unknown is not healthy
+    try:
+        age = int(time.time()) - int(raw)
+    except ValueError:
+        return None, err, True
+    return age, err, age > (WATCHDOG_EVERY_S * 3)
+
+
 def watchdog_loop():
     # Daemon: it must never hold the process open on shutdown. A failure in here
     # must not take the server with it either — a crashed watchdog would stop
@@ -1462,8 +1510,21 @@ def watchdog_loop():
             # expire is exactly the sort of thing that must not stop being
             # announced because the other check threw.
             check_overridden_doors()
+            # Stamped only on a CLEAN sweep, so the timestamp means "both
+            # checks ran", not "the thread is still looping". A thread that
+            # wakes up and throws every time is not a working watchdog, and a
+            # stamp written before the work would say it was.
+            set_setting(WATCHDOG_SWEEP_KEY, int(time.time()))
+            set_setting(WATCHDOG_ERROR_KEY, "")
         except Exception as exc:                        # noqa: BLE001
             sys.stderr.write(f"  watchdog error (continuing): {exc}\n")
+            # Durable, because stderr scrolls out of `docker logs` and this is
+            # the line somebody needs a week later.
+            try:
+                set_setting(WATCHDOG_ERROR_KEY,
+                            "%s: %s" % (time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime()), exc))
+            except Exception:                           # noqa: BLE001
+                pass                                    # never recurse into the logger
 
 
 def parse_csv(text):
@@ -2280,6 +2341,29 @@ def main():
             notify_command(target, cmd, os.environ.get("USER", ""), "the command line")
 
         if args.doors:
+            # The watchdog's own health, FIRST and unconditionally. It is the
+            # thing that tells you about everything else, so a reader who
+            # scrolls no further should still learn that it has stopped. Before
+            # this there was no way to answer "did the watchdog run?" at all —
+            # see watchdog_health().
+            age, werr, stalled = watchdog_health()
+            if age is None:
+                print("  watchdog   : NEVER SWEPT. Either the server has just "
+                      "started, or the thread is not running —")
+                print("               no stale-door or held-door alert can fire "
+                      "until it does. PETDOOR_NOTIFY_TO must be set.")
+            elif stalled:
+                print(f"  watchdog   : !! LAST SWEPT {age // 60} MIN AGO, and it "
+                      f"should sweep every {WATCHDOG_EVERY_S // 60} min.")
+                print("               !! Treat stale-door and held-door alerts "
+                      "as NOT WORKING until this clears.")
+            else:
+                print(f"  watchdog   : swept {age}s ago (every "
+                      f"{WATCHDOG_EVERY_S // 60} min, stale after "
+                      f"{STALE_AFTER_S // 3600}h)")
+            if werr:
+                print(f"  !! last watchdog error: {werr}")
+            print()
             with db() as conn:
                 for d in conn.execute("SELECT * FROM devices ORDER BY device"):
                     age = int(time.time()) - (d["last_seen"] or 0)
