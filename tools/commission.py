@@ -634,30 +634,85 @@ GROUPS = [
 ]
 
 
-def restore(con):
-    """Leave the door automatic, unlocked, and not under test.
+def entry_state(con):
+    """What the door was like BEFORE the suite touched it.
 
-    Runs on the way out however the suite ended. A commissioning script that
-    leaves a door LOCKED or under MANUAL control has made the door worse than
-    not running it: both of those states survive a reboot, and held CLOSED is
-    the one state that can shut an animal out indefinitely.
+    Captured so restore() can put it back, rather than imposing a state. The
+    first version of this script forced unlock-and-automatic on the way out,
+    which is wrong in a way that matters: a door is often held deliberately —
+    while a reed is being repaired, or a run is being cleaned — and a
+    diagnostic that silently hands it back to the collar has changed the thing
+    somebody was relying on. "Leave it as you found it" beats "leave it as the
+    script thinks best".
     """
-    say("RESTORING — unlock, release manual control")
+    _f, flags, text = con.status()
+    return {
+        "locked": "LOCKED" in flags or "LOCKED" in text,
+        "manual": "MANUAL" in flags or "MANUAL " in text,
+        "muted": "MUTED" in flags or "MUTED" in text,
+    }
+
+
+def restore(con, before):
+    """Put the door back the way it was found.
+
+    Runs on the way out however the suite ended, Ctrl-C included. The states
+    this suite sets all survive a reboot, and held CLOSED is the one that can
+    shut an animal out indefinitely — so leaving one set by accident makes the
+    door worse than not running the suite at all.
+    """
+    say("RESTORING — putting the door back as it was found")
+    if before is None:
+        print("   entry state was never captured (the console was not reachable);")
+        print("   leaving the door alone rather than guessing at it.")
+        return
     try:
-        con.key("K", settle=1.5)
-        con.key("O", settle=1.5)
+        _f0, flags0, text0 = con.status()
+        now = {
+            "locked": "LOCKED" in flags0 or "LOCKED" in text0,
+            "manual": "MANUAL" in flags0 or "MANUAL " in text0,
+            "muted": "MUTED" in flags0 or "MUTED" in text0,
+        }
+        # Lock: 'k' sets, 'K' clears.
+        if now["locked"] != before["locked"]:
+            con.key("k" if before["locked"] else "K", settle=1.5)
+        # Manual: only releasable from here. SETTING it needs an actuation, so
+        # a door that arrived held and was released by a test cannot be put
+        # back without moving it — say so rather than moving a door to tidy up.
+        if now["manual"] and not before["manual"]:
+            con.key("O", settle=1.5)
         _f, flags, text = con.status()
-        left_locked = "LOCKED" in flags or "LOCKED" in text
-        left_manual = "MANUAL" in flags or "MANUAL " in text
-        if left_locked or left_manual:
-            print("   !! COULD NOT FULLY RESTORE. The door is still "
-                  + ("LOCKED " if left_locked else "")
-                  + ("under MANUAL control" if left_manual else ""))
-            print("   !! Send `unlock` and `door auto` from the dashboard.")
-        else:
-            print("   door is unlocked and under automatic control")
-        if "MUTED" in flags or "MUTED" in text:
-            print("   !! The door is still MUTED — send `unmute` from the dashboard.")
+        still_locked = "LOCKED" in flags or "LOCKED" in text
+        still_manual = "MANUAL" in flags or "MANUAL " in text
+        still_muted = "MUTED" in flags or "MUTED" in text
+        ok = True
+        if still_locked != before["locked"]:
+            ok = False
+            print(f"   !! lock is {'ON' if still_locked else 'OFF'} and was "
+                  f"{'ON' if before['locked'] else 'OFF'} — fix with "
+                  f"{'`lock`' if before['locked'] else '`unlock`'}")
+        if still_manual != before["manual"]:
+            ok = False
+            if before["manual"]:
+                print("   !! the door arrived under MANUAL control and is now "
+                      "automatic. Re-setting it would mean MOVING the door, so "
+                      "this suite will not do it for you — open or close it by "
+                      "hand, or from the dashboard, to put it back.")
+            else:
+                print("   !! the door is under MANUAL control and did not start "
+                      "that way — send `door auto`.")
+        if still_muted != before["muted"]:
+            ok = False
+            print(f"   !! the door is {'MUTED' if still_muted else 'UNMUTED'} and "
+                  f"did not start that way — send "
+                  f"{'`unmute`' if still_muted else '`mute`'} from the dashboard.")
+        if ok:
+            bits = []
+            bits.append("LOCKED" if before["locked"] else "unlocked")
+            bits.append("under MANUAL control" if before["manual"] else "automatic")
+            if before["muted"]:
+                bits.append("MUTED")
+            print("   back as found: " + ", ".join(bits))
     except OSError as exc:
         print(f"   !! could not restore over the console: {exc}")
 
@@ -810,8 +865,15 @@ def main():
         return 2
 
     con = Console(args.port, verbose=args.verbose)
+    before = None
     try:
         con.drain(1.5)
+        try:
+            before = entry_state(con)
+            print(f"\nentry state: locked={before['locked']} "
+                  f"manual={before['manual']} muted={before['muted']}")
+        except OSError:
+            pass
         alive = group_console(con, args) if todo and todo[0][0] == "console" else True
         for name, fn, _blurb in todo:
             if name == "console":
@@ -824,7 +886,7 @@ def main():
         print("\n   interrupted")
     finally:
         try:
-            restore(con)
+            restore(con, before)
         finally:
             con.close()
 
