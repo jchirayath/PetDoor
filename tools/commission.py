@@ -205,12 +205,21 @@ def switches_from(sw):
 
 PASS, FAIL, SKIP, WARN = "PASS", "FAIL", "SKIP", "WARN"
 results = []
+measurements = []          # (label, value) worth reading back as numbers
+_order = []                # groups in the order they actually ran
 
 
 def record(group, name, outcome, detail=""):
     results.append((group, name, outcome, detail))
+    if group not in _order:
+        _order.append(group)
     mark = {PASS: "  ok  ", FAIL: " FAIL ", SKIP: " skip ", WARN: " warn "}[outcome]
     print(f"   [{mark}] {name}" + (f" — {detail}" if detail else ""))
+
+
+def measure(label, value):
+    """A number worth collecting into the summary rather than only printing."""
+    measurements.append((label, value))
 
 
 def say(text):
@@ -630,6 +639,8 @@ def _travel(con, key, arrived, label, group, note=""):
         m = re.search(r"in (\d+) ms", con.buf)
         ms = int(m.group(1)) if m else None
         tight = "within a second of the" in con.buf
+        if ms:
+            measure(f"{group}/{label}", f"{ms} ms")
         record(group, f"{label} arrives", PASS,
                (f"{ms} ms" if ms else "verified") + (" — ONLY JUST" if tight else ""))
         if tight:
@@ -682,6 +693,8 @@ def group_cycles(con, args):
         spread = max(vals) - min(vals)
         mean = sum(vals) // len(vals)
         detail = f"mean {mean} ms, spread {spread} ms over {len(vals)} ({min(vals)}-{max(vals)})"
+        measure(f"{label} mean", f"{mean} ms")
+        measure(f"{label} spread", f"{spread} ms over {len(vals)} cycles")
         # A door that wanders by seconds blunts stall detection, because the
         # deadline has to be set wide enough for the slowest travel.
         if spread > 1500:
@@ -910,14 +923,30 @@ GROUPS = [
     ("beeps", group_beeps, "buzzer and LED — prompted"),
     ("lock", group_lock, "lock and unlock"),
     ("manual", group_manual, "manual override, and that it can be released"),
-    ("mute", group_mute, "mute and unmute — prompted, portal-only"),
     ("movement", group_movement, "one open and close, driving the motor"),
     ("cycles", group_cycles, "several timed cycles, and repeatability"),
     ("uncommanded", group_uncommanded, "LOCKED, then moved by hand — prompted"),
     ("obstruction", group_obstruction, "a blocked close must FAIL OPEN — prompted"),
     ("beacon", group_beacon, "scanning, and a collar-driven open"),
+    # Late, because it is the slowest: the door collects a dashboard command on
+    # its own upload cadence, which ran to minutes, and there is no console key
+    # for mute to shortcut it with.
+    ("mute", group_mute, "mute and unmute — prompted, portal-only"),
+    # Last, because it checks the footprints of everything above.
     ("logging", group_logging, "did the door record it, and can it send it"),
 ]
+
+# What the operator has to have to hand, per group. Printed up front, because
+# discovering you need a solid object halfway through a motor test is how
+# somebody ends up using their hand.
+NEEDS = {
+    "reeds": "to move the panel onto each stop BY HAND",
+    "beeps": "to hear a buzzer and see an LED",
+    "uncommanded": "to move the panel BY HAND while the door is locked",
+    "obstruction": "a SOLID OBJECT to block the doorway — never a hand",
+    "beacon": "the collar/beacon, to bring near the door",
+    "mute": "the dashboard open, to send `mute` and `unmute` (slow: minutes)",
+}
 
 
 def entry_state(con):
@@ -1111,6 +1140,8 @@ def main():
     ap.add_argument("--only", default="",
                     help="comma-separated group names (see --list)")
     ap.add_argument("--list", action="store_true", help="list the groups and exit")
+    ap.add_argument("--report", metavar="FILE", default="",
+                    help="also write the results to FILE, to keep or compare")
     ap.add_argument("--selftest", action="store_true",
                     help="test this script's own parsers; needs no door")
     ap.add_argument("--verbose", action="store_true",
@@ -1134,14 +1165,33 @@ def main():
             print(f"unknown group(s): {', '.join(unknown)}", file=sys.stderr)
             return 2
 
-    print(__doc__.split("WHY THIS EXISTS")[0].strip())
-    print(f"\nport      : {args.port}")
-    print(f"groups    : {', '.join(n for n, _f, _b in todo)}")
-    print(f"motor     : {'SKIPPED (--no-move)' if args.no_move else 'WILL BE DRIVEN'}")
+    print("PetDoor commissioning — walks every function and says what it found")
+    print("=" * 70)
+    print(f"  port    : {args.port}")
+    print(f"  motor   : {'SKIPPED (--no-move)' if args.no_move else 'WILL BE DRIVEN'}")
     moving = ("movement", "cycles", "obstruction", "beacon")
+    n_moves = 0
+    if not args.no_move:
+        for name, _f, _b in todo:
+            n_moves += {"movement": 2, "cycles": args.cycles * 2,
+                        "obstruction": 3, "beacon": 1}.get(name, 0)
+    print(f"  groups  : {len(todo)}")
+    print(f"  the door will move about {n_moves} time(s)")
+
+    # Everything the operator needs, before the first prompt rather than
+    # halfway through a motor test.
+    needed = [(n, NEEDS[n]) for n, _f, _b in todo if n in NEEDS]
+    if needed:
+        print("\n  YOU WILL NEED:")
+        for name, what in needed:
+            print(f"    - {what}   ({name})")
+    print("\n  Steps that need you say so and wait. Answer 's' to skip any of them.")
+    print("  Ctrl-C is safe at any point: the door is put back as it was found.")
+
     if not args.no_move and any(n in moving for n, _f, _b in todo):
-        print("\n  !! This will drive the door. Keep hands and animals clear.")
-        if input("  Type 'go' to continue: ").strip().lower() != "go":
+        print("\n  !! THIS WILL DRIVE A REAL MOTOR ON A REAL DOOR.")
+        print("  !! Keep hands, limbs and animals out of the doorway throughout.")
+        if input("\n  Type 'go' to begin: ").strip().lower() != "go":
             print("  cancelled")
             return 1
 
@@ -1179,18 +1229,78 @@ def main():
         finally:
             con.close()
 
-    say("SUMMARY")
+    print("\n" + "=" * 70)
+    print("SUMMARY")
+    print("=" * 70)
     counts = {PASS: 0, FAIL: 0, SKIP: 0, WARN: 0}
     for _g, _n, outcome, _d in results:
         counts[outcome] += 1
-    for group, name, outcome, detail in results:
-        if outcome in (FAIL, WARN):
-            print(f"   {outcome:<5} {group}/{name}: {detail}")
-    print(f"\n   {counts[PASS]} passed, {counts[FAIL]} failed, "
+
+    # Per group, so a reader can see at a glance which part of the door is
+    # unhappy rather than scrolling a flat list of checks.
+    print("\n  group         ok  fail  warn  skip   verdict")
+    print("  " + "-" * 60)
+    for group in _order:
+        rows = [r for r in results if r[0] == group]
+        c = {PASS: 0, FAIL: 0, SKIP: 0, WARN: 0}
+        for _g, _n, outcome, _d in rows:
+            c[outcome] += 1
+        verdict = ("FAILED" if c[FAIL] else
+                   "check warnings" if c[WARN] else
+                   "not run" if c[PASS] == 0 and c[SKIP] else "ok")
+        print(f"  {group:<12} {c[PASS]:>3}  {c[FAIL]:>4}  {c[WARN]:>4}  {c[SKIP]:>4}   {verdict}")
+
+    if measurements:
+        print("\n  MEASURED")
+        for label, value in measurements:
+            print(f"    {label:<28} {value}")
+
+    bad = [r for r in results if r[2] in (FAIL, WARN)]
+    if bad:
+        print("\n  NEEDS ATTENTION")
+        for group, name, outcome, detail in bad:
+            print(f"    [{outcome}] {group}/{name}")
+            if detail:
+                # Wrap the explanation, which is often the useful part.
+                words, line = detail.split(), "          "
+                for w in words:
+                    if len(line) + len(w) > 76:
+                        print(line)
+                        line = "          "
+                    line += w + " "
+                print(line.rstrip())
+
+    print(f"\n  {counts[PASS]} passed, {counts[FAIL]} failed, "
           f"{counts[WARN]} warnings, {counts[SKIP]} skipped")
     if counts[FAIL]:
-        print("\n   A FAIL here is a door that will not behave as documented.")
-        print("   docs/DIAGNOSTICS.md has the symptom tables.")
+        print("\n  A FAIL is a door that will not behave as documented.")
+        print("  docs/DIAGNOSTICS.md has the symptom tables; the lines above say")
+        print("  which part to look at first.")
+    elif counts[WARN]:
+        print("\n  Nothing failed. The warnings are things that work but will")
+        print("  bite later — read them before mounting or leaving it unattended.")
+    else:
+        print("\n  Every check that ran, passed.")
+    if counts[SKIP]:
+        print(f"  {counts[SKIP]} check(s) were skipped — they prove nothing either way.")
+
+    if args.report:
+        try:
+            with open(args.report, "w", encoding="utf-8") as fh:
+                fh.write("# PetDoor commissioning report\n")
+                fh.write(time.strftime("%Y-%m-%d %H:%M:%S %Z\n\n"))
+                fh.write(f"port: {args.port}\n")
+                for label, value in measurements:
+                    fh.write(f"measured: {label} = {value}\n")
+                fh.write("\n")
+                for group, name, outcome, detail in results:
+                    fh.write(f"{outcome:<5} {group}/{name}"
+                             + (f": {detail}" if detail else "") + "\n")
+                fh.write(f"\n{counts[PASS]} passed, {counts[FAIL]} failed, "
+                         f"{counts[WARN]} warnings, {counts[SKIP]} skipped\n")
+            print(f"\n  report written to {args.report}")
+        except OSError as exc:
+            print(f"\n  !! could not write {args.report}: {exc}")
     return 1 if counts[FAIL] else 0
 
 
