@@ -703,6 +703,51 @@ def test_uncommanded_mail_is_rate_limited():
 
 
 
+def test_the_firmware_hurries_for_exactly_the_resets_the_server_mails_on():
+    """ABNORMAL_RESET here must match the set petdoor.ino flushes immediately for.
+
+    The firmware calls in at once after an abnormal reset instead of waiting
+    for the upload cadence, because a door brownouting every thirty seconds
+    never survives long enough to report that it is brownouting. Measured
+    2026-10-11: boots #1064-#1069 went entirely unreported — four brownouts and
+    an interrupt watchdog — and only reached the server when #1070 ran for an
+    hour and uploaded the ring.
+
+    Two lists, one question. If the firmware hurries for a reason this server
+    shrugs at, a door spends radio time on something nobody is told about; if
+    the server mails on one the firmware does not hurry for, the mail arrives
+    whenever the door next happens to feel like talking. Parsed rather than
+    restated, for the same reason as ACT_SOURCE and OVERRIDE_SOURCE above.
+    """
+    # esp_reset_reason_t, from esp_system.h. Only the ones either side names.
+    ESP_RST = {"ESP_RST_PANIC": 4, "ESP_RST_INT_WDT": 5, "ESP_RST_TASK_WDT": 6,
+               "ESP_RST_WDT": 7, "ESP_RST_BROWNOUT": 9, "ESP_RST_POWERON": 1,
+               "ESP_RST_SW": 3, "ESP_RST_DEEPSLEEP": 8, "ESP_RST_EXT": 2}
+    ino = os.path.join(HERE, "..", "..", "petdoor", "petdoor.ino")
+    with open(ino, encoding="utf-8") as fh:
+        src = fh.read()
+    # The one condition that decides whether a boot calls in early.
+    m = re.search(r"if \(g_bootReason == ESP_RST_.*?\) \{", src, re.S)
+    check(m is not None, "found the abnormal-boot flush condition in petdoor.ino")
+    if not m:
+        return
+    names = set(re.findall(r"ESP_RST_[A-Z_]+", m.group(0)))
+    unknown = sorted(n for n in names if n not in ESP_RST)
+    check(not unknown, f"every reason named is one we know the number of ({unknown})")
+    firmware = {ESP_RST[n] for n in names if n in ESP_RST}
+    check(firmware == srv.ABNORMAL_RESET,
+          "the firmware hurries for exactly ABNORMAL_RESET "
+          f"(firmware {sorted(firmware)}, server {sorted(srv.ABNORMAL_RESET)})")
+    # And the ones that must NOT be in it: an ordinary restart is explained by
+    # whoever caused it, and a flush brings the radio up — which is the standing
+    # suspect for the panic in docs/PARKING_LOT.md.
+    check(ESP_RST["ESP_RST_POWERON"] not in firmware,
+          "a plain power-on does not hurry")
+    check(ESP_RST["ESP_RST_SW"] not in firmware,
+          "nor does a software restart, which includes every OTA push")
+
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -733,6 +778,7 @@ def main():
     test_a_hand_on_the_door_is_mailed_as_that_and_not_as_a_sensor_fault()
     test_an_unrecorded_manual_source_invents_nothing()
     test_override_source_covers_every_source_the_firmware_can_send()
+    test_the_firmware_hurries_for_exactly_the_resets_the_server_mails_on()
     test_a_hand_move_mails_even_when_the_door_is_already_manual()
     test_an_inferred_uncommanded_move_is_not_mailed_as_measured()
     test_uncommanded_mail_is_rate_limited()

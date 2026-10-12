@@ -4438,7 +4438,8 @@ void setup() {
     BleScanner::loadStoredVibration(vibPin, vibLow);
     Vibration::begin(vibPin, vibLow);
   }
-  EventLog::record(LOG_BOOT, static_cast<uint8_t>(esp_reset_reason()), 0);
+  const uint8_t g_bootReason = static_cast<uint8_t>(esp_reset_reason());
+  EventLog::record(LOG_BOOT, g_bootReason, 0);
 
   {
     int e = 0, x = 0;
@@ -4556,6 +4557,36 @@ void setup() {
 
   WifiLogger::setBootCount(g_bootCount);
   WifiLogger::begin();
+
+#if PETDOOR_ENABLE_WIFI
+  // AN ABNORMAL RESET CALLS IN AT ONCE, instead of waiting for the cadence.
+  //
+  // A door that keeps falling over never survives long enough to report that
+  // it is falling over. The first upload waits for UPLOAD_QUIET_MS of calm and
+  // then a minimum gap of minutes, so a door brownouting every thirty seconds
+  // uploads NOTHING — and the loop stays invisible until some boot happens to
+  // last long enough. Measured 2026-10-11: boots #1064 to #1069 went
+  // unreported, four of them brownouts and one an interrupt watchdog, and the
+  // whole run only reached the server when #1070 ran for an hour and uploaded
+  // the ring. The durable ring meant nothing was lost, but it arrived hours
+  // after it was useful, which for a door that cannot stay up is the same as
+  // not arriving.
+  //
+  // Deliberately NOT every boot. A flush brings the radio up, and radio-up is
+  // the standing suspect for the panic in docs/PARKING_LOT.md, so adding one to
+  // every ordinary boot buys exposure and no information — a power-on or a
+  // software restart is already explained by whoever caused it. The abnormal
+  // set is the same one the log server mails on (ABNORMAL_RESET in
+  // petdoor-logserver.py): panic, both watchdogs, and brownout. Keep the two
+  // in step, or the door will hurry to report something the server shrugs at.
+  if (g_bootReason == ESP_RST_PANIC || g_bootReason == ESP_RST_INT_WDT ||
+      g_bootReason == ESP_RST_TASK_WDT || g_bootReason == ESP_RST_WDT ||
+      g_bootReason == ESP_RST_BROWNOUT) {
+    Con.println(F("[boot] that restart was NOT normal — calling in immediately"));
+    Con.println(F("[boot] rather than waiting for the next scheduled upload."));
+    WifiLogger::requestFlushNow();
+  }
+#endif
   xTaskCreatePinnedToCore(controlTask, "petdoor", CONTROL_TASK_STACK, nullptr, 1,
                           &g_controlTaskHandle, 1);
   Con.println(F("[system] running"));
