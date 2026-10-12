@@ -61,7 +61,7 @@ Distinct from `buzzer off`, which sets the pin to `-1` and forgets the wiring.
 
 | Event | Console | Buzzer | Event log | Status | Email |
 |---|---|---|---|---|---|
-| `BOOT` | ✓ | — | ✓ | boots | **only if abnormal** — panic, watchdog, brownout. A power-on or a software restart is ordinary, and an OTA push *is* a software restart |
+| `BOOT` | ✓ | — | ✓ | boots | **only if abnormal** — panic, watchdog, brownout. A power-on or a software restart is ordinary, and an OTA push *is* a software restart. An abnormal reset also **flushes immediately** rather than waiting for the cadence: a door that keeps falling over never lives long enough to report it |
 | `OPEN` / `CLOSE` | ✓ | ✓ (who asked, by beep count) | ✓ | `door` | ! routine |
 | `REFUSED` | ✓ | ✓ (lock and schedule sound different) | ✓ | — | ! routine |
 | `WAKE` | ✓ | — | ✓ | — | ! expected on this hardware every time |
