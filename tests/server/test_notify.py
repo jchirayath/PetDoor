@@ -1096,6 +1096,49 @@ def test_the_real_mailer_checks_the_quiet_period_first():
         srv.SMTP_HOST, srv.SMTP_FROM = "", ""
 
 
+def test_a_database_that_will_not_answer_still_lets_the_mail_out():
+    """The quiet period put a database read on the alerting path.
+
+    send_notification() promises never to raise into its caller: by the time it
+    runs the command is already queued and the upload already stored, so a
+    database having a bad moment must not become a 500 on /ingest or a failed
+    command on a door somebody is standing at. notify_command() has no
+    try/except of its own, and it is called from the control endpoint AFTER the
+    command is in the queue — so a raise there reports failure for something
+    that did in fact happen, and loses the audit mail with it.
+
+    The direction is deliberate too: unable to tell whether a quiet period is
+    running, this sends. A message arriving during a mute and a door that gave
+    up closing telling nobody are not equally bad.
+    """
+    SENT.clear()
+    real_get = srv.get_setting
+
+    def refuse(*a, **kw):
+        raise RuntimeError("database is locked")
+
+    srv.get_setting = refuse
+    try:
+        held = srv.notify_held("something urgent")
+        check(held is None,
+              f"an unreadable quiet period does not hold mail (got {held!r})")
+        try:
+            srv.notify_command("door", "door open", "who", "the dashboard")
+            raised = None
+        except Exception as exc:                        # noqa: BLE001
+            raised = exc
+        check(raised is None,
+              f"and nothing raises into the caller (got {raised!r})")
+        check(len(SENT) == 1, "the command mail still goes out")
+        # The dashboard reads this one through /api/events, where a raise would
+        # take every chart and the event table down with it.
+        state = srv.notify_quiet_state()
+        check(state["quiet_until"] == 0 and state["held"] == 0,
+              "and the dashboard gets a usable answer rather than a 500")
+    finally:
+        srv.get_setting = real_get
+
+
 def test_a_quiet_period_is_bounded_and_indefinite_is_asked_for_explicitly():
     """The request table, which is why parse_quiet_request() is a function.
 
@@ -1212,6 +1255,7 @@ def main():
     test_a_held_fault_does_not_entitle_an_all_clear()
     test_an_outage_that_began_while_quiet_is_told_when_mail_resumes()
     test_the_real_mailer_checks_the_quiet_period_first()
+    test_a_database_that_will_not_answer_still_lets_the_mail_out()
     test_a_quiet_period_is_bounded_and_indefinite_is_asked_for_explicitly()
     test_a_quiet_period_survives_a_restart_and_says_so()
     test_every_quiet_button_on_the_panel_is_one_the_server_accepts()

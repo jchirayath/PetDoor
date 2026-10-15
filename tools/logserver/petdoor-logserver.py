@@ -828,8 +828,26 @@ def notify_quiet_until():
     small query per mail — and there are minutes between mails — in exchange
     for the thing that matters: Resume takes effect on the next alert rather
     than on the next restart.
+
+    A READ THAT FAILS MEANS MAIL GOES OUT. Two reasons, and the direction is
+    not arbitrary:
+
+      * send_notification() promises never to raise into its caller, because
+        by the time it runs the command is already queued and the upload is
+        already stored — so a database having a bad moment must not become a
+        500 on /ingest, or a failed command on a door somebody is standing at.
+        This read put a query on that path, so it has to swallow its own
+        failures to keep that promise.
+      * If we cannot tell whether a quiet period is running, the wrong answer
+        in one direction is a message arriving during a mute, and in the other
+        it is a door that gave up closing telling nobody. Those are not equal.
     """
-    raw = get_setting(NOTIFY_QUIET_KEY)
+    try:
+        raw = get_setting(NOTIFY_QUIET_KEY)
+    except Exception as exc:                            # noqa: BLE001
+        sys.stderr.write("  NOTIFY: cannot read the quiet period (%r); "
+                         "sending anyway\n" % (exc,))
+        return 0
     try:
         until = int(raw)
     except (TypeError, ValueError):
@@ -850,10 +868,15 @@ def quiet_label(until):
 
 
 def notify_quiet_held():
-    """How many messages this quiet period has held so far."""
+    """How many messages this quiet period has held so far.
+
+    Same contract as notify_quiet_until(): it is read from the alerting path,
+    so it reports 0 rather than raising. A count is the least important thing
+    here and must not be the thing that breaks an upload.
+    """
     try:
         return int(get_setting(NOTIFY_QUIET_HELD_KEY) or 0)
-    except ValueError:
+    except Exception:                                   # noqa: BLE001
         return 0
 
 
@@ -882,10 +905,16 @@ def notify_held(subject):
 
 
 def notify_quiet_state():
-    """The quiet period as the dashboard needs it."""
+    """The quiet period as the dashboard needs it.
+
+    Rides in the /api/events payload, so it cannot be allowed to fail the
+    request: the whole dashboard — every chart, the event table, the control
+    panel — comes from that one response, and losing all of it over the
+    status of the mailer would be a poor trade.
+    """
     try:
         since = int(get_setting(NOTIFY_QUIET_SINCE_KEY) or 0)
-    except ValueError:
+    except Exception:                                   # noqa: BLE001
         since = 0
     return {"configured": bool(NOTIFY_TO and SMTP_HOST),
             "quiet_until": notify_quiet_until(),
