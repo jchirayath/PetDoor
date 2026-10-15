@@ -32,7 +32,8 @@ rather than pretending otherwise.
 | **Change any setting** | Thresholds, dwell times, the filters, the relay pulse, travel time, the beacon list |
 | **Open, close, lock, unlock** | From a browser or the command line |
 | **Push new firmware** | Over WiFi. No cable, no ladder |
-| **Get an email** | When somebody opens, locks, unlocks or reboots it |
+| **Get an email** | When somebody opens, locks, unlocks or reboots it — or when the door reports something wrong |
+| **Hold that email** | For an hour, a day, or until further notice, while you work on the door |
 | **Ask what it can see** | Upload its discovery table to find a new beacon's address |
 
 From a terminal on the server:
@@ -97,6 +98,18 @@ Settings changes are deliberately excluded. A tuning session is a dozen commands
 in a minute, and a mailbox that fills with `pulse 500` is one whose PetDoor mail
 gets filtered into a folder nobody opens — at which point the message that
 mattered is lost with the rest.
+
+**You can tell it to be quiet for a while**, from the same Controls tab: one
+hour, eight, twenty-four, or until you turn it back on. Useful when you are the
+one making the door misbehave — a commissioning run, a recalibration, an
+afternoon with the flap propped open.
+
+That silence is **total** while it lasts. Even a door that has given up trying
+to close and is standing open will not mail you, and nothing held is sent
+afterwards. Everything is still logged and still on the dashboard, the page
+says how many messages were held, and the top of the page keeps saying *Email
+quiet* until it ends. A timed one expires by itself; the open-ended one waits
+for you.
 
 ---
 

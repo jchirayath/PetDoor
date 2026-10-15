@@ -70,6 +70,10 @@ const MAINT_MAX_H=480;
 const maintLabel=m=>m<60?`${m} min`:(m%60?`${(m/60).toFixed(1)} h`:`${m/60} h`);
 let events=[], commands=[], selected=null;
 let pending=[], controlOn=false, devices=[], busy=false;
+// The server's email state: whether it is configured at all, and whether a
+// quiet period is holding every message. Defaults to "live" so a server that
+// predates the field never renders a mute that is not there.
+let notify={configured:false,quiet_until:0,quiet_since:0,held:0,max_s:7*24*3600};
 
 const $=id=>document.getElementById(id);
 const pad=n=>String(n).padStart(2,"0");
@@ -911,6 +915,107 @@ function renderSchedule(){
   });
 }
 
+/* How long a quiet period still has to run, in words. Returns "" when mail is
+   live, so every caller can test it as a truth value. */
+function quietLeft(){
+  const until=Number(notify.quiet_until||0);
+  if(until<0) return "until you turn it back on";
+  if(until===0) return "";
+  const left=until-Math.floor(Date.now()/1000);
+  if(left<=0) return "";                   // the deadline passed between polls
+  if(left>=5400) return `for another ${Math.round(left/3600)} h`;
+  return `for another ${Math.max(1,Math.round(left/60))} min`;
+}
+
+/* The email group on the Controls panel.
+   Presets rather than a free-text box, for the same reason the maintenance
+   window offers presets: the safety property is that it ENDS BY ITSELF, and a
+   control that does not state its own duration invites leaving it on. The one
+   option that never ends is the only one that confirms, and it says in the
+   dialog what it costs. */
+function quietGroup(group){
+  const left=quietLeft();
+  if(!notify.configured)
+    return group("Email alerts",
+      `<span class="glabel">no email configured on the server</span>`);
+  if(left){
+    const held=Number(notify.held||0);
+    return group("Email alerts",
+      `<button class="b-outline" data-quiet="0">Send alerts again</button>`
+      +`<span class="glabel">holding every alert ${left}`
+      +(held?` · ${held} held so far`:"")+`</span>`);
+  }
+  return group("Email alerts",
+    `<button class="b-quiet" data-quiet="60">Quiet 1 h</button>`
+    +`<button class="b-quiet" data-quiet="480">Quiet 8 h</button>`
+    +`<button class="b-quiet" data-quiet="1440">Quiet 24 h</button>`
+    +`<button class="b-outline" data-quiet="forever" data-qconfirm="Hold every`
+    +` alert until you turn it back on? Nothing will be mailed — including a door`
+    +` that has given up closing and is standing open. This does not expire by`
+    +` itself.">Quiet until further notice</button>`);
+}
+
+/* What a quiet period means, and what the last one cost.
+
+   Both halves earn their space. The first says the silence is TOTAL — this is
+   not the buzzer's mute, where faults deliberately still sound — because
+   somebody muting for an afternoon has to know that a door giving up on
+   closing is included. The second is the only place the held count is ever
+   reported: no summary email follows a quiet period, by choice, so if the
+   page does not say "3 were held" then nothing does. */
+function quietNote(){
+  if(!notify.configured) return "";
+  const left=quietLeft();
+  const held=Number(notify.held||0);
+  if(left)
+    return `<p class="note" data-u="mt8"><b>Email is quiet ${left}.</b> Every `
+      +`alert is held, including a stall, a sensor fault and a door that has `
+      +`given up closing. Events are still logged and still on this page — only `
+      +`the mail stops — and nothing held is sent afterwards.`
+      +(held?` ${held} message${held===1?"":"s"} held so far.`:"")+`</p>`;
+  if(held&&Number(notify.quiet_since||0))
+    return `<p class="note" data-u="mt8">Email is live. `
+      +`${held} alert${held===1?" was":"s were"} held during the quiet period `
+      +`that began ${fmtDate(Number(notify.quiet_since))}, and ${held===1?"it was":"they were"} `
+      +`not resent — the Events table above is the record.</p>`;
+  return "";
+}
+
+/* The same CSRF defence as send(): a header a browser will not attach to a
+   cross-origin request without a preflight this server never answers.
+
+   Separate from send() because nothing here is a command for the door. There
+   is no queue, no check-in to wait for and nothing to cancel — it takes effect
+   on the server the moment it returns, so the panel re-renders from the state
+   the server reports back rather than from what was asked for. */
+async function sendQuiet(v){
+  if(busy) return;
+  busy=true;
+  let msg="", good=false;
+  try{
+    const r=await fetch("/api/notify",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","X-PetDoor-Control":"1"},
+      body:JSON.stringify(v==="forever"?{indefinite:true}:{minutes:Number(v)||0})
+    });
+    const j=await r.json().catch(()=>({ok:false,error:"HTTP "+r.status}));
+    if(j.notify) notify=j.notify;
+    good=!!j.ok;
+    msg=j.ok?(j.message||"done"):("Refused: "+(j.error||"unknown"));
+  }catch(err){
+    msg="Could not reach the server ("+err.message+")";
+  }finally{
+    busy=false;
+    // Re-render FIRST, then write the message: renderControl() rebuilds the
+    // panel's markup, #said with it, so a message written before this would be
+    // thrown away by the render that shows the new state.
+    renderControl();
+    renderBanner();
+    const say=$("said");
+    if(say){say.className="said "+(good?"good":"bad");say.textContent=msg;}
+  }
+}
+
 function renderControl(){
   const sec=$("controlsec"), host=$("controls");
   if(!sec||!host) return;
@@ -990,6 +1095,17 @@ function renderControl(){
             +`<input id="mt-hours" type="number" min="0" max="${MAINT_MAX_H}" step="1" value="0" style="width:5.5em">`
             +`<span class="glabel">hours</span>`
             +`<button class="b-quiet" data-apply="maint">Start</button>`))
+    // The only control on this panel that reaches no door. Email is the log
+    // SERVER's, so nothing is queued and nothing waits for a check-in: it takes
+    // effect at once. It lives here anyway, because this is the tab somebody is
+    // already on when the door is about to start generating alerts they do not
+    // want — a commissioning run, a recalibration, a weekend with the flap
+    // propped open.
+    //
+    // data-quiet, not data-cmd, and deliberately: the panel's buttons are
+    // walked by tests/server/test_notify.py and checked against the commands
+    // the door accepts. A door command this is not.
+    +quietGroup(group)
     +'</div>';
 
   let queue="";
@@ -1023,7 +1139,16 @@ function renderControl(){
     +`at all — it does not stop an open door closing.<br>`
     +`Nothing here is instant: the door collects commands when it next calls in, usually within `
     +`five minutes, and sooner if the collar is away. Until then you can cancel.</p>`
+    +quietNote()
     +`<div class="said" id="said"></div>`;
+
+  host.querySelectorAll("button[data-quiet]").forEach(el=>{
+    el.addEventListener("click",()=>{
+      const q=el.dataset.qconfirm;
+      if(q && !confirm(q)) return;
+      sendQuiet(el.dataset.quiet);
+    });
+  });
 
   host.querySelectorAll("button[data-cmd]").forEach(el=>{
     el.addEventListener("click",()=>{
@@ -1161,6 +1286,13 @@ function renderBanner(){
   }else{
     bits.push(fact("Last check-in","never","stale"));
   }
+  // Mail being held is a state of the SERVER rather than of the door, so it
+  // belongs with the facts and not among the pills that say who is in charge
+  // of the flap. It is here at all because a silence nobody can see is the
+  // entire risk this feature carries: coloured like a stale check-in, next to
+  // the door's own state, on the one part of the page nobody scrolls past.
+  const qleft=quietLeft();
+  if(qleft) bits.push(fact("Email","quiet "+qleft,"stale"));
   bits.push(fact("Refreshed",'<span id="live">just now</span>'));
   // Hidden on a phone: it is an OTA-time detail, and nobody pushes firmware
   // from one. Dropping it saves a whole wrapped row where space is tightest.
@@ -1202,6 +1334,7 @@ async function load(){
     commands=(j.commands||[]);
     pending=(j.pending||[]);
     controlOn=!!j.control;
+    if(j.notify) notify=j.notify;
     devices=(j.devices||[]);
     renderDoors(devices);
     renderControl();

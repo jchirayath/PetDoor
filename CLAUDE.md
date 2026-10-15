@@ -31,7 +31,7 @@ comes from an unauthenticated advertisement — so it is fuzzed under ASan/UBSan
 well as unit tested. **180 host checks** now cover it plus `proximity.*` (the
 filters, the hysteresis state machine and both `millis()`-wrap cases) and
 `sensor_verdict.h` (both sensor-health decision tables). `tests/server/run.sh`
-adds 53 on the log server's alerting.
+adds 207 on the log server's alerting.
 
 What is left untested needs a chip, a radio or a relay, and that is the honest
 boundary rather than a backlog — see `docs/PARKING_LOT.md`. The rule for extending

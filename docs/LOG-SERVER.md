@@ -221,7 +221,10 @@ connection, no port forwarded, nothing to reach *in* through a router.
   authentication is already in front of the private routes —
   [WEB-DASHBOARD.md](WEB-DASHBOARD.md#controlling-the-door-from-the-browser).
 - **Email you** when something consequential is asked of it —
-  [WEB-DASHBOARD.md](WEB-DASHBOARD.md#email-when-something-consequential-happens).
+  [WEB-DASHBOARD.md](WEB-DASHBOARD.md#email-when-something-consequential-happens)
+  — and **hold all of that mail** for an hour, a day or until further notice
+  while you work on the door:
+  [silencing the alerts](WEB-DASHBOARD.md#silencing-the-alerts-for-a-while).
 - **Record every firmware a door has run**, with the commit it was built from
   and whether it arrived over the air or down a cable: `--firmware`.
 
