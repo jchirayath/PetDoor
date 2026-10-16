@@ -220,11 +220,29 @@ never touches `/api/events` — there is no route from the demo to any real log.
 It exists so somebody deciding whether to build one of these can see what they
 would get, without you having to expose your own household to show them.
 
-Regenerate it whenever the dashboard changes, so the two do not drift:
+It is **generated** from the real dashboard's three files, so edit those and
+re-run the generator. Never hand-edit `demo.html`, `demo.css` or `demo.js`:
 
 ```bash
-tools/logserver/make-demo.py        # rebuilds demo.html from dashboard.html
+tools/logserver/make-demo.py          # rebuilds demo.{html,css,js}
+tools/logserver/make-demo.py --check  # are the committed ones in step?
 ```
+
+`tests/server/run.sh` runs `--check`, because this drifted once and nothing
+could see it: the generator's anchors all lived in the page's inline `<style>`
+and `<script>`, so extracting those for the Content-Security-Policy left it
+refusing to run — and the only thing that runs it is a person. By the time it
+was noticed the sample was eighteen functions behind the dashboard, had no tab
+bar, and still called its heading "Door Log", a name the real page had dropped.
+A stale sample page looks exactly like a current one.
+
+**The sample shows no control panel**, and that is deliberate. Its synthetic
+payload carries no `control` key, so the page sees web control as off exactly
+as a real server does without `--allow-web-control`: the Settings tab hides
+itself and the Controls tab keeps only its log. A public page offering Open,
+Close and Lock would look like it can drive somebody else's door. The same
+choice is why the sample says nothing about email alerts or quiet periods —
+those controls live inside the panel that is off.
 
 ### The analytics
 
