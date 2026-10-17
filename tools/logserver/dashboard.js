@@ -937,12 +937,12 @@ function quietGroup(group){
   const left=quietLeft();
   if(!notify.configured)
     return group("Email alerts",
-      `<span class="glabel">no email configured on the server</span>`);
+      `<span class="ctlsay">no email configured on the server</span>`);
   if(left){
     const held=Number(notify.held||0);
     return group("Email alerts",
       `<button class="b-outline" data-quiet="0">Send alerts again</button>`
-      +`<span class="glabel">holding every alert ${left}`
+      +`<span class="ctlsay">holding every alert ${left}`
       +(held?` · ${held} held so far`:"")+`</span>`);
   }
   return group("Email alerts",
@@ -1060,11 +1060,14 @@ function renderControl(){
         `<button class="b-outline" data-cmd="lock open" data-confirm="Open the door and take manual control? It opens now, and nothing automatic will move it again — not the collar, not the close dwell, not the schedule. This SURVIVES A REBOOT. Hand it back with Auto.">Hold open</button>`
        +`<button class="act-lock" data-cmd="lock close" data-confirm="Close the door and take manual control? An animal outside WILL NOT BE ABLE TO GET IN, and nothing will correct that. This survives a reboot and a power cut. Hand it back with Auto. Are you sure?">Hold closed</button>`
        +(holdOn?`<button class="b-quiet" data-cmd="door auto">Back to auto</button>`:""))
-    +group("Sound",
+    // One group, because it is one device. "Sound" and "Check" were separate
+    // rows holding three buttons between them, which read as two unrelated
+    // things and cost a label apiece — and `beep` is not really a check of
+    // anything but the buzzer: it is how an undocumented buzzer pin gets found.
+    +group("Buzzer",
         b("mute","Mute","b-quiet",st.mute==="1")
-       +b("unmute","Unmute","b-quiet",st.mute!=="1"))
-    +group("Check",
-        b("beep","Beep","b-quiet",false))
+       +b("unmute","Unmute","b-quiet",st.mute!=="1")
+       +b("beep","Beep","b-quiet",false))
     // Its own group because it is not an action on the door so much as a
     // change to what the door is: for the window's duration the collar stops
     // working. Saying how long it lasts on the button itself matters — the
@@ -1095,16 +1098,24 @@ function renderControl(){
             +`<input id="mt-hours" type="number" min="0" max="${MAINT_MAX_H}" step="1" value="0" style="width:5.5em">`
             +`<span class="glabel">hours</span>`
             +`<button class="b-quiet" data-apply="maint">Start</button>`))
-    // The only control on this panel that reaches no door. Email is the log
-    // SERVER's, so nothing is queued and nothing waits for a check-in: it takes
-    // effect at once. It lives here anyway, because this is the tab somebody is
-    // already on when the door is about to start generating alerts they do not
-    // want — a commissioning run, a recalibration, a weekend with the flap
-    // propped open.
+    +'</div>'
+    // BELOW ITS OWN HEADING, because it is the only control here that reaches
+    // no door. Email is the log SERVER's: nothing is queued, nothing waits for
+    // a check-in, and it takes effect at once — which is the opposite of
+    // everything above it, where the whole panel's promise is "queued now,
+    // collected within five minutes, cancellable until then". Sitting it in
+    // that list as a seventh equal row said it behaved like the other six.
+    //
+    // It is on this tab at all because this is where somebody already is when
+    // the door is about to start generating alerts they do not want: a
+    // commissioning run, a recalibration, a weekend with the flap propped open.
     //
     // data-quiet, not data-cmd, and deliberately: the panel's buttons are
     // walked by tests/server/test_notify.py and checked against the commands
     // the door accepts. A door command this is not.
+    +'<div class="ctlsub"><span class="glabel">This log server, not the door</span>'
+    +'<span class="ctlsay">takes effect at once &middot; nothing is queued</span></div>'
+    +'<div class="ctlgroups">'
     +quietGroup(group)
     +'</div>';
 

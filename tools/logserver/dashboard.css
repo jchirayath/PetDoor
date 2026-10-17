@@ -134,7 +134,20 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
    moment the buttons gained labels to misalign against. */
 #controls,#settings{padding:16px 18px}
 #controls .queued{margin-left:-4px;margin-right:-4px}
-.ctlgroups{display:flex;flex-wrap:wrap;gap:14px 26px;margin:2px 0}
+/* ONE ROW PER GROUP, label beside its controls.
+
+   This was a wrapping flex ROW of groups, which worked while there were three
+   of them and failed quietly as they grew to seven. Two ways: a group whose
+   buttons wrapped put half of them under the next group's label, and the
+   labels are 9.5px micro-type, so nothing anchored a button to the thing it
+   belonged to. On a phone it was twenty controls in one undifferentiated
+   paragraph.
+
+   A grid rather than flex because the labels must share one column width: they
+   are the left rail you read down, and a ragged one is no rail. The hairline is
+   --line-2, the same weight the settings form uses between ITS groups, so the
+   two tabs separate their sections identically. */
+.ctlgroups{display:flex;flex-direction:column;margin:2px 0}
 .schedrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0;
   border-bottom:1px solid var(--rule)}
 .schedrow:last-of-type{border-bottom:0}
@@ -146,11 +159,28 @@ footer{color:var(--ink-3); font-size:12px; text-align:center; padding-block:4px}
 .daypick label{display:inline-flex;align-items:center;gap:3px;font-size:.86em;
   padding:3px 6px;border:1px solid var(--rule);border-radius:5px;cursor:pointer}
 .daypick input{margin:0}
-.ctlgroup{display:flex;flex-direction:column;gap:7px}
+.ctlgroup{display:grid;grid-template-columns:136px minmax(0,1fr);
+  gap:8px 18px;align-items:start;padding:11px 0;
+  border-top:1px solid var(--line-2)}
+.ctlgroup:first-child{border-top:0;padding-top:2px}
+.ctlgroup:last-child{padding-bottom:2px}
 .glabel{font-size:9.5px;text-transform:uppercase;letter-spacing:.1em;
   color:var(--ink-3);font-weight:600}
-.ctl{display:flex;flex-wrap:wrap;gap:8px}
+/* The label is micro-type against 36px buttons, so centring the grid row would
+   float it in the middle of nothing. Nudged down to sit on the first button's
+   cap height instead — optical, not mathematical. */
+.ctlgroup>.glabel{padding-top:11px;line-height:1.25}
+.ctl{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .ctl button{padding:9px 17px;font-size:13.5px;font-weight:500}
+/* A sentence, not a label: the quiet-period status and the "no email
+   configured" line are prose and were wearing .glabel's 9.5px uppercase
+   micro-type, which made a sentence shout in small caps. */
+.ctlsay{font-size:12.5px;color:var(--ink-2);line-height:1.4}
+/* The heading that separates what acts on the DOOR from what acts on this
+   SERVER. A full-weight rule rather than --line-2: it divides two kinds of
+   thing, not two groups of one kind. */
+.ctlsub{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;
+  margin-top:18px;padding-top:13px;border-top:1px solid var(--line)}
 button.b-primary{background:var(--in);border-color:var(--in);color:var(--on-in);font-weight:600}
 button.b-primary:hover{border-color:var(--in);filter:brightness(1.08)}
 button.b-outline{border-color:var(--ink-3);color:var(--ink);font-weight:600}
@@ -248,4 +278,21 @@ button[disabled]:hover{border-color:var(--line);background:none;filter:none}
   .srow .lab{flex-basis:100%}
   .srow{gap:8px}
   .fact.wide-only{display:none}
+
+  /* The control panel's label column is worth 136px of a 560px screen and
+     costs it from the buttons, which are the part you came to press. So the
+     label goes above its own row — the rules still say where each group ends,
+     which is the job the column was doing. */
+  .ctlgroup{grid-template-columns:minmax(0,1fr);gap:7px;padding:12px 0}
+  .ctlgroup>.glabel{padding-top:0}
+  /* 44px is the smallest target a thumb hits reliably, and this panel opens
+     the door — a mis-tap here is not a typo. The desktop buttons are ~36px,
+     which is fine for a pointer and not for a thumb in a coat. */
+  .ctl button{min-height:44px;padding:11px 16px}
+  /* The door's own row only: Open and Close share the top line at half width
+     each, and Auto takes the line beneath. They are the two buttons somebody
+     is standing in the garden trying to hit. Every other group keeps its
+     buttons at their natural width, because a stretched Beep would read as
+     being as important as Open. */
+  #controls .ctlgroup:first-child .ctl button{flex:1 1 40%}
 }
