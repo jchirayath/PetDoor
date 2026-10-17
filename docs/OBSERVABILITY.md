@@ -27,7 +27,7 @@ Reviewed: **2026-10-06**.
 | **Buzzer** | immediately, at the door | no | a passive buzzer fitted, and not muted — see below |
 | **Event log** | on the next upload | **yes** — NVS ring | nothing |
 | **Status line** | on the next upload, ~5 min | no — current state only | WiFi configured |
-| **Email** | minutes | n/a | the log server configured with `PETDOOR_NOTIFY_TO` |
+| **Email** | minutes | n/a | the log server configured with `PETDOOR_NOTIFY_TO`, and not in a quiet period — see below |
 
 The **buzzer is the only sink that works with no cable, no WiFi and no server** —
 which is why it carries distinct patterns rather than one beep. The **event log is
@@ -71,9 +71,47 @@ and a plain restart from a cable is unplugging it. A test in
 `tests/server/run.sh` asserts that list stays exactly one entry long, so a new
 remote verb cannot quietly become dashboard-only.
 
+### Email can be silenced too, and NOTHING rings through that one
+
+The Email column below is written as though the mail always goes. A **quiet
+period** on the log server holds all of it — every `✓` in that column — for a
+stretch you choose: 1 h, 8 h, 24 h from the dashboard's Controls tab, or until
+you turn it back on. See
+[WEB-DASHBOARD.md](WEB-DASHBOARD.md#silencing-the-alerts-for-a-while) for the
+controls and the ceiling.
+
+**Read that against the buzzer's `mute` above, because the two are opposites
+and that is deliberate.** A buzzer is muted at bedtime by somebody who still
+wants to hear a stall at 3 a.m., so faults sound through it. Mail is silenced
+while the door is being *worked on* — a commissioning run, a recalibration, a
+weekend with the flap propped — and those sessions produce exactly the stalls,
+uncommanded travels and sensor faults that a "faults still mail" exception
+would deliver. A mute that still sent the loudest alerts is one nobody trusts,
+and the alternative people reach for then is unsetting `PETDOOR_NOTIFY_TO` and
+forgetting to put it back.
+
+So the Email column has a condition the other four do not, and this table's own
+rule — an event the system knows and no sink a person reads carries — says what
+has to pay for it:
+
+| | |
+|---|---|
+| the other four sinks | **unaffected.** The ring, the console, the buzzer and the status line all carry everything exactly as below. Only the mail stops |
+| every held message | logged on the server, by subject, at the one point the decision is taken |
+| the count | shown on the Controls tab while the period runs, **and after it ends** — no digest is mailed, so the page is the only place it is ever reported |
+| the masthead | carries "Email quiet — for another 6 h" beside the door's own state, for as long as it lasts |
+| the server log at startup | says so too, in capitals, because the period outlives a restart and alerting that sends nothing must not look healthy |
+| the period itself | a **deadline**, not a flag: it expires by itself (invariant 10's reasoning, applied to alerting), and a timed one is capped at a week |
+
+**Nothing held is ever resent.** That is the deliberate limit of the feature: a
+quiet period trades those messages away, and the event log is what remains.
+If the thing you want is less mail rather than none, `PETDOOR_NOTIFY_COOLDOWN_S`
+and the per-event rules in the table below are the knobs for that.
+
 ## Producer × sink
 
-`✓` carried, `—` not carried, `!` deliberately not.
+`✓` carried, `—` not carried, `!` deliberately not. Every `✓` in the Email
+column is also subject to a quiet period, as above.
 
 | Event | Console | Buzzer | Event log | Status | Email |
 |---|---|---|---|---|---|

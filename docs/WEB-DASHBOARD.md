@@ -177,6 +177,7 @@ flowchart LR
     C["/export.csv"] --> CD["Whole log as CSV<br/><b>private</b>"]
     T["/table"] --> TD["Plain table<br/><b>private</b>"]
     M["/api/command"] --> MD["Opens the door<br/><b>private, off by default</b>"]
+    N["/api/notify"] --> ND["Silences the alerts<br/><b>private, off by default</b>"]
 
     style PD fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
     style ID fill:#f3f4f6,stroke:#9AA5B1,color:#1f2937
@@ -187,6 +188,7 @@ flowchart LR
     style CD fill:#2A9D8F,stroke:#21867A,color:#ffffff
     style TD fill:#2A9D8F,stroke:#21867A,color:#ffffff
     style MD fill:#C4453B,stroke:#9E3730,color:#ffffff
+    style ND fill:#E9A23B,stroke:#C4852C,color:#1f2937
 ```
 
 **Why bother splitting it.** A door log is a record of when somebody is home.
@@ -218,11 +220,29 @@ never touches `/api/events` — there is no route from the demo to any real log.
 It exists so somebody deciding whether to build one of these can see what they
 would get, without you having to expose your own household to show them.
 
-Regenerate it whenever the dashboard changes, so the two do not drift:
+It is **generated** from the real dashboard's three files, so edit those and
+re-run the generator. Never hand-edit `demo.html`, `demo.css` or `demo.js`:
 
 ```bash
-tools/logserver/make-demo.py        # rebuilds demo.html from dashboard.html
+tools/logserver/make-demo.py          # rebuilds demo.{html,css,js}
+tools/logserver/make-demo.py --check  # are the committed ones in step?
 ```
+
+`tests/server/run.sh` runs `--check`, because this drifted once and nothing
+could see it: the generator's anchors all lived in the page's inline `<style>`
+and `<script>`, so extracting those for the Content-Security-Policy left it
+refusing to run — and the only thing that runs it is a person. By the time it
+was noticed the sample was eighteen functions behind the dashboard, had no tab
+bar, and still called its heading "Door Log", a name the real page had dropped.
+A stale sample page looks exactly like a current one.
+
+**The sample shows no control panel**, and that is deliberate. Its synthetic
+payload carries no `control` key, so the page sees web control as off exactly
+as a real server does without `--allow-web-control`: the Settings tab hides
+itself and the Controls tab keeps only its log. A public page offering Open,
+Close and Lock would look like it can drive somebody else's door. The same
+choice is why the sample says nothing about email alerts or quiet periods —
+those controls live inside the panel that is off.
 
 ### The analytics
 
@@ -310,7 +330,8 @@ hand back to the collar, lock, unlock, and a beep to prove the door is awake.
 python3 petdoor-logserver.py --allow-web-control
 ```
 
-Without the flag the panel does not render and `POST /api/command` returns 403.
+Without the flag the panel does not render, and `POST /api/command` and
+`POST /api/notify` both return 403.
 That default is deliberate. An existing install whose private routes are
 protected by nothing but an unguessable hostname must not silently acquire a
 button that opens the door; turning this on should be a decision somebody took.
@@ -332,6 +353,10 @@ button that opens the door; turning this on should be a decision somebody took.
 | Auto | `door auto` | Clears a manual hold, handing control back to the collar |
 | Lock / Unlock | `lock` / `unlock` | Stops the collar opening the door. Does **not** stop an open door closing |
 | Beep | `beep` | Sounds the buzzer. A cheap "is it alive" that touches nothing |
+| Mute / Unmute | `mute` / `unmute` | Silences the door's **routine** sounds. Faults still sound |
+| Quiet 1 h / 8 h / 24 h | nothing — `POST /api/notify` | Holds this **server's email**, all of it. Reaches no door; takes effect at once. [What it costs](#silencing-the-alerts-for-a-while) |
+| Quiet until further notice | nothing — `POST /api/notify` | The same, with no expiry. **(asks first)** |
+| Send alerts again | nothing — `POST /api/notify` | Ends a quiet period. Held messages are not resent |
 
 **Settings** is everything you would otherwise tune over a serial cable. It
 lives on its own tab, and holds typed fields with ranges rather than buttons —
@@ -472,6 +497,61 @@ Everything else is logged and visible on the dashboard but does not interrupt
 you: ordinary opens and closes, refusals, `RETRY`, `WAKE`, `UNCOMMANDED`,
 `NO_MOVEMENT`, maintenance windows.
 
+#### Silencing the alerts for a while
+
+The **Email alerts** row on the Controls tab holds everything above for a
+stretch you choose — **1 h**, **8 h**, **24 h**, or until you turn it back on.
+It is the log server's own state, not a command for the door: nothing is
+queued, nothing waits for a check-in, and it takes effect on the next alert.
+
+**It is total.** A stall, a sensor fault, a wrong console password and a door
+that has given up closing and is standing open are all held. That is the
+opposite of the buzzer's `mute`, which deliberately lets faults sound, and the
+difference is who is muting and why:
+
+| | Muted by | So |
+|---|---|---|
+| **buzzer `mute`** | somebody at bedtime who still wants to hear a stall at 3 a.m. | faults still sound |
+| **a quiet period** | somebody *working on the door* — commissioning, recalibrating, a weekend with the flap propped | nothing is sent |
+
+A commissioning run produces exactly the stalls, uncommanded travels and sensor
+faults that a "faults still mail" exception would deliver, and a mute that
+still sent the loudest alerts is one nobody would trust. What people reach for
+instead is unsetting `PETDOOR_NOTIFY_TO` — which does the same thing, silently,
+with nothing to remind them and no way back without a redeploy.
+
+**Nothing held is resent.** No digest follows, by choice, so these pay for the
+silence instead:
+
+- the **masthead** carries *Email quiet — for another 6 h* beside the door's
+  own state, coloured like a stale check-in;
+- the **Controls tab** says what a quiet period means and how many messages it
+  has held — and still says how many it held *after* it ends, because the page
+  is the only place that number is ever reported;
+- every held message is written to the **server log** by subject;
+- the **startup banner** says so in capitals if the server comes up inside a
+  quiet period. It survives a restart deliberately, and alerting that sends
+  nothing must not look healthy in the logs;
+- the events themselves are **stored and shown exactly as usual**. Only the
+  mail stops.
+
+**A timed period is capped at a week** (`PETDOOR_NOTIFY_QUIET_MAX_S`), and a
+longer duration is *refused* rather than quietly shortened — the same rule the
+firmware applies to a maintenance window, for the same reason. Going quiet with
+no end at all is a separate request with its own confirmation, so a mistyped
+duration cannot become one.
+
+It expires by itself, and the deadline lives in the database: a quiet period
+that passed while the server was down is simply over when it comes back, with
+nothing needing to run at the moment it ended.
+
+> **It is behind `--allow-web-control`, with the buttons that open the door.**
+> Silencing the alerts is not an action on the door, but it is the action
+> somebody would take *before* one — so it sits with the other writes rather
+> than with the read-only dashboard. `POST /api/notify` is matched by the same
+> `/api/*` rule as everything else private, so a deployment that followed the
+> proxy instructions here already covers it.
+
 #### The watchdog, which is the only alert the door does not send
 
 Every alert above depends on the door **sending** something. A door that has
@@ -550,7 +630,7 @@ Whatever you use, the rule is the same shape:
 | Path | Who |
 |---|---|
 | `/`, `/demo*`, `/images/*`, `/assets/*`, `/health` | anyone — `/assets/*` must be public or `/` renders unstyled |
-| `/dashboard`, `/api/*`, `/table`, `/export.csv` | you — `/api/*` **includes `/api/command`, which opens the door** |
+| `/dashboard`, `/api/*`, `/table`, `/export.csv` | you — `/api/*` **includes `/api/command`, which opens the door, and `/api/notify`, which silences the alerts** |
 | `/ingest` | the door — POST only, HMAC-signed, **never** behind the login |
 
 **`/ingest` must stay outside the login.** The door signs its uploads with the

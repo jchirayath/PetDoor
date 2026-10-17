@@ -12,3 +12,14 @@ python3 test_notify.py
 echo
 echo "▸ commissioning script: parsers (no hardware)"
 python3 ../../tools/commission.py --selftest
+
+# The public sample dashboard is GENERATED from the real one, and the generator
+# is run by a person or not at all. That is how it came to be broken for months
+# after the page's CSS and JS were extracted for the CSP: every anchor it
+# replaced had moved into the extracted files, so it refused to run and the
+# sample page quietly aged — eighteen functions behind the dashboard, no tab
+# bar, and a heading naming a page that had since been renamed. Nothing noticed,
+# because a stale sample page looks exactly like a current one.
+echo
+echo "▸ sample dashboard: still in step with the real one"
+python3 ../../tools/logserver/make-demo.py --check

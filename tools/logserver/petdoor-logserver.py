@@ -75,6 +75,14 @@ SMTP_FROM = os.environ.get("SMTP_FROM", "").strip()
 DASHBOARD_URL = os.environ.get("PETDOOR_DASHBOARD_URL", "").strip()
 SMTP_CRYPTO = os.environ.get("SMTP_CRYPTO", "tls").strip().lower()
 
+# The longest a single TIMED quiet period may last — see "the quiet period"
+# below. A week covers a holiday and a commissioning weekend; anything longer
+# has to be asked for as "indefinite", which the dashboard labels as such and
+# never stops saying. The ceiling exists so a mistyped duration cannot become
+# an indefinite mute that reads as a timed one.
+NOTIFY_QUIET_MAX_S = int(os.environ.get("PETDOOR_NOTIFY_QUIET_MAX_S",
+                                        str(7 * 24 * 3600)))
+
 # Which commands are worth an email.
 #
 # NOT everything. A tuning session is a dozen commands in a minute, and a
@@ -769,6 +777,198 @@ def _email_html(title, lede, rows, note, cta_url, cta_label, accent):
     }
 
 
+# ---------------------------------------------------------- the quiet period
+#
+# A bounded stretch in which this server sends NO mail at all. Not a filter and
+# not a cooldown: every message is held, including the terminal ones.
+#
+# WHY TOTAL SILENCE, when the buzzer's `mute` deliberately lets faults ring
+# through? Because the two are silenced for different reasons. A buzzer is
+# muted at bedtime by somebody who still wants to hear a stall at 3 a.m.; mail
+# is silenced while the door is being WORKED ON — a commissioning run, a
+# recalibration, a weekend with the flap propped open — and those sessions
+# produce exactly the stalls, uncommanded travels and sensor faults that a
+# "faults still mail" exception would let through. A mute that still delivered
+# the loudest alerts is one nobody would trust, so people would unset
+# PETDOOR_NOTIFY_TO instead and forget to put it back. That is the failure this
+# replaces: a mute you can see and that ends by itself beats a configuration
+# change nobody remembers making.
+#
+# WHAT PAYS FOR THE SILENCE, since no digest follows to make up for it:
+#   * every held message is written to the server log, by subject, at the one
+#     point where the decision is taken;
+#   * the count is kept and the dashboard shows it, during and after;
+#   * the events themselves are stored exactly as usual. The ring, the log,
+#     the status line and the dashboard are untouched — only the mail stops;
+#   * the masthead carries "Email quiet" beside the door's own state for as
+#     long as it lasts, so the silence is never invisible;
+#   * it is a DEADLINE in the database, not a flag. It expires by itself —
+#     invariant 10's reasoning applied to alerting — and it survives a restart,
+#     unlike _notified_at below, which is in memory on purpose so that a
+#     restart RE-ARMS every alert. Those two want opposite things from a
+#     restart and that is not a contradiction: a mute undone by a container
+#     restart nobody noticed is a surprise, and an alert suppressed by one is
+#     a missed alert.
+#
+# "Indefinite" is a separate request rather than a very large number of
+# minutes, so that a fat-fingered duration cannot quietly become one.
+NOTIFY_QUIET_KEY = "notify_quiet_until"
+NOTIFY_QUIET_SINCE_KEY = "notify_quiet_since"
+NOTIFY_QUIET_HELD_KEY = "notify_quiet_held"
+NOTIFY_QUIET_FOREVER = -1
+
+# get_setting()/set_setting() live further down, beside the watchdog's own
+# stamp, which is the other thing in this server that has to outlive a restart.
+
+
+def notify_quiet_until():
+    """When mail resumes: an epoch, NOTIFY_QUIET_FOREVER, or 0 if it is live.
+
+    Read from the database on every message rather than cached. That is one
+    small query per mail — and there are minutes between mails — in exchange
+    for the thing that matters: Resume takes effect on the next alert rather
+    than on the next restart.
+
+    A READ THAT FAILS MEANS MAIL GOES OUT. Two reasons, and the direction is
+    not arbitrary:
+
+      * send_notification() promises never to raise into its caller, because
+        by the time it runs the command is already queued and the upload is
+        already stored — so a database having a bad moment must not become a
+        500 on /ingest, or a failed command on a door somebody is standing at.
+        This read put a query on that path, so it has to swallow its own
+        failures to keep that promise.
+      * If we cannot tell whether a quiet period is running, the wrong answer
+        in one direction is a message arriving during a mute, and in the other
+        it is a door that gave up closing telling nobody. Those are not equal.
+    """
+    try:
+        raw = get_setting(NOTIFY_QUIET_KEY)
+    except Exception as exc:                            # noqa: BLE001
+        sys.stderr.write("  NOTIFY: cannot read the quiet period (%r); "
+                         "sending anyway\n" % (exc,))
+        return 0
+    try:
+        until = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    if until == NOTIFY_QUIET_FOREVER:
+        return until
+    # An expired deadline simply stops applying; nothing has to run at the
+    # moment it passes. That is what makes a quiet period end correctly even if
+    # the server was down for the whole of it.
+    return until if until > time.time() else 0
+
+
+def quiet_label(until):
+    """How a quiet period is described to a person, in one phrase."""
+    if until == NOTIFY_QUIET_FOREVER:
+        return "until it is turned back on"
+    return "until " + time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(until))
+
+
+def notify_quiet_held():
+    """How many messages this quiet period has held so far.
+
+    Same contract as notify_quiet_until(): it is read from the alerting path,
+    so it reports 0 rather than raising. A count is the least important thing
+    here and must not be the thing that breaks an upload.
+    """
+    try:
+        return int(get_setting(NOTIFY_QUIET_HELD_KEY) or 0)
+    except Exception:                                   # noqa: BLE001
+        return 0
+
+
+def notify_held(subject):
+    """Why this message is not going out, or None. THE one chokepoint.
+
+    Everything this server sends goes through send_notification(), so this is
+    the only place a quiet period has to be honoured — a new alert cannot
+    forget to check it, which is exactly how a mute grows holes.
+    """
+    until = notify_quiet_until()
+    if not until:
+        return None
+    # Best-effort count: a database that will not take the increment must not
+    # turn a held notification into a traceback on the ingest path.
+    try:
+        set_setting(NOTIFY_QUIET_HELD_KEY, notify_quiet_held() + 1)
+    except Exception:                                   # noqa: BLE001
+        pass
+    # Logged HERE rather than left to the callers. Most of them write their own
+    # line when a send fails, but not all do, and a held alert that appears in
+    # no log at all is the one thing this feature must not produce.
+    sys.stderr.write("  NOTIFY QUIET: held %r (email is quiet %s)\n"
+                     % (subject, quiet_label(until)))
+    return "not sent: email is quiet " + quiet_label(until)
+
+
+def notify_quiet_state():
+    """The quiet period as the dashboard needs it.
+
+    Rides in the /api/events payload, so it cannot be allowed to fail the
+    request: the whole dashboard — every chart, the event table, the control
+    panel — comes from that one response, and losing all of it over the
+    status of the mailer would be a poor trade.
+    """
+    try:
+        since = int(get_setting(NOTIFY_QUIET_SINCE_KEY) or 0)
+    except Exception:                                   # noqa: BLE001
+        since = 0
+    return {"configured": bool(NOTIFY_TO and SMTP_HOST),
+            "quiet_until": notify_quiet_until(),
+            "quiet_since": since,
+            "held": notify_quiet_held(),
+            "max_s": NOTIFY_QUIET_MAX_S}
+
+
+def set_notify_quiet(until):
+    """Start, replace or end a quiet period. `until` as notify_quiet_until()."""
+    was = notify_quiet_until()
+    set_setting(NOTIFY_QUIET_KEY, int(until))
+    if until and not was:
+        # A new period owns its own start and count. Both are kept after it
+        # ends rather than cleared, because "nothing came through since
+        # Tuesday, and three alerts were held" is the question somebody asks
+        # the morning after — and with no digest to answer it, the dashboard
+        # has to.
+        set_setting(NOTIFY_QUIET_SINCE_KEY, int(time.time()))
+        set_setting(NOTIFY_QUIET_HELD_KEY, 0)
+
+
+def parse_quiet_request(payload):
+    """(until, error) for a request to go quiet. `until` as above.
+
+    Validated here rather than inside the HTTP handler so the decision table
+    can be tested without a socket — the same reason sensor_verdict.h exists on
+    the firmware side.
+    """
+    if not isinstance(payload, dict):
+        return None, 'expected {"minutes": N} or {"indefinite": true}'
+    if payload.get("indefinite") is True:
+        return NOTIFY_QUIET_FOREVER, ""
+    if "minutes" not in payload:
+        return None, 'say how long: {"minutes": N}, or 0 to resume now'
+    try:
+        mins = int(payload["minutes"])
+    except (TypeError, ValueError):
+        return None, "minutes must be a whole number"
+    if mins < 0:
+        return None, "minutes cannot be negative"
+    if mins == 0:
+        return 0, ""                        # resume now
+    if mins * 60 > NOTIFY_QUIET_MAX_S:
+        # REFUSED, not shortened. The same rule the firmware applies to a
+        # maintenance window: handing somebody a different duration from the
+        # one they asked for is how a door ends up unguarded — or a mailbox
+        # silent — for longer than anybody believes.
+        return None, ("the longest timed quiet period is %d h; ask for "
+                      "indefinite if you mean until further notice"
+                      % (NOTIFY_QUIET_MAX_S // 3600))
+    return int(time.time()) + mins * 60, ""
+
+
 def send_notification(subject, title, lede="", rows=None, note="",
                       cta_url=None, cta_label=None, accent="calm"):
     """One message, sent as both plain text and HTML. Returns (ok, reason).
@@ -782,6 +982,18 @@ def send_notification(subject, title, lede="", rows=None, note="",
         return False, "no PETDOOR_NOTIFY_TO configured"
     if not SMTP_HOST:
         return False, "no SMTP_HOST configured"
+    # A quiet period, if one is running. Checked after the configuration above
+    # so the held count means "messages that would really have gone out", and
+    # before anything else so no message can be composed, let alone sent.
+    #
+    # Returning FALSE here, rather than pretending the mail went, is
+    # load-bearing: _fault_alerted and _stale_alerted both latch on a
+    # successful send, and that is what entitles the later all-clear. Claiming
+    # success for a held message would mail "that sensor is reporting again"
+    # about a fault nobody was ever told about.
+    held = notify_held(subject)
+    if held:
+        return False, held
     # From is a setting, never a guess. A default like petdoor@<somedomain>
     # sends mail as somebody else's domain, fails SPF and DKIM at any real
     # relay, and quietly lands every future alert in a spam folder — which is
@@ -1434,7 +1646,6 @@ def check_stale_doors():
             continue          # never reported at all; nothing to be silent about
         quiet = now - seen
         if quiet >= STALE_AFTER_S and not _stale_alerted.get(dev):
-            _stale_alerted[dev] = True
             hrs = quiet / 3600.0
             ok, why = send_notification(
                 f"{dev} has stopped reporting",
@@ -1453,6 +1664,14 @@ def check_stale_doors():
                      "until it comes back. Check power first, then WiFi.",
                 cta_label="Open the dashboard",
                 accent="alert")
+            # Latched only once somebody has ACTUALLY been told, so an outage
+            # that begins inside a quiet period is announced on the first sweep
+            # after mail resumes rather than never. The sweep runs every five
+            # minutes and the door is still stale, so the cost of getting this
+            # wrong the other way is one repeated message; the cost of getting
+            # it wrong this way is a door that was off the air all weekend and
+            # said so to nobody.
+            _stale_alerted[dev] = ok
             if not ok:
                 sys.stderr.write(f"  NOTIFY FAILED for stale door {dev}: {why}\n")
         elif quiet < STALE_AFTER_S and _stale_alerted.get(dev):
@@ -1965,7 +2184,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                                                "commands": [dict(c) for c in cmds],
                                                "pending": [dict(p) for p in pend],
                                                "firmware": [dict(f) for f in fw],
-                                               "control": bool(ALLOW_WEB_CONTROL)}),
+                                               "control": bool(ALLOW_WEB_CONTROL),
+                                               # Whether mail is live or being
+                                               # held, so the page can say so
+                                               # in the masthead. A silence
+                                               # nobody can see is the failure
+                                               # mode this feature has.
+                                               "notify": notify_quiet_state()}),
                               "application/json; charset=utf-8")
         if path.startswith("/table"):
             return self._send(200, render(), "text/html; charset=utf-8")
@@ -2092,6 +2317,95 @@ class Handler(http.server.BaseHTTPRequestHandler):
             notify_command(device, command, who, f"the dashboard ({self.client_address[0]})")
         return self._json(200 if ok else 400, {"ok": ok, "queued": ok, "message": msg})
 
+    def _handle_notify(self):
+        """PRIVATE. Start or end a quiet period for this server's email.
+
+        Under /api/ for the same reason as /api/command: every proxy rule in
+        docs/WEB-DASHBOARD.md already matches /api/*, so an existing deployment
+        covers this route the day it appears instead of exposing it until each
+        operator notices a new top-level path.
+
+        Behind --allow-web-control as well, and that is a judgement rather than
+        an accident. Silencing the alerts is not an action on the door, but it
+        is the action somebody would take BEFORE one — so it belongs with the
+        other writes rather than with the read-only dashboard.
+        """
+        if not ALLOW_WEB_CONTROL:
+            return self._json(403, {"ok": False, "error":
+                "web control is off; start the server with --allow-web-control"})
+
+        bad = self._csrf_problem()
+        if bad:
+            self.log_message("NOTIFY REJECTED from %s: %s", self.client_address[0], bad)
+            return self._json(403, {"ok": False, "error": f"rejected: {bad}"})
+
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0 or length > 2000:
+            return self._json(400, {"ok": False, "error": "empty or oversized body"})
+        try:
+            payload = json.loads(self.rfile.read(length))
+        except Exception:
+            return self._json(400, {"ok": False, "error":
+                'expected {"minutes": N} or {"indefinite": true}'})
+
+        until, err = parse_quiet_request(payload)
+        if err:
+            return self._json(400, {"ok": False, "error": err})
+
+        # The proxy's word on who asked, exactly as /api/command uses it.
+        who = (self.headers.get("X-Auth-Request-Email")
+               or self.headers.get("X-Auth-Request-User") or "")
+        was = notify_quiet_until()
+
+        if until:
+            # Sent BEFORE the setting is written, or it would be the first
+            # thing held. This is the message that makes the silence
+            # attributable: a mute is also what somebody would set before
+            # opening a door they should not, and a mailbox showing only an
+            # unexplained gap could not tell the difference.
+            send_notification(
+                "email is going quiet " + quiet_label(until),
+                title="Alerts from this door are being held",
+                lede="Nothing — including a door that gives up closing — will "
+                     "be mailed until this ends.",
+                rows=[("quiet", quiet_label(until)),
+                      ("asked by", who or "not recorded"),
+                      ("from", f"the dashboard ({self.client_address[0]})")],
+                note="Events are still logged and still visible on the "
+                     "dashboard; only the mail stops. No summary is sent "
+                     "afterwards, so what was held is counted on the Controls "
+                     "tab instead. Resume there at any time.",
+                cta_label="Open the dashboard",
+                accent="warn")
+
+        set_notify_quiet(until)
+
+        if not until and was:
+            # The all-clear, sent after the setting is cleared so it is the
+            # first thing to go out rather than the last thing held.
+            held = notify_quiet_held()
+            send_notification(
+                "email is live again",
+                title="Alerts from this door are being sent again",
+                lede="The quiet period is over." if held == 0 else
+                     "The quiet period is over. %d message%s held while it ran."
+                     % (held, " was" if held == 1 else "s were"),
+                rows=[("resumed by", who or "not recorded")],
+                note="Held messages are not resent. What happened while this "
+                     "was quiet is in the event log on the dashboard, and the "
+                     "server log names each message by subject.",
+                cta_label="Open the dashboard",
+                accent="calm")
+
+        state = notify_quiet_state()
+        self.log_message("NOTIFY from %s: quiet %s (by %s)",
+                         self.client_address[0],
+                         quiet_label(until) if until else "off — mail resumed",
+                         who or "unknown")
+        return self._json(200, {"ok": True, "notify": state,
+                                "message": ("email is quiet " + quiet_label(until))
+                                           if until else "email is live again"})
+
     def do_DELETE(self):
         """PRIVATE. Drop whatever has not reached the door yet.
 
@@ -2129,6 +2443,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if urlparse(self.path).path == "/api/command":
             return self._handle_command()
+        if urlparse(self.path).path == "/api/notify":
+            return self._handle_notify()
         if not self.path.startswith("/ingest"):
             return self._send(404, "not found")
         length = int(self.headers.get("Content-Length") or 0)
@@ -2465,6 +2781,15 @@ def main():
               f"{STALE_AFTER_S // 3600}h (checked every {WATCHDOG_EVERY_S // 60}m)")
     else:
         print("  watchdog  : off (no PETDOOR_NOTIFY_TO configured)")
+    # A quiet period outlives a restart on purpose, so a server coming up
+    # inside one has to say so. Without this line the alerting looks healthy
+    # from the logs and sends nothing, which is the one way this feature could
+    # cost somebody a door.
+    _q = notify_quiet_until()
+    if _q:
+        print(f"  !! EMAIL IS QUIET {quiet_label(_q)} — no alerts will be sent,")
+        print(f"  !! including a door that gives up closing. {notify_quiet_held()} "
+              "held so far. Resume on the dashboard's Controls tab.")
 
     with Server((args.host, args.port), Handler) as srv:
         try:

@@ -48,8 +48,36 @@ def check(cond, what):
 
 
 # Replace the mailer with a recorder. Nothing here should ever open a socket.
+#
+# The recorder consults notify_held() exactly as the real send_notification()
+# does, and that one line is load-bearing: the quiet period is a gate at the
+# single chokepoint, so without it every end-to-end test here would run against
+# a mailer that cannot be quiet, and "does a quiet period actually hold a
+# GAVE_UP?" could only be asked of the stub. The fidelity of that line is
+# itself pinned, by test_the_real_mailer_checks_the_quiet_period_first.
 SENT = []
-srv.send_notification = lambda subject, **kw: (SENT.append((subject, kw)) or (True, "ok"))
+
+# Kept before the override, because it is the only handle on the real mailer
+# afterwards — test_the_real_mailer_checks_the_quiet_period_first needs the
+# genuine article, and reading srv.send_notification there would hand it this
+# recorder and assert nothing.
+REAL_SEND = srv.send_notification
+
+
+def _record(subject, **kw):
+    held = srv.notify_held(subject)
+    if held:
+        return False, held
+    SENT.append((subject, kw))
+    return True, "ok"
+
+
+srv.send_notification = _record
+
+
+def set_quiet(until):
+    """Put the server in or out of a quiet period, as the dashboard would."""
+    srv.set_notify_quiet(until)
 
 
 def seed_device(name, last_seen):
@@ -912,6 +940,277 @@ def test_console_and_remote_command_sets_do_not_silently_diverge():
 
 
 
+def test_a_quiet_period_holds_every_single_kind_of_mail():
+    """No exceptions, and the terminal alerts are the point of the test.
+
+    The buzzer's `mute` deliberately lets faults ring through, so the obvious
+    reading of "quiet" here would be the same — routine mail held, alarms
+    delivered. It is the opposite on purpose: mail is silenced while the door
+    is being WORKED ON, and a commissioning run produces exactly the stalls,
+    uncommanded travels and sensor faults such an exception would deliver.
+    """
+    SENT.clear()
+    srv._notified_at.clear()
+    srv._fault_alerted.clear()
+    srv._stale_alerted.clear()
+    set_quiet(int(time.time()) + 3600)
+    try:
+        def row(kind, detail=1, uptime=100, boot=1):
+            return {"type": kind, "detail": detail, "uptime": uptime, "boot": boot,
+                    "epoch": 0, "rssi": -60, "src": 0}
+
+        # One of each, including the three that are never rate limited.
+        srv.notify_events("door", [
+            row("GAVE_UP", 3), row("SENSOR_FAULT", 2), row("STALLED"),
+            row("BEACON_LOW", 1), row("CONSOLE", 0), row("BOOT", 4),
+            row("UNCOMMANDED", 2),
+        ])
+        check(not SENT, f"a quiet period holds every event alert (got {SENT})")
+
+        # The watchdog's two, which do not come from an event at all.
+        seed_device("muted-door", int(time.time()) - 3 * 3600)
+        srv.check_stale_doors()
+        check(not SENT, "a quiet period holds the gone-quiet alert too")
+
+        # And a command queued from the dashboard.
+        srv.notify_command("muted-door", "door open", "someone@example.invalid",
+                           "the dashboard")
+        check(not SENT, "a quiet period holds command mail")
+
+        # The cost is counted, because nothing else will report it: no digest
+        # is sent when the period ends.
+        check(srv.notify_quiet_held() >= 9,
+              "every held message is counted (got %d)" % srv.notify_quiet_held())
+    finally:
+        set_quiet(0)
+
+
+def test_mail_resumes_by_itself_when_the_deadline_passes():
+    """An expired deadline just stops applying; nothing has to run at it.
+
+    That is what makes a quiet period end correctly across a server that was
+    restarted, or down, for the whole of it — and it is why this is a deadline
+    in the database rather than a flag somebody has to clear.
+    """
+    SENT.clear()
+    srv._notified_at.clear()
+    set_quiet(int(time.time()) - 1)          # ended one second ago
+    try:
+        check(srv.notify_quiet_until() == 0, "a passed deadline reads as live")
+        srv.notify_events("door", [{"type": "GAVE_UP", "detail": 3, "uptime": 9,
+                                    "boot": 1, "epoch": 0, "rssi": -60, "src": 0}])
+        check(len(SENT) == 1, "mail flows again with no intervention")
+    finally:
+        set_quiet(0)
+
+    # Indefinite is the one that does NOT expire, and must not be mistaken for
+    # an expired timestamp by the arithmetic above.
+    set_quiet(srv.NOTIFY_QUIET_FOREVER)
+    try:
+        check(srv.notify_quiet_until() == srv.NOTIFY_QUIET_FOREVER,
+              "an indefinite quiet period never reads as expired")
+        check("turned back on" in srv.quiet_label(srv.NOTIFY_QUIET_FOREVER),
+              "and it is described as never ending rather than as a date")
+    finally:
+        set_quiet(0)
+
+
+def test_a_held_fault_does_not_entitle_an_all_clear():
+    """The reason the gate returns False rather than pretending to have sent.
+
+    _fault_alerted latches on a SUCCESSFUL send, and that latch is what
+    entitles the recovery mail. A gate that claimed success would mail "that
+    sensor is reporting again" about a fault nobody was ever told about —
+    which is worse than silence, because it is a message that cannot be acted
+    on and implies an earlier one went missing.
+    """
+    SENT.clear()
+    srv._fault_alerted.clear()
+    set_quiet(int(time.time()) + 3600)
+    try:
+        srv.notify_events("door", [{"type": "SENSOR_FAULT", "detail": 2, "uptime": 5,
+                                    "boot": 1, "epoch": 0, "rssi": -60, "src": 7}])
+        check(not SENT, "the fault mail is held")
+    finally:
+        set_quiet(0)
+
+    srv.notify_events("door", [{"type": "SENSOR_OK", "detail": 2, "uptime": 60,
+                                "boot": 1, "epoch": 0, "rssi": -60, "src": 0}])
+    check(not SENT,
+          "and no recovery mail follows a fault nobody was told about")
+
+
+def test_an_outage_that_began_while_quiet_is_told_when_mail_resumes():
+    """_stale_alerted latches on the send, not on the decision to send.
+
+    Without that, a door that dropped off the network at the start of a quiet
+    weekend would be marked as already-announced, and the one alert that
+    matters most — the door is not there at all — would never be sent, not even
+    after mail came back.
+    """
+    SENT.clear()
+    srv._stale_alerted.clear()
+    now = int(time.time())
+    seed_device("weekend-door", now - 5 * 3600)
+    set_quiet(now + 3600)
+    try:
+        srv.check_stale_doors()
+        check(not SENT, "the outage alert is held while quiet")
+        check(not srv._stale_alerted.get("weekend-door"),
+              "and the door is NOT marked as already told")
+    finally:
+        set_quiet(0)
+
+    # Counted by door: earlier tests left other stale doors in the table, and
+    # the sweep quite correctly reports those too.
+    mine = lambda: [s for s, _ in SENT if "weekend-door" in s]
+    srv.check_stale_doors()
+    check(len(mine()) == 1, "it is announced on the first sweep after mail resumes")
+    check("stopped reporting" in (mine() or [""])[0], "and it is the outage, named")
+    srv.check_stale_doors()
+    check(len(mine()) == 1, "once, not on every sweep from then on")
+
+
+def test_the_real_mailer_checks_the_quiet_period_first():
+    """Pins the recorder's fidelity, and that the gate precedes the socket.
+
+    Every other test here runs against _record(), which calls notify_held()
+    because the real send_notification() does. If the real one ever stopped
+    doing that, or did it after composing and connecting, this is the only
+    check that would notice — and the symptom in production would be alerts
+    going out during a quiet period, or an SMTP connection opened for a message
+    that was never going to be sent.
+    """
+    srv.SMTP_HOST, srv.SMTP_FROM = "smtp.invalid.example", "petdoor@invalid.example"
+    set_quiet(int(time.time()) + 600)
+    try:
+        ok, why = REAL_SEND("held subject", title="t")
+        check(ok is False, "the real mailer refuses while quiet")
+        # A reason naming the quiet period proves it returned at the gate: had
+        # it fallen through it would have tried to resolve smtp.invalid.example
+        # and come back with a socket error instead.
+        check("quiet" in (why or ""),
+              f"and says why, before any socket is opened (got {why!r})")
+    finally:
+        set_quiet(0)
+        srv.SMTP_HOST, srv.SMTP_FROM = "", ""
+
+
+def test_a_database_that_will_not_answer_still_lets_the_mail_out():
+    """The quiet period put a database read on the alerting path.
+
+    send_notification() promises never to raise into its caller: by the time it
+    runs the command is already queued and the upload already stored, so a
+    database having a bad moment must not become a 500 on /ingest or a failed
+    command on a door somebody is standing at. notify_command() has no
+    try/except of its own, and it is called from the control endpoint AFTER the
+    command is in the queue — so a raise there reports failure for something
+    that did in fact happen, and loses the audit mail with it.
+
+    The direction is deliberate too: unable to tell whether a quiet period is
+    running, this sends. A message arriving during a mute and a door that gave
+    up closing telling nobody are not equally bad.
+    """
+    SENT.clear()
+    real_get = srv.get_setting
+
+    def refuse(*a, **kw):
+        raise RuntimeError("database is locked")
+
+    srv.get_setting = refuse
+    try:
+        held = srv.notify_held("something urgent")
+        check(held is None,
+              f"an unreadable quiet period does not hold mail (got {held!r})")
+        try:
+            srv.notify_command("door", "door open", "who", "the dashboard")
+            raised = None
+        except Exception as exc:                        # noqa: BLE001
+            raised = exc
+        check(raised is None,
+              f"and nothing raises into the caller (got {raised!r})")
+        check(len(SENT) == 1, "the command mail still goes out")
+        # The dashboard reads this one through /api/events, where a raise would
+        # take every chart and the event table down with it.
+        state = srv.notify_quiet_state()
+        check(state["quiet_until"] == 0 and state["held"] == 0,
+              "and the dashboard gets a usable answer rather than a 500")
+    finally:
+        srv.get_setting = real_get
+
+
+def test_a_quiet_period_is_bounded_and_indefinite_is_asked_for_explicitly():
+    """The request table, which is why parse_quiet_request() is a function.
+
+    A duration is REFUSED above the ceiling rather than shortened — the same
+    rule the firmware applies to a maintenance window, for the same reason:
+    handing somebody a different duration from the one they asked for is how a
+    mailbox stays silent for longer than anybody believes.
+    """
+    cap_h = srv.NOTIFY_QUIET_MAX_S // 3600
+    until, err = srv.parse_quiet_request({"minutes": 60})
+    check(not err and until > time.time(), "an hour is accepted")
+    until, err = srv.parse_quiet_request({"minutes": cap_h * 60})
+    check(not err, f"the ceiling itself is accepted ({cap_h} h)")
+    until, err = srv.parse_quiet_request({"minutes": cap_h * 60 + 1})
+    check(err and until is None, "one minute past the ceiling is refused")
+    check("indefinite" in err, "and the refusal names what to ask for instead")
+    until, err = srv.parse_quiet_request({"indefinite": True})
+    check(until == srv.NOTIFY_QUIET_FOREVER and not err,
+          "indefinite is its own request, not a very large number of minutes")
+    until, err = srv.parse_quiet_request({"minutes": 0})
+    check(until == 0 and not err, "zero minutes means resume now")
+    for bad in ({}, {"minutes": "soon"}, {"minutes": -5}, "forever"):
+        until, err = srv.parse_quiet_request(bad)
+        check(err and until is None, f"{bad!r} is refused")
+
+
+def test_a_quiet_period_survives_a_restart_and_says_so():
+    """It is in `settings`, deliberately unlike every other alerting flag.
+
+    _notified_at and _stale_alerted are in memory ON PURPOSE, so a restart
+    re-arms them: the worst case there is one extra email. This wants the
+    opposite — a mute undone by a container restart nobody noticed is a
+    surprise — so it is the one piece of alerting state that is durable.
+    """
+    until = int(time.time()) + 1800
+    set_quiet(until)
+    try:
+        # What a fresh process would read: straight from the database, with no
+        # module state involved.
+        check(int(srv.get_setting(srv.NOTIFY_QUIET_KEY)) == until,
+              "the deadline is in the settings table, not in memory")
+        state = srv.notify_quiet_state()
+        check(state["quiet_until"] == until, "and the dashboard is told the deadline")
+        check(state["max_s"] == srv.NOTIFY_QUIET_MAX_S,
+              "along with the ceiling, so the page cannot offer more than the "
+              "server will take")
+    finally:
+        set_quiet(0)
+    check(srv.notify_quiet_state()["quiet_until"] == 0,
+          "resuming clears it")
+    check(srv.notify_quiet_state()["held"] >= 0,
+          "and the held count survives the period it describes, because no "
+          "digest is sent and the dashboard is the only place it is reported")
+
+
+def test_every_quiet_button_on_the_panel_is_one_the_server_accepts():
+    """Same shape as the command-button test above, and for the same reason.
+
+    The panel and the validator are in different files and nothing connects
+    them. A button offering 48 h against a 24 h ceiling looks right in both and
+    fails only when somebody presses it.
+    """
+    js = io.open(os.path.join(SERVER_DIR, "dashboard.js"), encoding="utf-8").read()
+    vals = set(re.findall(r'data-quiet="([^"]+)"', js))
+    check(len(vals) >= 4, f"found the panel's email buttons (got {sorted(vals)})")
+    check("0" in vals, "one of them resumes mail — a mute with no way back is a trap")
+    for v in sorted(vals):
+        payload = {"indefinite": True} if v == "forever" else {"minutes": int(v)}
+        until, err = srv.parse_quiet_request(payload)
+        check(not err, f"the panel's {v!r} is a period the server accepts ({err})")
+
+
 def main():
     srv.init_db()
     # The real server runs migrate() at startup, and some columns the tests
@@ -951,6 +1250,15 @@ def main():
     test_a_hand_move_mails_even_when_the_door_is_already_manual()
     test_an_inferred_uncommanded_move_is_not_mailed_as_measured()
     test_uncommanded_mail_is_rate_limited()
+    test_a_quiet_period_holds_every_single_kind_of_mail()
+    test_mail_resumes_by_itself_when_the_deadline_passes()
+    test_a_held_fault_does_not_entitle_an_all_clear()
+    test_an_outage_that_began_while_quiet_is_told_when_mail_resumes()
+    test_the_real_mailer_checks_the_quiet_period_first()
+    test_a_database_that_will_not_answer_still_lets_the_mail_out()
+    test_a_quiet_period_is_bounded_and_indefinite_is_asked_for_explicitly()
+    test_a_quiet_period_survives_a_restart_and_says_so()
+    test_every_quiet_button_on_the_panel_is_one_the_server_accepts()
     print(f"{'FAILED' if FAILS else 'ok    '}  {CHECKS} checks, {FAILS} failed")
     return 1 if FAILS else 0
 
