@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
+      - uses: arduino/setup-arduino-cli@b3cda96fddef6af6c56b4c5efb5c47e2357935db # v2.1.0
 
       # NimBLE-Arduino is required even for the Bluedroid job: the matrix shares
       # one install step, and every other entry builds the default stack, which
@@ -207,7 +207,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: arduino/setup-arduino-cli@81d310742121c928ea9c8bbd407b4217b432ae02 # v2.0.0
+      - uses: arduino/setup-arduino-cli@b3cda96fddef6af6c56b4c5efb5c47e2357935db # v2.1.0
 
       - name: Install ESP32 core 3.x and NimBLE-Arduino
         run: |
